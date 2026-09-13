@@ -811,8 +811,11 @@ PU-7/8/9/10（视觉）→ PU-17 收尾。
 
 - `run_executable` 在 Windows 下对 fork 的子进程处理仍不完善
   （PU-1 只解决 sidecar 本身的进程树，用户程序的子进程树另议）
-- 项目无 git 仓库（`git log` 为空）。**强烈建议在开始 PU-0 前先
-  `git init` 并提交当前状态**——本阶段改动量大，没有版本历史会很难回滚。
+- ~~项目无 git 仓库~~ **已解决**：仓库已建立在
+  `https://gitee.com/xk2b/AlgoForge`（私有），分支 `main`，
+  首个基线提交 `c081142`（2026-09-13，131 文件）。
+  **本阶段每个切片完成后按 VIBECODING.md 第 7 条立即 commit**
+  （`feat(frontend): ...` / `feat(backend): ...`），不要攒一批再提交。
 
 ---
 
