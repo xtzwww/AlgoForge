@@ -1,0 +1,185 @@
+/* ============================================================
+ * AlgoForge design tokens (PU-0)
+ *
+ * Single source of truth for colors, spacing and typography.
+ * Values mirror assets/tokens.ts — if you change one, change both.
+ *
+ * Tailwind v4 is CSS-first: the @theme block below registers these as
+ * real Tailwind utilities, so `bg-surface`, `text-muted`, `text-ac-500`
+ * etc. all work without a tailwind.config.js.
+ *
+ *   --color-af-*   → bg-af-surface, text-af-primary, border-af-border ...
+ *   --text-*       → text-xs ... (only add if you actually need overrides)
+ * ============================================================ */
+
+@theme {
+  /* ---- Surfaces ---- */
+  --color-af-canvas: #0b1020;
+  --color-af-surface: #141b2d;
+  --color-af-elevated: #1c2438;
+  --color-af-overlay: #232c42;
+  --color-af-border: #263149;
+  --color-af-border-strong: #33415c;
+
+  /* ---- Text ---- */
+  --color-af-primary: #e8ecf5;
+  --color-af-secondary: #9aa7bd;
+  --color-af-muted: #66738c;
+
+  /* ---- Accent ---- */
+  --color-af-accent: #4f8cff;
+  --color-af-accent-hover: #6ba1ff;
+  --color-af-accent-active: #3d78e6;
+  --color-af-accent-subtle: #1e2f52;
+
+  /* ---- Semantic ---- */
+  --color-af-success: #22c55e;
+  --color-af-warning: #f59e0b;
+  --color-af-danger: #ef4444;
+  --color-af-info: #06b6d4;
+  --color-af-purple: #8b5cf6;
+  --color-af-orange: #f97316;
+
+  /* ---- Verdicts (mirror JudgeStatus in judge.py) ---- */
+  --color-af-verdict-ac: #22c55e;
+  --color-af-verdict-wa: #ef4444;
+  --color-af-verdict-tle: #f59e0b;
+  --color-af-verdict-mle: #06b6d4;
+  --color-af-verdict-ce: #8b5cf6;
+  --color-af-verdict-re: #f97316;
+  --color-af-verdict-unknown: #9aa7bd;
+
+  /* ---- Layout ---- */
+  --spacing-sidebar: 220px;
+  --spacing-sidebar-collapsed: 60px;
+  --spacing-topbar: 48px;
+}
+
+/* ============================================================
+ * Runtime CSS variables
+ *
+ * Tailwind's @theme emits utilities, but we also need the raw values
+ * for inline styles and non-Tailwind CSS. These are the same values
+ * exposed under the --af-* namespace.
+ * ============================================================ */
+:root {
+  /* Surfaces */
+  --af-canvas: #0b1020;
+  --af-surface: #141b2d;
+  --af-elevated: #1c2438;
+  --af-overlay: #232c42;
+  --af-border: #263149;
+  --af-border-strong: #33415c;
+
+  /* Text */
+  --af-text-primary: #e8ecf5;
+  --af-text-secondary: #9aa7bd;
+  --af-text-muted: #66738c;
+
+  /* Accent */
+  --af-accent: #4f8cff;
+  --af-accent-hover: #6ba1ff;
+  --af-accent-active: #3d78e6;
+  --af-accent-subtle: #1e2f52;
+
+  /* Semantic */
+  --af-success: #22c55e;
+  --af-warning: #f59e0b;
+  --af-danger: #ef4444;
+  --af-info: #06b6d4;
+  --af-purple: #8b5cf6;
+  --af-orange: #f97316;
+
+  /* Verdicts — must match judge.py::JudgeStatus */
+  --af-verdict-ac: #22c55e;
+  --af-verdict-wa: #ef4444;
+  --af-verdict-tle: #f59e0b;
+  --af-verdict-mle: #06b6d4;
+  --af-verdict-ce: #8b5cf6;
+  --af-verdict-re: #f97316;
+  --af-verdict-unknown: #9aa7bd;
+
+  /* Radii */
+  --af-radius-sm: 4px;
+  --af-radius-md: 8px;
+  --af-radius-lg: 12px;
+
+  /* Elevation */
+  --af-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --af-shadow-md: 0 4px 12px rgb(0 0 0 / 0.35);
+  --af-shadow-lg: 0 12px 32px rgb(0 0 0 / 0.45);
+
+  /* Motion — keep short; this is a desktop app, not a marketing site */
+  --af-duration-fast: 120ms;
+  --af-duration-base: 200ms;
+  --af-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  color-scheme: dark;
+}
+
+/* ============================================================
+ * Base layer — global resets owned by AlgoForge.
+ * ============================================================ */
+@layer base {
+  html,
+  body,
+  #app {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--af-canvas);
+    color: var(--af-text-primary);
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+      'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+      'Liberation Mono', monospace;
+  }
+
+  /* Focus ring — visible for keyboard users, respects the accent token. */
+  :focus-visible {
+    outline: 2px solid var(--af-accent);
+    outline-offset: 2px;
+  }
+
+  /* Scrollbars: themed, thin, and only visible on hover of the container. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--af-border-strong) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--af-border-strong);
+    border: 2px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #45557a;
+    background-clip: content-box;
+  }
+}

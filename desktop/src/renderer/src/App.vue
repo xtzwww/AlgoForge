@@ -57,6 +57,11 @@ onMounted(async () => {
       >
         复习
       </button>
+      <!-- PU-0 probe: Tailwind utilities (bg-af-*, text-af-*) must render here.
+           If this badge has no background/rounding, Tailwind is not wired up. -->
+      <span class="token-probe bg-af-accent-subtle text-af-accent rounded-full px-3 py-1">
+        Tailwind v4 ✓
+      </span>
     </nav>
     <main class="tab-content">
       <Practice v-if="activeTab === 'practice'" />
@@ -68,6 +73,10 @@ onMounted(async () => {
 </template>
 
 <style>
+/* PU-0 note: these styles are intentionally still plain CSS — the visual
+ * rewrite happens in PU-7 (app shell). What PU-0 proves is that Tailwind
+ * utilities and the --af-* tokens are both live; see the `token-probe`
+ * markup in the template. */
 .app {
   display: flex;
   flex-direction: column;
@@ -76,30 +85,39 @@ onMounted(async () => {
 
 .tab-bar {
   display: flex;
-  background: #0f172a;
+  background: var(--af-surface);
   padding: 0 16px;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid var(--af-border);
   flex-shrink: 0;
+  align-items: center;
+}
+
+.token-probe {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--af-text-muted);
 }
 
 .tab-btn {
   padding: 12px 24px;
   font-size: 14px;
-  color: #9ca3af;
+  color: var(--af-text-secondary);
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: color 0.2s, border-color 0.2s;
+  transition:
+    color var(--af-duration-fast) var(--af-ease),
+    border-color var(--af-duration-fast) var(--af-ease);
 }
 
 .tab-btn:hover {
-  color: #e5e7eb;
+  color: var(--af-text-primary);
 }
 
 .tab-btn.active {
-  color: #e5e7eb;
-  border-bottom-color: #3b82f6;
+  color: var(--af-text-primary);
+  border-bottom-color: var(--af-accent);
 }
 
 .tab-content {
