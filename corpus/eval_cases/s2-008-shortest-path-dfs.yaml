@@ -1,0 +1,91 @@
+id: s2-008-shortest-path-dfs
+title: 无权图最短路长度
+statement: |
+  n 个点 m 条无向边（1 <= n <= 100），边权均为 1。
+  输入起点 s 和终点 t，输出 s 到 t 的最短距离，不可达输出 -1。
+knowledge_tags:
+  - 图论
+  - BFS
+  - DFS
+difficulty: hard
+expected_root_cause: wrong_traversal
+observable_verdict: WA
+notes: |
+  用 DFS 返回"第一条到达目标的路径长度"是错的：DFS 沿第一条分支一路
+  深入到底，返回的只是碰巧先找到的那条路径，与最短无关。必须用 BFS
+  才能保证首次到达即最短。这里的关键是找到目标后**立即返回**（而不是
+  枚举所有路径后取最小值——那样虽然正确但会指数级超时）。
+wrong_code: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  vector<int> adj[105];
+  bool visited[105];
+  int found = -1;
+  void dfs(int u, int dist, int target) {
+      if (found != -1) return;
+      if (u == target) {
+          found = dist;
+          return;
+      }
+      visited[u] = true;
+      for (int v : adj[u]) {
+          if (!visited[v]) dfs(v, dist + 1, target);
+      }
+      visited[u] = false;
+  }
+  int main() {
+      int n, m;
+      cin >> n >> m;
+      for (int i = 0; i < m; i++) {
+          int u, v;
+          cin >> u >> v;
+          adj[u].push_back(v);
+          adj[v].push_back(u);
+      }
+      int s, t;
+      cin >> s >> t;
+      dfs(s, 0, t);
+      cout << found << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  #include <vector>
+  #include <queue>
+  using namespace std;
+  int main() {
+      int n, m;
+      cin >> n >> m;
+      vector<vector<int>> adj(n + 1);
+      for (int i = 0; i < m; i++) {
+          int u, v;
+          cin >> u >> v;
+          adj[u].push_back(v);
+          adj[v].push_back(u);
+      }
+      int s, t;
+      cin >> s >> t;
+      vector<int> dist(n + 1, -1);
+      queue<int> q;
+      dist[s] = 0;
+      q.push(s);
+      while (!q.empty()) {
+          int u = q.front(); q.pop();
+          for (int v : adj[u]) {
+              if (dist[v] == -1) {
+                  dist[v] = dist[u] + 1;
+                  q.push(v);
+              }
+          }
+      }
+      cout << dist[t] << endl;
+      return 0;
+  }
+test_cases:
+  - input: "5 4\n1 2\n2 3\n3 4\n1 5\n1 5\n"
+    expected_output: "1\n"
+  - input: "4 4\n1 2\n2 3\n3 4\n1 4\n1 4\n"
+    expected_output: "1\n"
+  - input: "3 1\n1 2\n1 3\n"
+    expected_output: "-1\n"

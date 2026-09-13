@@ -1,0 +1,56 @@
+id: s2-015-unique-count-missing-duplicates
+title: 不同元素个数
+statement: |
+  第一行输入 n（1 <= n <= 1000），第二行输入 n 个整数，
+  输出其中不同元素的个数。
+knowledge_tags:
+  - 数组
+  - 去重
+difficulty: medium
+expected_root_cause: missing_case
+observable_verdict: WA
+notes: |
+  排序后只比较 a[i] 与 a[0]（第一个元素），没有和"当前上一个不同值"
+  比较，所以当数组含多个不同值时统计错误。实际上是漏了重复元素这一
+  情况的正确处理方式。
+wrong_code: |
+  #include <iostream>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int a[1005];
+      for (int i = 0; i < n; i++) cin >> a[i];
+      sort(a, a + n);
+      int distinct = 1;
+      for (int i = 1; i < n; i++) {
+          if (a[i] != a[0]) distinct++;
+      }
+      cout << distinct << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int a[1005];
+      for (int i = 0; i < n; i++) cin >> a[i];
+      sort(a, a + n);
+      int distinct = 1;
+      for (int i = 1; i < n; i++) {
+          if (a[i] != a[i - 1]) distinct++;
+      }
+      cout << distinct << endl;
+      return 0;
+  }
+test_cases:
+  - input: "5\n1 1 2 2 3\n"
+    expected_output: "3\n"
+  - input: "3\n7 7 7\n"
+    expected_output: "1\n"
+  - input: "4\n1 2 3 4\n"
+    expected_output: "4\n"

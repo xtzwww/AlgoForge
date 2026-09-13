@@ -1,0 +1,41 @@
+id: s2-006-sign-classify
+title: 判断数的正负
+statement: |
+  输入一个整数 x，若 x > 0 输出 positive，x < 0 输出 negative，
+  x == 0 输出 zero。
+knowledge_tags:
+  - 条件分支
+difficulty: easy
+expected_root_cause: missing_case
+observable_verdict: WA
+notes: |
+  只写了 x > 0 和 x < 0 两个分支，else 分支输出 "negative"，所以输入 0
+  时给出 negative。遗漏了 x == 0 这一必处理情况。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int x;
+      cin >> x;
+      if (x > 0) cout << "positive" << endl;
+      else cout << "negative" << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int x;
+      cin >> x;
+      if (x > 0) cout << "positive" << endl;
+      else if (x < 0) cout << "negative" << endl;
+      else cout << "zero" << endl;
+      return 0;
+  }
+test_cases:
+  - input: "5\n"
+    expected_output: "positive\n"
+  - input: "0\n"
+    expected_output: "zero\n"
+  - input: "-3\n"
+    expected_output: "negative\n"

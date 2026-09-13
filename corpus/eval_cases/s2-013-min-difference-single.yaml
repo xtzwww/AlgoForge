@@ -1,0 +1,58 @@
+id: s2-013-min-difference-single
+title: 相邻元素最小差
+statement: |
+  第一行输入 n（1 <= n <= 1000），第二行输入 n 个整数。
+  输出排序后相邻元素之差的最小值。若 n == 1，输出 0。
+knowledge_tags:
+  - 排序
+  - 边界条件
+difficulty: medium
+expected_root_cause: boundary_condition
+observable_verdict: WA
+notes: |
+  没有处理 n == 1 的情况：循环从 i=1 开始，一次都不执行，
+  ans 保持初始值 INT_MAX 被直接输出。n >= 2 时逻辑正确。
+wrong_code: |
+  #include <iostream>
+  #include <algorithm>
+  #include <climits>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int a[1005];
+      for (int i = 0; i < n; i++) cin >> a[i];
+      sort(a, a + n);
+      int ans = INT_MAX;
+      for (int i = 1; i < n; i++) {
+          ans = min(ans, a[i] - a[i - 1]);
+      }
+      cout << ans << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  #include <algorithm>
+  #include <climits>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int a[1005];
+      for (int i = 0; i < n; i++) cin >> a[i];
+      if (n == 1) { cout << 0 << endl; return 0; }
+      sort(a, a + n);
+      int ans = INT_MAX;
+      for (int i = 1; i < n; i++) {
+          ans = min(ans, a[i] - a[i - 1]);
+      }
+      cout << ans << endl;
+      return 0;
+  }
+test_cases:
+  - input: "1\n42\n"
+    expected_output: "0\n"
+  - input: "3\n1 5 9\n"
+    expected_output: "4\n"
+  - input: "2\n10 3\n"
+    expected_output: "7\n"

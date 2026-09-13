@@ -1,0 +1,53 @@
+id: s2-020-gcd-array-too-small
+title: 多组数据求最大公约数
+statement: |
+  第一行输入 t（1 <= t <= 1000）表示数据组数。
+  每组一行输入两个正整数 a b（1 <= a, b <= 1e9），输出它们的最大公约数。
+knowledge_tags:
+  - 数学
+  - 循环控制
+difficulty: medium
+expected_root_cause: off_by_one
+observable_verdict: WA
+notes: |
+  读取 t 组数据的循环写成 `for (i = 0; i < t - 1; i++)`，少读了一组，
+  最后一组没有被处理，输出末尾缺少一行的结果。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  long long gcd(long long a, long long b) {
+      while (b) { long long t = a % b; a = b; b = t; }
+      return a;
+  }
+  int main() {
+      int t;
+      cin >> t;
+      for (int i = 0; i < t - 1; i++) {
+          long long a, b;
+          cin >> a >> b;
+          cout << gcd(a, b) << endl;
+      }
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  long long gcd(long long a, long long b) {
+      while (b) { long long t = a % b; a = b; b = t; }
+      return a;
+  }
+  int main() {
+      int t;
+      cin >> t;
+      for (int i = 0; i < t; i++) {
+          long long a, b;
+          cin >> a >> b;
+          cout << gcd(a, b) << endl;
+      }
+      return 0;
+  }
+test_cases:
+  - input: "2\n12 18\n100 75\n"
+    expected_output: "6\n25\n"
+  - input: "1\n7 13\n"
+    expected_output: "1\n"

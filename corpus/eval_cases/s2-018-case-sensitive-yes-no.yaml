@@ -1,0 +1,41 @@
+id: s2-018-case-sensitive-yes-no
+title: 闰年判断
+statement: |
+  输入年份 y（1 <= y <= 9999），若为闰年输出 "Yes"，否则输出 "No"。
+  闰年规则：能被 4 整除且不能被 100 整除，或能被 400 整除。
+knowledge_tags:
+  - 条件分支
+  - 输出格式
+difficulty: easy
+expected_root_cause: io_format_error
+observable_verdict: WA
+notes: |
+  判断逻辑完全正确，但输出用了小写 "yes"/"no"，而题目要求 "Yes"/"No"。
+  部分 OJ 对大小写敏感，这类错误常被误判为逻辑错误。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int y;
+      cin >> y;
+      if ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) cout << "yes" << endl;
+      else cout << "no" << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int y;
+      cin >> y;
+      if ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) cout << "Yes" << endl;
+      else cout << "No" << endl;
+      return 0;
+  }
+test_cases:
+  - input: "2000\n"
+    expected_output: "Yes\n"
+  - input: "1900\n"
+    expected_output: "No\n"
+  - input: "2024\n"
+    expected_output: "Yes\n"

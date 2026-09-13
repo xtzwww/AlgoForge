@@ -1,0 +1,38 @@
+id: s2-002-sum-product-overflow
+title: 两数乘积
+statement: |
+  输入两个整数 a 和 b（1 <= a, b <= 100000），输出 a * b。
+knowledge_tags:
+  - 数据类型
+  - 整数溢出
+difficulty: easy
+expected_root_cause: overflow
+observable_verdict: WA
+notes: |
+  a*b 最大 1e10，超出 int 的 2.1e9 上限。虽然用了 long long 存结果，
+  但乘法在 int 域内完成后再赋值，已经溢出。小数据（3*7）仍然正确，
+  所以必须用大数用例才能暴露。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int a, b;
+      cin >> a >> b;
+      long long product = a * b;
+      cout << product << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      long long a, b;
+      cin >> a >> b;
+      cout << a * b << endl;
+      return 0;
+  }
+test_cases:
+  - input: "3 7\n"
+    expected_output: "21\n"
+  - input: "100000 100000\n"
+    expected_output: "10000000000\n"

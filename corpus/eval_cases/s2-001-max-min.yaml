@@ -1,0 +1,43 @@
+id: s2-001-max-min
+title: 两数最大值与最小值
+statement: |
+  输入两个整数 a 和 b，输出两行：第一行最大值，第二行最小值。
+  范围 -1000 <= a, b <= 1000。
+knowledge_tags:
+  - 基础语法
+  - 条件分支
+difficulty: easy
+expected_root_cause: boundary_condition
+observable_verdict: WA
+notes: |
+  最小值表达式写成了 `a < b ? b : a`，在 a != b 时返回的是较大者。
+  a == b 时结果碰巧正确，所以只有不等输入才暴露。典型"比较方向写反"。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int a, b;
+      cin >> a >> b;
+      int mx = a > b ? a : b;
+      int mn = a < b ? b : a;
+      cout << mx << endl;
+      cout << mn << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int a, b;
+      cin >> a >> b;
+      cout << (a > b ? a : b) << endl;
+      cout << (a < b ? a : b) << endl;
+      return 0;
+  }
+test_cases:
+  - input: "3 7\n"
+    expected_output: "7\n3\n"
+  - input: "7 3\n"
+    expected_output: "7\n3\n"
+  - input: "-5 2\n"
+    expected_output: "2\n-5\n"

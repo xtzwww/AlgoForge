@@ -1,0 +1,106 @@
+# ============================================================
+# AlgoForge .gitignore
+# ============================================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.ruff_cache/
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ---------- Node / Electron ----------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Build outputs
+dist/
+dist-ssr/
+*.local
+
+# Electron
+out/
+
+# ---------- Environment & Secrets ----------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ---------- IDE / Editor ----------
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---------- Project specific ----------
+# Sidecar runtime artifacts
+# NOTE: alembic migration scripts (sidecar/alembic/versions/*.py) are
+# SOURCE CODE and must be versioned — AGENTS.md requires all schema
+# changes to go through Alembic, so the migration history is part of
+# the deliverable. Only the compiled cache is ignored.
+sidecar/alembic/versions/__pycache__/
+sidecar/*.db
+sidecar/*.sqlite3
+
+# Local assistant workspace state (memory/logs) — not part of the project
+.workbuddy/
+
+# Milvus / Docker volumes (not tracked)
+milvus_data/
+
+# Generated logs
+*.log
+logs/
+
+# PyInstaller build artifacts (S10)
+sidecar/build/
+sidecar/dist/
+sidecar/*.spec

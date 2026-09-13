@@ -1,0 +1,55 @@
+id: s2-009-average-integer-division
+title: 平均数
+statement: |
+  第一行输入 n，第二行输入 n 个整数，输出它们的平均数，
+  保留两位小数。
+knowledge_tags:
+  - 数据类型
+  - 浮点运算
+difficulty: medium
+expected_root_cause: wrong_data_type
+observable_verdict: WA
+notes: |
+  `sum / n` 两个操作数都是整数，执行整数除法后截断，再赋给 double
+  已经丢失小数部分。必须先把 sum 或 n 转成浮点。
+wrong_code: |
+  #include <iostream>
+  #include <iomanip>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int x;
+      long long sum = 0;
+      for (int i = 0; i < n; i++) {
+          cin >> x;
+          sum += x;
+      }
+      double avg = sum / n;
+      cout << fixed << setprecision(2) << avg << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  #include <iomanip>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int x;
+      long long sum = 0;
+      for (int i = 0; i < n; i++) {
+          cin >> x;
+          sum += x;
+      }
+      double avg = (double)sum / n;
+      cout << fixed << setprecision(2) << avg << endl;
+      return 0;
+  }
+test_cases:
+  - input: "3\n1 2 2\n"
+    expected_output: "1.67\n"
+  - input: "2\n1 2\n"
+    expected_output: "1.50\n"
+  - input: "4\n1 1 1 2\n"
+    expected_output: "1.25\n"

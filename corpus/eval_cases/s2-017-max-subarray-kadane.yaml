@@ -1,0 +1,58 @@
+id: s2-017-max-subarray-kadane
+title: 最大子段和
+statement: |
+  第一行输入 n（1 <= n <= 100000），第二行输入 n 个整数（可为负）。
+  输出连续子段的最大和（子段至少包含一个元素）。
+knowledge_tags:
+  - 动态规划
+  - Kadane
+difficulty: medium
+expected_root_cause: wrong_algorithm
+observable_verdict: WA
+notes: |
+  代码丢弃了所有负数的贡献却仍要求子段非空——当数组全为负数时，
+  它返回的是 0（因为 ans 初始化为 0 且 cur 被重置为 0），
+  而正确答案是最大的那个负数。算法未覆盖"必须选一个"的约束。
+wrong_code: |
+  #include <iostream>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      long long cur = 0, ans = 0;
+      for (int i = 0; i < n; i++) {
+          long long x;
+          cin >> x;
+          cur += x;
+          if (cur < 0) cur = 0;
+          ans = max(ans, cur);
+      }
+      cout << ans << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      long long cur = 0, ans;
+      for (int i = 0; i < n; i++) {
+          long long x;
+          cin >> x;
+          if (i == 0) { cur = x; ans = x; continue; }
+          cur = max(x, cur + x);
+          ans = max(ans, cur);
+      }
+      cout << ans << endl;
+      return 0;
+  }
+test_cases:
+  - input: "4\n-1 -2 -3 -4\n"
+    expected_output: "-1\n"
+  - input: "5\n1 -2 3 4 -1\n"
+    expected_output: "7\n"
+  - input: "1\n-5\n"
+    expected_output: "-5\n"

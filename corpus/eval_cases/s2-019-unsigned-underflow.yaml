@@ -1,0 +1,38 @@
+id: s2-019-unsigned-underflow
+title: 两数之差
+statement: |
+  输入两个整数 a 和 b（-1e9 <= a, b <= 1e9），输出 a - b。
+knowledge_tags:
+  - 数据类型
+  - 整数溢出
+difficulty: medium
+expected_root_cause: wrong_data_type
+observable_verdict: WA
+notes: |
+  把 a、b 声明为 `unsigned int`，当 a < b 时 a - b 发生无符号下溢，
+  结果变成一个极大的正数。声明了错误的数据类型（无符号而非有符号）。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      unsigned int a, b;
+      cin >> a >> b;
+      cout << a - b << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      long long a, b;
+      cin >> a >> b;
+      cout << a - b << endl;
+      return 0;
+  }
+test_cases:
+  - input: "10 3\n"
+    expected_output: "7\n"
+  - input: "3 10\n"
+    expected_output: "-7\n"
+  - input: "-5 -8\n"
+    expected_output: "3\n"

@@ -1,0 +1,61 @@
+id: s2-016-multi-query-not-reset
+title: 多次查询区间和
+statement: |
+  第一行输入 n 和 q，第二行输入 n 个整数，
+  随后 q 行每行两个整数 l r，输出区间 [l, r] 的元素和（下标从 1 开始）。
+knowledge_tags:
+  - 前缀和
+  - 状态重置
+difficulty: medium
+expected_root_cause: uninitialized_state
+observable_verdict: WA
+notes: |
+  sum 在循环外声明且每次查询前没有清零，于是各次查询的结果不断累加。
+  第一次查询输出正确，从第二次起就错了——这是"状态未重置"的典型症状。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n, q;
+      cin >> n >> q;
+      long long pre[100005];
+      pre[0] = 0;
+      for (int i = 1; i <= n; i++) {
+          long long x;
+          cin >> x;
+          pre[i] = pre[i - 1] + x;
+      }
+      long long sum = 0;
+      for (int i = 0; i < q; i++) {
+          int l, r;
+          cin >> l >> r;
+          sum += pre[r] - pre[l - 1];
+          cout << sum << endl;
+      }
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n, q;
+      cin >> n >> q;
+      long long pre[100005];
+      pre[0] = 0;
+      for (int i = 1; i <= n; i++) {
+          long long x;
+          cin >> x;
+          pre[i] = pre[i - 1] + x;
+      }
+      for (int i = 0; i < q; i++) {
+          int l, r;
+          cin >> l >> r;
+          cout << pre[r] - pre[l - 1] << endl;
+      }
+      return 0;
+  }
+test_cases:
+  - input: "5 3\n1 2 3 4 5\n1 2\n3 5\n1 5\n"
+    expected_output: "3\n12\n15\n"
+  - input: "3 2\n10 20 30\n1 3\n2 2\n"
+    expected_output: "60\n20\n"

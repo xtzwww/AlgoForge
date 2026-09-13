@@ -1,0 +1,47 @@
+id: s2-005-comma-separated-output
+title: 输出 1 到 n
+statement: |
+  输入正整数 n（1 <= n <= 1000），输出 1 到 n，
+  数字之间用一个空格分隔。
+knowledge_tags:
+  - 输出格式
+  - 基础语法
+difficulty: easy
+expected_root_cause: io_format_error
+observable_verdict: WA
+notes: |
+  数字之间用了逗号分隔（`1,2,3`），而题目要求空格分隔。
+  注意：判题器会对输出做规范化（忽略行尾空格与多余空行），所以
+  行尾空格、多余换行这类差异不会被判 WA —— 只有分隔符、大小写、
+  数值内容这类实质差异才会。这也是本用例选逗号而非尾随空格的原因。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      for (int i = 1; i <= n; i++) {
+          cout << i;
+          if (i < n) cout << ",";
+      }
+      cout << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      for (int i = 1; i <= n; i++) {
+          if (i > 1) cout << " ";
+          cout << i;
+      }
+      cout << endl;
+      return 0;
+  }
+test_cases:
+  - input: "3\n"
+    expected_output: "1 2 3\n"
+  - input: "1\n"
+    expected_output: "1\n"

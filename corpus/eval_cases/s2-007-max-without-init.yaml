@@ -1,0 +1,52 @@
+id: s2-007-max-without-init
+title: 数组最大值
+statement: |
+  第一行输入 n（1 <= n <= 100），第二行输入 n 个整数（可为负数），
+  输出最大值。
+knowledge_tags:
+  - 数组
+  - 初始化
+difficulty: easy
+expected_root_cause: uninitialized_state
+observable_verdict: WA
+notes: |
+  maxVal 初始化为 0。当所有元素都是负数时，0 大于任何元素，
+  于是输出 0 而不是真正的最大值。这是"用 0 当初始值"的经典陷阱。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int a[105];
+      for (int i = 0; i < n; i++) cin >> a[i];
+      int maxVal = 0;
+      for (int i = 0; i < n; i++) {
+          if (a[i] > maxVal) maxVal = a[i];
+      }
+      cout << maxVal << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  #include <climits>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int a[105];
+      for (int i = 0; i < n; i++) cin >> a[i];
+      int maxVal = INT_MIN;
+      for (int i = 0; i < n; i++) {
+          if (a[i] > maxVal) maxVal = a[i];
+      }
+      cout << maxVal << endl;
+      return 0;
+  }
+test_cases:
+  - input: "3\n-1 -5 -3\n"
+    expected_output: "-1\n"
+  - input: "2\n1 2\n"
+    expected_output: "2\n"
+  - input: "1\n-7\n"
+    expected_output: "-7\n"

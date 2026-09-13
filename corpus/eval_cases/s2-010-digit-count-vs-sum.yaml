@@ -1,0 +1,49 @@
+id: s2-010-digit-count-vs-sum
+title: 数字的位数
+statement: |
+  输入一个正整数 n（1 <= n <= 1e9），输出它的位数。
+  例如 1234 有 4 位。
+knowledge_tags:
+  - 基础语法
+  - 题意理解
+difficulty: easy
+expected_root_cause: misread_problem
+observable_verdict: WA
+notes: |
+  题目问的是"位数"，代码求的是"各位数字之和"。对 n=10 恰好都等于 1，
+  但对 1234 前者是 4、后者是 10。属于理解错题意。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      long long n;
+      cin >> n;
+      int s = 0;
+      while (n > 0) {
+          s += n % 10;
+          n /= 10;
+      }
+      cout << s << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      long long n;
+      cin >> n;
+      int cnt = 0;
+      while (n > 0) {
+          cnt++;
+          n /= 10;
+      }
+      cout << cnt << endl;
+      return 0;
+  }
+test_cases:
+  - input: "1234\n"
+    expected_output: "4\n"
+  - input: "7\n"
+    expected_output: "1\n"
+  - input: "100000\n"
+    expected_output: "6\n"

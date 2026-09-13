@@ -1,0 +1,66 @@
+id: s2-004-coin-change-greedy
+title: 凑出最少硬币数
+statement: |
+  给定面额集合和目标金额 amount，每种硬币数量不限，
+  输出凑出 amount 所需的最少硬币数，无法凑出输出 -1。
+knowledge_tags:
+  - 动态规划
+  - 贪心
+difficulty: hard
+expected_root_cause: wrong_algorithm
+observable_verdict: WA
+notes: |
+  贪心（每次取最大面额）对任意面额集合不成立。经典反例：coins=[1,3,4]，
+  amount=6 时贪心得 4+1+1（3 枚），最优为 3+3（2 枚）。
+  算法本身选错，不是实现细节问题。
+wrong_code: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int n, amount;
+      cin >> n >> amount;
+      vector<int> coins(n);
+      for (int i = 0; i < n; i++) cin >> coins[i];
+      sort(coins.rbegin(), coins.rend());
+      int count = 0;
+      int remain = amount;
+      for (int c : coins) {
+          while (remain >= c) {
+              remain -= c;
+              count++;
+          }
+      }
+      if (remain != 0) cout << -1 << endl;
+      else cout << count << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int n, amount;
+      cin >> n >> amount;
+      vector<int> coins(n);
+      for (int i = 0; i < n; i++) cin >> coins[i];
+      const int INF = 1e9;
+      vector<int> dp(amount + 1, INF);
+      dp[0] = 0;
+      for (int i = 1; i <= amount; i++) {
+          for (int c : coins) {
+              if (i - c >= 0 && dp[i - c] + 1 < dp[i]) dp[i] = dp[i - c] + 1;
+          }
+      }
+      cout << (dp[amount] >= INF ? -1 : dp[amount]) << endl;
+      return 0;
+  }
+test_cases:
+  - input: "3 6\n1 3 4\n"
+    expected_output: "2\n"
+  - input: "3 11\n1 5 6\n"
+    expected_output: "2\n"
+  - input: "1 3\n2\n"
+    expected_output: "-1\n"

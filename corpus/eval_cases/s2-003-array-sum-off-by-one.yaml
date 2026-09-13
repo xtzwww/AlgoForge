@@ -1,0 +1,47 @@
+id: s2-003-array-sum-off-by-one
+title: 数组求和
+statement: |
+  第一行输入 n（1 <= n <= 100），第二行输入 n 个整数，
+  输出这 n 个整数的和。
+knowledge_tags:
+  - 数组
+  - 循环边界
+difficulty: easy
+expected_root_cause: off_by_one
+observable_verdict: WA
+notes: |
+  循环写成 `i < n - 1`，少加了最后一个元素。n == 1 时和为 0（也错），
+  但最直观的暴露方式就是 n >= 2 的普通用例。
+wrong_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int a[105];
+      for (int i = 0; i < n; i++) cin >> a[i];
+      long long sum = 0;
+      for (int i = 0; i < n - 1; i++) sum += a[i];
+      cout << sum << endl;
+      return 0;
+  }
+correct_code: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int a[105];
+      for (int i = 0; i < n; i++) cin >> a[i];
+      long long sum = 0;
+      for (int i = 0; i < n; i++) sum += a[i];
+      cout << sum << endl;
+      return 0;
+  }
+test_cases:
+  - input: "3\n1 2 3\n"
+    expected_output: "6\n"
+  - input: "1\n5\n"
+    expected_output: "5\n"
+  - input: "4\n10 20 30 40\n"
+    expected_output: "100\n"
