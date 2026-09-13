@@ -1,0 +1,56 @@
+# Ruff configuration — Python backend linting.
+#
+# AGENTS.md §一 (工具链) declares Ruff as the backend linter. Until this
+# file existed it was declared but never configured *or installed*, so the
+# constraint was not actually in force (the same pattern PU-0 found with
+# Tailwind). Run it with:
+#
+#     sidecar/.venv/Scripts/python.exe -m pip install ruff
+#     ruff check .          # from the repository root
+#
+# `known-first-party` is not cosmetic. Without it Ruff classifies the
+# project's own package — `app`, located at sidecar/app and put on
+# sys.path by conftest.py — as third-party, and then "fixes" the import
+# grouping that every module in this codebase deliberately uses:
+#
+#     import os                    # stdlib
+#
+#     from sqlalchemy import ...   # third-party
+#
+#     from app.config import ...   # project
+#
+# into one alphabetically-sorted block. That is a real regression, and
+# `ruff --fix` did silently rewrite three files that way before this
+# configuration existed.
+
+line-length = 88
+target-version = "py311"
+
+# The desktop app is TypeScript/Vue and is linted by ESLint, not Ruff.
+# Alembic's versions/ holds generated migration scripts that are never
+# hand-edited.
+extend-exclude = [
+  "desktop",
+  "**/node_modules",
+  "sidecar/alembic/versions",
+]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "C4", "SIM", "UP"]
+ignore = [
+  # FastAPI's dependency-injection idiom *is* a call in an argument
+  # default (`q: str = Query(...)`). Flagging it would be noise, and
+  # "fixing" it would break the route signatures. This rule is meant for
+  # ordinary functions, not for functions whose signature is a declarative
+  # schema for a framework.
+  "B008",
+  # The codebase uses `Optional[X]` consistently (config.py, env_probe.py,
+  # judge.py, runner.py, ...). PEP 604 unions are a preference, not a
+  # defect, and rewriting ~13 sites would be churn unrelated to any slice.
+  # Revisit as its own change if the style should move.
+  "UP045", # Optional[X] -> X | None
+  "UP035", # typing.Optional -> collections.abc
+]
+
+[lint.isort]
+known-first-party = ["app"]

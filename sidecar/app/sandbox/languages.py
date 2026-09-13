@@ -33,7 +33,6 @@ driver), and that is not the case here.
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -186,7 +185,8 @@ public class Main {
         }
         // long a = Long.parseLong(st.nextToken());
 
-        PrintWriter out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(System.out)));
+        PrintWriter out = new PrintWriter(
+            new BufferedWriter(new OutputStreamWriter(System.out)));
         // your code here
         out.flush();
     }

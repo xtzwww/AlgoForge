@@ -286,7 +286,9 @@ def test_java_template_avoids_post_java8_syntax() -> None:
     assert "->" not in template, "switch arrows need Java 14+"
     assert '"""' not in template, "text blocks need Java 15+"
     # `instanceof` patterns (Java 16+).
-    assert not re.search(r"instanceof\s+\w+\s+\w+\)", template), "pattern instanceof needs Java 16+"
+    assert not re.search(r"instanceof\s+\w+\s+\w+\)", template), (
+        "pattern instanceof needs Java 16+"
+    )
 
 
 # ------------------------------------------- templates actually compile
