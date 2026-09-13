@@ -69,11 +69,40 @@ def test_missing_compiler_degrades_without_raising() -> None:
 
 
 def test_missing_javac_degrades_without_raising() -> None:
-    with patch("app.sandbox.env_probe.shutil.which", return_value=None):
+    """A javac that cannot be found must yield available=False, not a 500.
+
+    Patches the *setting* rather than ``shutil.which``: since PU-15 the
+    probe honours ``JAVA_COMPILER_PATH``, so a PATH-only patch would be
+    defeated on any machine whose JDK is configured explicitly (which is
+    the case on this one). Patching the setting tests the real contract.
+    """
+    with patch.object(env_probe.settings, "java_compiler_path", "definitely-not-javac"):
         result = env_probe.probe_java()
 
     assert result.available is False
-    assert "javac not found" in (result.detail or "")
+    assert result.version is None
+    # The message must be actionable, not just "not found": the realistic
+    # cause is a machine with a JRE but no JDK.
+    assert "definitely-not-javac" in (result.detail or "")
+    assert "JDK" in (result.detail or "")
+
+
+def test_java_probe_uses_configured_compiler_path() -> None:
+    """The probe must run the *configured* tool, not merely search PATH.
+
+    This is the regression guard for PU-15's fix: before it, a JDK in a
+    non-standard location was reported unavailable even though the sandbox
+    could have used it.
+    """
+    with patch.object(
+        env_probe.settings,
+        "java_compiler_path",
+        r"C:\nowhere\jdk\bin\javac.exe",
+    ):
+        result = env_probe.probe_java()
+
+    assert result.available is False
+    assert "javac.exe" in (result.detail or "")
 
 
 def test_env_check_survives_reachable_but_broken_database() -> None:

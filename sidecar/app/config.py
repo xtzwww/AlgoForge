@@ -11,6 +11,7 @@ Pydantic Settings reads from (in order of precedence):
 
 import os
 import secrets
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -28,7 +29,12 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    @field_validator("sidecar_port", "sidecar_token", mode="before")
+    @field_validator(
+        "sidecar_port",
+        "sidecar_token",
+        "python_interpreter_path",
+        mode="before",
+    )
     @classmethod
     def _blank_means_unset(cls, v: Any) -> Any:
         """Treat an empty string as "not set".
@@ -39,6 +45,12 @@ class Settings(BaseSettings):
         fail, so a blank value is normalized to ``None`` here. Without
         this, copying .env.example to .env and leaving the blanks as
         shipped would crash the sidecar on startup.
+
+        ``PYTHON_INTERPRETER_PATH`` is included because shipping it blank
+        is the documented way to say "use the sidecar's own interpreter".
+        Normalising to ``None`` keeps ``Optional`` meaning what it says
+        instead of having two spellings of "unset" (``None`` and ``""``)
+        that every caller would have to remember to check.
         """
         if isinstance(v, str) and not v.strip():
             return None
@@ -128,6 +140,50 @@ class Settings(BaseSettings):
         description="Timeout in seconds for compiled program execution",
     )
 
+    # ------------------------------------------------ Python Interpreter
+    python_interpreter_path: Optional[str] = Field(
+        default=None,
+        description=(
+            "Interpreter used to run Python submissions. None means "
+            "'use the interpreter running the sidecar itself' — the one "
+            "interpreter guaranteed to exist in this deployment (the "
+            "venv the sidecar was started from), which is a more honest "
+            "default than guessing at a system Python."
+        ),
+    )
+
+    # -------------------------------------------------------------- Java
+    # A full JDK is required: a JRE ships `java` but no `javac`, and
+    # without a compiler nothing can be judged. Both paths are bare
+    # command names by default so the sandbox stays portable; a machine
+    # with a JDK outside PATH (e.g. the 1.8.0_291 install on this dev
+    # box) points JAVA_COMPILER_PATH / JAVA_RUNTIME_PATH at it in .env.
+    java_compiler_path: str = Field(
+        default="javac",
+        description=(
+            "Path to the Java compiler (javac). Plain 'javac' means "
+            "'resolve from PATH'."
+        ),
+    )
+    java_runtime_path: str = Field(
+        default="java",
+        description=(
+            "Path to the Java launcher (java). Plain 'java' means "
+            "'resolve from PATH'."
+        ),
+    )
+    java_max_heap_mb: int = Field(
+        default=256,
+        ge=1,
+        description=(
+            "Heap cap passed to the JVM as -Xmx. Java needs an explicit "
+            "bound because the runner measures OS-level memory, which a "
+            "JVM trips on startup (it reserves tens of MB before running "
+            "any user code). With a capped heap the JVM instead raises "
+            "OutOfMemoryError at a predictable point."
+        ),
+    )
+
     # --------------------------------------------------------- Convenience
     @property
     def resolved_cors_origins(self) -> list[str]:
@@ -149,6 +205,33 @@ class Settings(BaseSettings):
         if os.sep not in self.cpp_compiler_path and "/" not in self.cpp_compiler_path:
             return ""
         return str(Path(self.cpp_compiler_path).parent)
+
+    @property
+    def resolved_python_interpreter(self) -> str:
+        """Interpreter used to run / syntax-check Python submissions.
+
+        Falls back to ``sys.executable`` so the sandbox uses the very
+        interpreter the sidecar is running under. That is deliberate: the
+        sidecar's own venv is the only interpreter we can be certain
+        exists, and it keeps the Python toolchain identical between the
+        application and any code it executes.
+        """
+        return self.python_interpreter_path or sys.executable
+
+    @property
+    def resolved_java_bin_dir(self) -> str:
+        """Directory to prepend to PATH so bare ``java``/``javac`` resolve.
+
+        Mirrors :attr:`resolved_compiler_bin_dir`: when the compiler path
+        is absolute we can infer the JDK's ``bin`` directory from it, which
+        is what makes a bare ``java`` setting work on a machine whose JDK
+        is not on PATH. Returns an empty string when the compiler is a bare
+        command name, in which case PATH already resolves it.
+        """
+        compiler = self.java_compiler_path
+        if os.sep not in compiler and "/" not in compiler:
+            return ""
+        return str(Path(compiler).parent)
 
     @property
     def resolved_sidecar_token(self) -> str:

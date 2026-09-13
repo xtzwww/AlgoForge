@@ -8,9 +8,10 @@ Why this module lives in ``sandbox/`` rather than ``api/``:
 AGENTS.md section 4 says ``api/`` must not hold business logic — routes
 should stay thin and delegate. Probing toolchains is sandbox concern.
 
-PU-15 note: this probing will be driven by ``LanguageSpec`` descriptors
-(``sandbox/languages.py``) once that lands. For now the probe table
-below is the single place that knows about compiler invocations.
+PU-15: probing is now driven by the ``LanguageSpec`` descriptors in
+``sandbox/languages.py``. Each probe runs exactly the version command the
+sandbox itself would run, resolved from the same configuration, so the
+self-check cannot drift away from what judging actually does.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -27,6 +27,13 @@ from sqlalchemy import create_engine, text
 
 from app.config import settings
 from app.db import _resolve_sync_url
+from app.sandbox.languages import (
+    CPP_SPEC,
+    JAVA_SPEC,
+    PYTHON_SPEC,
+    LanguageSpec,
+    all_languages,
+)
 
 # Version probes are short-lived; a hung compiler should not stall startup.
 _PROBE_TIMEOUT = 5
@@ -105,78 +112,78 @@ def _resolve_executable(command: str) -> Optional[str]:
     return shutil.which(command)
 
 
-def probe_cpp() -> ProbeResult:
-    """Probe the configured C++ compiler."""
-    compiler = settings.cpp_compiler_path
-    ok, version, error = _run_version_command([compiler, "--version"])
-    resolved = _resolve_executable(compiler)
+# Language-specific guidance appended when a toolchain cannot be run.
+# A bare "not found" tells the user nothing they can act on; naming the
+# setting to change turns a red badge into a fix.
+_INSTALL_HINTS = {
+    "cpp": "Install a C++ toolchain (MinGW-w64) and point CPP_COMPILER_PATH at it.",
+    "python": "Point PYTHON_INTERPRETER_PATH at a working interpreter.",
+    "java": (
+        "A JDK is required — a JRE cannot compile. Install a JDK and point "
+        "JAVA_COMPILER_PATH at its bin\\javac."
+    ),
+}
+
+
+def _probe_language(spec: LanguageSpec) -> ProbeResult:
+    """Probe one language by running the version command from its spec.
+
+    Driving this from the descriptor rather than from a hardcoded command
+    is what makes a *configured* toolchain discoverable: the probe runs
+    exactly the tool the sandbox would run, resolved from the same setting.
+    Before PU-15 the Java probe only searched PATH, so a machine with a
+    perfectly good JDK in a non-standard location reported Java as
+    unusable even when the sandbox could have used it.
+    """
+    argv = spec.version_cmd()
+    tool = argv[0]
+
+    resolved = _resolve_executable(tool)
+    if resolved is None:
+        return ProbeResult(
+            id=spec.id,
+            display_name=spec.display_name,
+            available=False,
+            version=None,
+            path=None,
+            detail=f"{tool} not found. {_INSTALL_HINTS[spec.id]}",
+        )
+
+    ok, version, error = _run_version_command(argv)
     return ProbeResult(
-        id="cpp",
-        display_name="C++",
+        id=spec.id,
+        display_name=spec.display_name,
         available=ok,
         version=version if ok else None,
         path=resolved,
-        detail=None if ok else (error or "compiler not runnable"),
+        detail=None if ok else f"{error or 'not runnable'}. {_INSTALL_HINTS[spec.id]}",
     )
 
 
+def probe_cpp() -> ProbeResult:
+    """Probe the configured C++ compiler."""
+    return _probe_language(CPP_SPEC)
+
+
 def probe_python() -> ProbeResult:
-    """Probe the Python interpreter used to run Python submissions.
+    """Probe the interpreter used to run Python submissions.
 
     Defaults to the interpreter running the sidecar itself. That is the
     one interpreter guaranteed to exist in this deployment (the venv the
     sidecar was started from), so it is the honest default rather than a
-    guess at some system Python.
-
-    PU-15 will introduce an explicit ``python_interpreter_path`` setting
-    so submissions can be pointed at a separate interpreter.
+    guess at some system Python. ``PYTHON_INTERPRETER_PATH`` overrides it
+    when submissions must run on a different interpreter.
     """
-    interpreter = sys.executable
-    ok, version, error = _run_version_command([interpreter, "--version"])
-    return ProbeResult(
-        id="python",
-        display_name="Python",
-        available=ok,
-        version=version if ok else None,
-        path=interpreter,
-        detail=None if ok else (error or "interpreter not runnable"),
-    )
+    return _probe_language(PYTHON_SPEC)
 
 
 def probe_java() -> ProbeResult:
-    """Probe for a JDK (``javac`` — compilation needs the full JDK).
+    """Probe the configured JDK (``javac`` — compiling needs a full JDK).
 
-    On this machine the only JDK is 1.8.0_291 at
-    ``C:\\Program Files\\Java\\jdk1.8.0_291`` and it is **not on PATH**,
-    so this probe reports unavailable until PU-15 wires an explicit
-    ``java_compiler_path`` setting. That is intentional: PU-3 only
-    reports reality, it does not install or configure a JDK.
+    ``javac`` is the right probe target, not ``java``: every JRE ships a
+    ``java`` launcher and still cannot compile a single submission.
     """
-    javac = "javac"
-    resolved = shutil.which(javac)
-
-    if resolved is None:
-        return ProbeResult(
-            id="java",
-            display_name="Java",
-            available=False,
-            version=None,
-            path=None,
-            detail=(
-                "javac not found on PATH. A JDK is required (a JRE alone "
-                "cannot compile). Set JAVA_COMPILER_PATH once PU-15 lands."
-            ),
-        )
-
-    ok, version, error = _run_version_command([javac, "-version"])
-    return ProbeResult(
-        id="java",
-        display_name="Java",
-        available=ok,
-        version=version if ok else None,
-        path=resolved,
-        detail=None if ok else (error or "javac not runnable"),
-    )
+    return _probe_language(JAVA_SPEC)
 
 
 def sandbox_tmp_base() -> Path:
@@ -301,8 +308,11 @@ def probe_all() -> dict:
     Never raises: each probe degrades into ``available=False`` plus a
     ``detail`` explaining why. A startup check that can itself fail is
     not much of a startup check.
+
+    The language list comes from the registry, so registering a fourth
+    language extends this report with no change here.
     """
-    languages = [probe_cpp(), probe_python(), probe_java()]
+    languages = [_probe_language(spec) for spec in all_languages()]
     return {
         "languages": [p.to_dict() for p in languages],
         "database": probe_database().to_dict(),
