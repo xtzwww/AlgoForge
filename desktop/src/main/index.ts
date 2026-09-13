@@ -2,7 +2,18 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { startSidecar, stopSidecar, getSidecarInfo } from './sidecar'
+import { startSidecar, stopSidecar, getSidecarInfo, installExitHook } from './sidecar'
+
+// PU-1: catch abnormal exits (crash, uncaught exception) that would
+// otherwise skip the orderly teardown and leave uvicorn running.
+installExitHook()
+
+/**
+ * PU-1: guards the two-pass quit sequence below. `before-quit` fires,
+ * we preventDefault to run async cleanup, then call app.quit() again —
+ * this flag stops the second pass from re-entering cleanup.
+ */
+let teardownStarted = false
 
 function createWindow(): void {
   // Create the browser window.
@@ -80,10 +91,29 @@ app.whenReady().then(async () => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
-  stopSidecar()
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// PU-1: tear the sidecar down before the app actually exits.
+//
+// The previous code called stopSidecar() and then app.quit() immediately.
+// stopSidecar() only worked synchronously back then, so Electron could
+// finish quitting first and leave the uvicorn process tree orphaned.
+// Now we hold the quit with preventDefault() until the tree is gone.
+app.on('before-quit', (event) => {
+  if (teardownStarted) return // second pass — cleanup already done
+  event.preventDefault()
+  teardownStarted = true
+
+  stopSidecar()
+    .catch((err) => {
+      console.error('[main] sidecar teardown failed:', (err as Error).message)
+    })
+    .finally(() => {
+      app.quit()
+    })
 })
 
 // In this file you can include the rest of your app's specific main process
