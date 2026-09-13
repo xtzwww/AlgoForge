@@ -194,7 +194,19 @@ def run_executable(
     # sampling cadence.
     try:
         mon = psutil.Process(proc.pid)
-    except psutil.NoSuchProcess:
+    except psutil.Error:
+        # The process may already be gone (NoSuchProcess) or it may exist
+        # in a state we are not allowed to inspect — on Windows the handle
+        # can be refused while the process is being torn down, which
+        # surfaces as AccessDenied (a PermissionError subclass). Either
+        # way the sole consequence is that this run gets no memory
+        # sampling; the verdict is produced from the exit status instead.
+        #
+        # Catching psutil.Error rather than just NoSuchProcess matters:
+        # run_executable documents that it never raises for process-level
+        # failures, and an escaping AccessDenied would turn an ordinary
+        # submission into a 500. It also caused an intermittent test
+        # failure whose cause looked unrelated to memory limits.
         mon = None
 
     # The wait window is split into _SAMPLES_PER_POLL sub-intervals so

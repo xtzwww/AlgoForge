@@ -15,6 +15,7 @@ P1-13's ``judge_output`` is reused for the AC/WA comparison.
 
 from __future__ import annotations
 
+import os
 import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
@@ -190,6 +191,42 @@ def _aggregate_status(per_case: list[JudgeStatus]) -> JudgeStatus:
     return min(per_case, key=_STATUS_PRIORITY.index)
 
 
+def _judge_tmpdir() -> tempfile.TemporaryDirectory:
+    """Create the scratch directory used by one judging run.
+
+    Two things here are deliberate:
+
+    **The location.** On Windows this is ``C:\\Windows\\Temp`` rather than
+    the OS default. The default is derived from the user profile, which on
+    this machine contains CJK characters ("雪团子"), and MinGW's linker
+    cannot open output files on non-ASCII paths — every compile would fail
+    with an opaque linker error.
+
+    **``ignore_cleanup_errors=True``.** Not a convenience: it is a fix.
+    The judged binary lives in this directory and is killed on TLE/MLE.
+    On Windows a killed process can still hold a handle to its own
+    executable for a short while, and ``shutil.rmtree`` then fails with
+    ``PermissionError`` while unwinding the context manager — so the
+    exception escaped ``judge()`` itself. That surfaced as an intermittent
+    failure of the MLE test that only appeared under full-suite load, and
+    in production it would turn an ordinary submission into a 500 because
+    the judge could not delete its own scratch files. A stray directory in
+    the temp folder is the much lesser problem.
+    """
+    if os.name == "nt":
+        base = Path(r"C:\Windows\Temp") / "algoforge_judge"
+        base.mkdir(parents=True, exist_ok=True)
+        return tempfile.TemporaryDirectory(
+            prefix="judge_",
+            dir=str(base),
+            ignore_cleanup_errors=True,
+        )
+    return tempfile.TemporaryDirectory(
+        prefix="algoforge_judge_",
+        ignore_cleanup_errors=True,
+    )
+
+
 def judge(
     code: str,
     test_cases: list[TestCase],
@@ -238,25 +275,9 @@ def judge(
     """
     # The source and binary live in a temp dir that we own for the
     # duration of judging. The binary is reused across all cases.
-    # Use C:\Windows\Temp on Windows: MinGW's linker cannot open output
-    # files on non-ASCII paths (the user profile contains "雪团子"), and
-    # the default tempfile dir lives under that profile.
-    import os
-
-    if os.name == "nt":
-        _ascii_tmp_base = Path(r"C:\Windows\Temp") / "algoforge_judge"
-    else:
-        _ascii_tmp_base = None  # POSIX default is fine
-
-    if _ascii_tmp_base is not None:
-        _ascii_tmp_base.mkdir(parents=True, exist_ok=True)
-        tmpdir_ctx = tempfile.TemporaryDirectory(
-            prefix="judge_", dir=str(_ascii_tmp_base)
-        )
-    else:
-        tmpdir_ctx = tempfile.TemporaryDirectory(prefix="algoforge_judge_")
-
-    with tmpdir_ctx as tmpdir:
+    # See _judge_tmpdir() for why it is located where it is and why
+    # cleanup failures are tolerated.
+    with _judge_tmpdir() as tmpdir:
         tmp = Path(tmpdir)
         src_path = tmp / "main.cpp"
         src_path.write_text(code, encoding="utf-8")

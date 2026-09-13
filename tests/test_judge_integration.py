@@ -18,6 +18,13 @@ here because ``judge`` manages its own temp directory (under
 
 from __future__ import annotations
 
+import os
+import shutil
+from pathlib import Path
+
+import pytest
+
+from app.sandbox import judge as judge_module
 from app.sandbox.judge import JudgeResult, JudgeStatus, TestCase, judge
 
 # --- C++ fixtures ------------------------------------------------------
@@ -203,3 +210,67 @@ def test_judge_to_dict_round_trip() -> None:
     assert d["test_cases"][0]["expected_output"] == "3\n"
     assert "actual_output" in d["test_cases"][0]
     assert "exit_code" in d["test_cases"][0]
+
+
+# --- scratch directory policy ------------------------------------------
+#
+# These two tests cover `judge._judge_tmpdir`, an internal seam on purpose:
+# the scratch directory's location and its cleanup behaviour are both
+# load-bearing for correctness, and neither is observable from a verdict
+# alone until something goes wrong in production.
+
+
+def test_scratch_dir_cleanup_tolerates_a_locked_file() -> None:
+    """Regression test for an intermittent MLE failure.
+
+    On TLE/MLE the judged binary is killed, but on Windows it can still
+    hold a handle to its own executable when the scratch directory is
+    unwound. ``shutil.rmtree`` then raised ``PermissionError`` *out of*
+    ``judge()`` — so a submission that merely tripped the memory limit
+    could surface as an HTTP 500 instead of an MLE verdict.
+
+    Reaching the end of the ``with`` block without an exception is the
+    assertion. On POSIX an open handle does not block deletion, so this
+    only exercises the real failure mode on Windows; it is kept running
+    everywhere because it costs nothing and still guards the flag.
+    """
+    handle = None
+    created: str | None = None
+    try:
+        with judge_module._judge_tmpdir() as tmpdir:
+            created = tmpdir
+            locked = Path(tmpdir) / "main.exe"
+            locked.write_text("simulates a killed process's binary", encoding="utf-8")
+            handle = locked.open("r", encoding="utf-8")
+            # `handle` stays open across the exit below.
+    finally:
+        if handle is not None:
+            handle.close()
+        if created is not None:
+            shutil.rmtree(created, ignore_errors=True)
+
+
+def test_scratch_dir_is_created_with_cleanup_errors_ignored() -> None:
+    """Platform-independent guard for the same fix.
+
+    The lock-based test above proves the behaviour on Windows but passes
+    trivially elsewhere, so the flag itself is pinned here as well.
+    """
+    ctx = judge_module._judge_tmpdir()
+    try:
+        assert ctx._ignore_cleanup_errors is True
+    finally:
+        ctx.cleanup()
+
+
+def test_scratch_dir_avoids_the_non_ascii_user_profile() -> None:
+    """MinGW's linker cannot open output files on non-ASCII paths.
+
+    The default tempfile location derives from the user profile, which
+    contains CJK characters on this machine.
+    """
+    if os.name != "nt":
+        pytest.skip("the non-ASCII-path constraint is specific to MinGW on Windows")
+
+    with judge_module._judge_tmpdir() as tmpdir:
+        assert str(tmpdir).startswith(r"C:\Windows\Temp")
