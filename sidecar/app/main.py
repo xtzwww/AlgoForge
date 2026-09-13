@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api.health import router as health_router
+from app.api.env_check import router as env_check_router
 from app.api.run_code import router as run_code_router
 from app.api.judge import router as judge_router
 from app.api.ws import router as ws_router
@@ -42,6 +43,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(env_check_router)
 app.include_router(run_code_router)
 app.include_router(judge_router)
 app.include_router(ws_router)

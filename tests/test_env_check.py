@@ -1,0 +1,139 @@
+"""Tests for the environment self-check endpoint (PU-3).
+
+The endpoint's contract is that it **never fails**: a probe that cannot
+find its toolchain must degrade to ``available: false`` plus a human
+readable ``detail``, not raise a 500. These tests pin that down, because
+the whole point of env-check is to be runnable on a machine where things
+are missing.
+"""
+
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+from app.main import app
+from app.sandbox import env_probe
+
+client = TestClient(app)
+
+
+# --------------------------------------------------------------- route
+
+
+def test_env_check_returns_200() -> None:
+    response = client.get("/api/v1/env-check")
+    assert response.status_code == 200
+
+
+def test_env_check_has_expected_top_level_keys() -> None:
+    body = client.get("/api/v1/env-check").json()
+    assert set(body) >= {"languages", "database", "sandbox_tmp", "core_ready"}
+
+
+def test_env_check_reports_all_three_languages() -> None:
+    """C++ / Python / Java must all be reported, available or not."""
+    languages = client.get("/api/v1/env-check").json()["languages"]
+    assert {lang["id"] for lang in languages} == {"cpp", "python", "java"}
+
+
+def test_env_check_language_entries_are_well_formed() -> None:
+    languages = client.get("/api/v1/env-check").json()["languages"]
+    for lang in languages:
+        assert set(lang) == {
+            "id",
+            "display_name",
+            "available",
+            "version",
+            "path",
+            "detail",
+        }
+        assert isinstance(lang["available"], bool)
+        # The contract: unavailable implies an explanation, and no
+        # version string is claimed for something we could not run.
+        if not lang["available"]:
+            assert lang["detail"], f"{lang['id']} unavailable without a detail"
+            assert lang["version"] is None
+
+
+# ------------------------------------------------------ degradation
+
+
+def test_missing_compiler_degrades_without_raising() -> None:
+    """A nonexistent C++ compiler must yield available=False, not a 500."""
+    with patch.object(env_probe.settings, "cpp_compiler_path", "definitely-not-a-compiler"):
+        result = env_probe.probe_cpp()
+
+    assert result.available is False
+    assert result.detail
+    assert result.version is None
+
+
+def test_missing_javac_degrades_without_raising() -> None:
+    with patch("app.sandbox.env_probe.shutil.which", return_value=None):
+        result = env_probe.probe_java()
+
+    assert result.available is False
+    assert "javac not found" in (result.detail or "")
+
+
+def test_env_check_survives_reachable_but_broken_database() -> None:
+    """An unreachable DB must be reported, not propagated.
+
+    This is the realistic case on a dev machine with Postgres stopped.
+    """
+    with patch.object(
+        env_probe.settings,
+        "database_url",
+        "postgresql+asyncpg://nobody:nobody@127.0.0.1:1/nope",
+    ):
+        result = env_probe.probe_database()
+
+    assert result.available is False
+    assert result.version == "postgresql"  # dialect still reported
+    assert result.detail
+
+
+def test_env_check_never_raises_on_empty_database_url() -> None:
+    with patch.object(env_probe.settings, "database_url", ""):
+        result = env_probe.probe_database()
+
+    assert result.available is False
+    assert result.detail == "DATABASE_URL is empty"
+
+
+# ---------------------------------------------------- probe_all()
+
+
+def test_probe_all_is_json_serialisable() -> None:
+    """The route returns this straight to the client — it must serialise."""
+    import json
+
+    report = env_probe.probe_all()
+    assert json.loads(json.dumps(report)) == report
+
+
+def test_core_ready_reflects_language_availability() -> None:
+    """core_ready is True when at least one language can actually run."""
+    report = env_probe.probe_all()
+    assert report["core_ready"] is any(lang["available"] for lang in report["languages"])
+
+
+# ------------------------------------------------- sandbox temp dir
+
+
+def test_sandbox_tmp_base_is_ascii_on_windows() -> None:
+    """MinGW's linker cannot write to non-ASCII paths.
+
+    The user profile on this machine contains CJK characters, so the
+    sandbox temp base must not live under it on Windows.
+    """
+    import os
+
+    base = env_probe.sandbox_tmp_base()
+    if os.name == "nt":
+        assert str(base).startswith("C:\\Windows\\Temp")
+
+
+def test_sandbox_tmp_is_actually_writable() -> None:
+    result = env_probe.probe_sandbox_tmp()
+    assert result.available is True, result.detail

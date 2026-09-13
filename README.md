@@ -166,7 +166,9 @@ CPP_COMPILER_PATH=D:\BaiduNetdiskDownload\dev\ucrt64\bin\g++.exe
 > `CPP_COMPILER_BIN_DIR` 默认取 g++ 所在目录（MinGW 运行 DLL 需要它），一般无需设置。
 >
 > `SIDECAR_PORT` / `SIDECAR_TOKEN` 留空 = 启动时随机生成（AGENTS.md 要求）。
-> 本地跑脚本启动时为了日志和调试方便，默认固定用 8000。
+> 正常启动路径下无需设置：Electron 主进程会自己挑一个空闲端口并生成 Token，
+> 再通过 IPC 传给渲染进程（见 `desktop/src/main/sidecar.ts`）。
+> 只有想手动 `curl` 调试后端时才需要显式固定端口。
 
 ### 启动开发环境
 
@@ -176,20 +178,29 @@ docker run -d --name milvus -p 19530:19530 milvusdb/milvus:latest
 
 # 2. 启动 PostgreSQL
 # Windows: 安装后确保服务运行，创建数据库 algoforge
+# 未启动时应用仍可运行，只是错题本/画像/复习无数据持久化；
+# 可用 GET /api/v1/env-check 查看各组件是否就绪。
 
-# 3. 后端
+# 3. 后端依赖 + 建表（只做一次）
 cd sidecar
 pip install -r requirements.txt
 alembic upgrade head              # 读取 DATABASE_URL，无需改 alembic.ini
-uvicorn app.main:app --reload --port 8000
 
-# 4. 前端
+# 4. 前端（会一并拉起 sidecar）
 cd desktop
 npm install
 npm run dev
 ```
 
+> **sidecar 不需要单独启动。** 第 4 步的 `npm run dev` 启动 Electron 后，
+> 主进程会用随机端口 + 随机 Token 拉起 sidecar，等 `/health` 通过再显示窗口，
+> 退出时连同 uvicorn 的子进程一起清理。sidecar 日志以前缀 `[sidecar]`
+> 混在 Electron 的终端输出里。
+
 也可以直接用根目录的一键脚本：`start.bat` 或 `start.ps1`。
+两个脚本现在只负责「把 Node 加进 PATH + 交给 `npm run dev`」，
+不再各自启动一份 sidecar（旧版会因此多开一个控制台窗口，且与 Electron
+的启动参数不一致）。
 
 ### 测试
 

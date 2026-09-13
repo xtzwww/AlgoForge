@@ -1,53 +1,64 @@
 # ============================================================
 #  AlgoForge launcher (PowerShell)
-#  Double-click the desktop shortcut to start sidecar + desktop.
+#
+#  PU-3: this script no longer starts the sidecar.
+#
+#  Electron's main process owns the sidecar lifecycle now (see
+#  desktop/src/main/sidecar.ts, PU-1): it picks a free random port,
+#  generates the auth token, spawns uvicorn with `windowsHide` so no
+#  console flashes, waits for /health, and tears down the whole process
+#  tree on exit.
+#
+#  The old script started *its own* sidecar on a fixed port 8000 via
+#  `Start-Process powershell.exe`. That caused three problems:
+#    1. an extra console window (the "black boxes" at startup),
+#    2. two sidecars running from two different code paths,
+#    3. the two paths disagreed (fixed vs random port, --reload or not),
+#       which made "works on my machine" reports impossible to trust.
+#
+#  What is left is what a launcher should be: put Node on PATH and hand
+#  over to the dev server. Everything else is the app's job.
 #
 #  Prereqs:
 #    - Node.js installed at d:\node
 #    - sidecar/.venv created
-#    - desktop/node_modules installed
-#
-#  Note on ports: the sidecar defaults to a RANDOM free port and a
-#  random auth token (AGENTS.md: "Sidecar 监听随机端口 + Token 鉴权").
-#  This script pins a fixed port for convenience during development so
-#  the log file and any curl/browser testing stay predictable. Set
-#  $SidecarPort = 0 to fall back to the random-port behavior.
+#    - desktop/node_modules installed (npm install)
 # ============================================================
 
 $ErrorActionPreference = 'Stop'
 
-# --- Path constants ---
 $ProjectRoot = 'd:\BaiduNetdiskDownload\AlgoForge'
-$SidecarDir  = Join-Path $ProjectRoot 'sidecar'
 $DesktopDir  = Join-Path $ProjectRoot 'desktop'
 $NodeDir     = 'd:\node'
-$SidecarPort = 8000
 
-# --- Append node/npm to PATH ---
+# --- Fail fast with an actionable message ---------------------------
+if (-not (Test-Path $DesktopDir)) {
+    Write-Host "[error] desktop directory not found: $DesktopDir" -ForegroundColor Red
+    exit 1
+}
+
+if (-not (Test-Path (Join-Path $DesktopDir 'node_modules'))) {
+    Write-Host '[error] desktop/node_modules is missing.' -ForegroundColor Red
+    Write-Host '        Run: cd desktop ; npm install' -ForegroundColor Yellow
+    exit 1
+}
+
+if (-not (Test-Path (Join-Path $ProjectRoot 'sidecar\.venv\Scripts\python.exe'))) {
+    Write-Host '[error] sidecar/.venv is missing.' -ForegroundColor Red
+    Write-Host '        Run: cd sidecar ; python -m venv .venv ; .venv\Scripts\pip install -r requirements.txt' -ForegroundColor Yellow
+    exit 1
+}
+
+# --- Node on PATH ---------------------------------------------------
+# Appended rather than prepended so an already-working system install
+# is not shadowed.
 $env:PATH = "$env:PATH;$NodeDir;$NodeDir\node_modules\.bin"
 
-# --- Start sidecar (background process, log to file) ---
-Write-Host '[start] Sidecar (FastAPI)...' -ForegroundColor Cyan
-$sidecarLog = Join-Path $SidecarDir 'sidecar.log'
-$sidecarProc = Start-Process -FilePath 'powershell.exe' `
-    -ArgumentList "-NoProfile -Command `"& { Set-Location '$SidecarDir'; & '.\.venv\Scripts\python.exe' -m uvicorn app.main:app --host 127.0.0.1 --port $SidecarPort --reload *>&1 | Tee-Object -FilePath '$sidecarLog' }`"" `
-    -WindowStyle Minimized -PassThru
-
-Write-Host "[info] Sidecar PID: $($sidecarProc.Id), port: $SidecarPort, log: $sidecarLog"
-
-# --- Wait for sidecar to come up (3s) ---
-Write-Host '[wait] 3s for sidecar to start...' -ForegroundColor Yellow
-Start-Sleep -Seconds 3
-
-# --- Start desktop (foreground, logs to console) ---
-Write-Host '[start] Desktop (Electron)...' -ForegroundColor Cyan
-Write-Host '[hint] Closing this window stops desktop. Sidecar window must be closed separately.' -ForegroundColor Yellow
+# --- Hand over to the dev server ------------------------------------
+# The sidecar is started by Electron; watch its log in this terminal
+# under the "[sidecar]" prefix.
+Write-Host '[start] AlgoForge (Electron + sidecar)...' -ForegroundColor Cyan
+Write-Host '[hint]  sidecar 由 Electron 主进程拉起，日志前缀为 [sidecar]' -ForegroundColor DarkGray
 
 Set-Location $DesktopDir
 & npm run dev
-
-# --- Clean up sidecar after desktop exits ---
-if (-not $sidecarProc.HasExited) {
-    Write-Host '[cleanup] Stopping Sidecar...' -ForegroundColor Yellow
-    Stop-Process -Id $sidecarProc.Id -Force -ErrorAction SilentlyContinue
-}
