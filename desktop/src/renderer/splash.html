@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AlgoForge</title>
+    <!--
+      PU-2: the splash is a separate renderer entry so the main Vue bundle
+      (9 MB with Monaco) does not have to load before anything appears.
+      Its only job is to render instantly and narrate startup progress.
+    -->
+    <link rel="stylesheet" href="./src/assets/splash.css" />
+  </head>
+  <body>
+    <div class="splash" id="splash">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path
+              d="M24 5 L41 15 L41 33 L24 43 L7 33 L7 15 Z"
+              stroke="url(#g)"
+              stroke-width="2.5"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M17 31 L24 15 L31 31"
+              stroke="url(#g)"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path d="M20 26.5 H28" stroke="url(#g)" stroke-width="2.5" stroke-linecap="round" />
+            <defs>
+              <linearGradient id="g" x1="7" y1="5" x2="41" y2="43" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#6ba1ff" />
+                <stop offset="1" stop-color="#4f8cff" />
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <h1 class="wordmark">AlgoForge</h1>
+        <p class="tagline">算法竞赛错因分析</p>
+      </div>
+
+      <div class="progress-area">
+        <!--
+          Indeterminate, deliberately: sidecar cold start varies with disk
+          and antivirus, so a fake percentage would jump around and look
+          cheap. The bar sweeps; the caption below states the real stage.
+        -->
+        <div class="bar" role="progressbar" aria-label="启动进度">
+          <div class="bar-fill"></div>
+        </div>
+        <p class="status" id="status">初始化运行时…</p>
+      </div>
+    </div>
+
+    <script>
+      // Status text is driven by the main process (real stages, not a
+      // timer). Exposed through a dedicated preload that only carries
+      // this one channel.
+      const statusEl = document.getElementById('status')
+      const splashEl = document.getElementById('splash')
+
+      if (window.algoforgeSplash) {
+        window.algoforgeSplash.onStatus((text) => {
+          statusEl.textContent = text
+        })
+
+        // Main process asks for the fade-out once the real window is
+        // ready to show; it destroys the window after the animation.
+        window.algoforgeSplash.onFadeOut(() => {
+          splashEl.classList.add('is-leaving')
+        })
+      }
+    </script>
+  </body>
+</html>

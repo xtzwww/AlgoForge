@@ -21,6 +21,54 @@
   transition: filter 300ms;
 }
 
+/* ============================================================
+ * PU-2: main-window entrance
+ *
+ * Applied when the main process signals that the splash is handing
+ * over (see preload `algoforge.app.onReveal`). It is NOT a load-time
+ * animation: the window is created hidden and only revealed once the
+ * sidecar passes its health check, so a load-time animation would have
+ * finished long before anything was visible.
+ *
+ * No `both`/`forwards` fill, so no residual transform is left on the
+ * root — a lingering `transform` would turn html/#app into a containing
+ * block for `position: fixed` descendants.
+ * ============================================================ */
+@keyframes af-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes af-window-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+html.af-revealed {
+  animation: af-fade-in 200ms var(--af-ease);
+}
+
+html.af-revealed #app {
+  animation: af-window-in 250ms var(--af-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.af-revealed,
+  html.af-revealed #app {
+    animation: none;
+  }
+}
+
 .logo:hover {
   filter: drop-shadow(0 0 1.2em #6988e6aa);
 }

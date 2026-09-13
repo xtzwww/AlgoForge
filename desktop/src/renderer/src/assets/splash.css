@@ -1,0 +1,190 @@
+/* ============================================================
+ * Splash screen styles (PU-2)
+ *
+ * Colours come from the shared tokens (PU-0) so the splash and the app
+ * cannot drift apart. Only the splash-specific layout lives here.
+ * ============================================================ */
+
+@import './tokens.css';
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent; /* window itself is transparent -> rounded corners */
+  user-select: none;
+  cursor: default;
+  -webkit-font-smoothing: antialiased;
+}
+
+.splash {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 28px 32px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-radius: 14px;
+  background: var(--af-canvas);
+  border: 1px solid var(--af-border);
+  box-shadow: var(--af-shadow-lg);
+  overflow: hidden;
+
+  /* Entrance: the window appears the instant the process starts, so a
+   * short fade avoids the "flash of unstyled content" feel while the
+   * first frame paints. */
+  animation: af-splash-in 220ms var(--af-ease) both;
+
+  transition:
+    opacity 200ms var(--af-ease),
+    transform 200ms var(--af-ease);
+}
+
+/* A soft accent glow, purely decorative. */
+.splash::before {
+  content: '';
+  position: absolute;
+  top: -40%;
+  left: 50%;
+  width: 320px;
+  height: 320px;
+  margin-left: -160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(79, 140, 255, 0.16) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+@keyframes af-splash-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Applied by the main process just before the real window is shown. */
+.splash.is-leaving {
+  opacity: 0;
+  transform: scale(0.985);
+}
+
+/* ---------------- Brand ---------------- */
+
+.brand {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  flex: 1;
+  justify-content: center;
+}
+
+.mark {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 14px;
+
+  /* A slow breathe — enough to signal "alive" without being a spinner. */
+  animation: af-breathe 2.4s var(--af-ease) infinite;
+}
+
+.mark svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+@keyframes af-breathe {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.wordmark {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: 0.4px;
+  color: var(--af-text-primary);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.tagline {
+  margin: 6px 0 0;
+  font-size: 12px;
+  letter-spacing: 1.2px;
+  color: var(--af-text-muted);
+}
+
+/* ---------------- Progress ---------------- */
+
+.progress-area {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.bar {
+  position: relative;
+  height: 3px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--af-border);
+  overflow: hidden;
+}
+
+.bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--af-accent), transparent);
+  animation: af-indeterminate 1.15s var(--af-ease) infinite;
+}
+
+@keyframes af-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+.status {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--af-text-secondary);
+  min-height: 16px; /* reserve the line so text swaps do not shift layout */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Respect users who have asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .splash,
+  .mark,
+  .bar-fill {
+    animation: none;
+  }
+  .splash {
+    transition: opacity 120ms linear;
+  }
+  .splash.is-leaving {
+    transform: none;
+  }
+}
