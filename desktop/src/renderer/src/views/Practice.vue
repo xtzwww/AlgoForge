@@ -4,7 +4,7 @@
  *
  * Layout:
  *   ┌── Problem panel (left) ──┬── Code editor + Output panel (right) ──┐
- *   │  description + cases    │  Monaco editor                          │
+ *   │  description + cases    │  language picker + Monaco editor       │
  *   │                         │  [运行判题] button                       │
  *   │                         │  OutputPanel (WS stream + final result) │
  *   └─────────────────────────┴─────────────────────────────────────────┘
@@ -17,12 +17,32 @@
  * - Assembles the final JudgeResponse from the terminal judge_done
  *   event + the per-case case_done events (the test_cases' expected
  *   output is already known client-side, so no second HTTP call).
+ *
+ * PU-17 adds the language picker:
+ * - The list of languages — and which of them this machine can actually
+ *   build — comes from the sidecar's env-check, not from a hardcoded
+ *   array. See `api/languages.ts` for why.
+ * - Switching language loads that language's starter template, after
+ *   confirming when the buffer holds edits the user would lose.
+ * - The chosen language is sent with the judge request; judging Python
+ *   source as C++ would report nothing but CE.
+ *
+ * The problem description and test cases are still hardcoded (A + B).
+ * Replacing them with a real problem catalogue is PU-11/PU-12/PU-14 —
+ * this slice deliberately left them alone, which is also why the buffer
+ * starts as a *working C++ solution* rather than as `CPP_SPEC
+ * .default_template`: it is what makes the page demoable today.
  */
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import OutputPanel from '../components/OutputPanel.vue'
 import { streamJudge, type JudgeEvent } from '../api/ws'
 import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
+import {
+  getLanguageOptions,
+  pickDefaultLanguage,
+  type LanguageOption,
+} from '../api/languages'
 
 // --- Problem definition (A + B) ---
 const problemTitle = 'A + B Problem'
@@ -39,6 +59,14 @@ const testCases: TestCaseIn[] = [
   { input: '10 20', expected_output: '30' },
 ]
 
+/**
+ * The problem's language. Hardcoded for now because the problem itself
+ * is (see the header note); PU-14 will read it off the problem record,
+ * at which point a problem that ships Python samples stops opening a
+ * C++ editor.
+ */
+const DEFAULT_PROBLEM_LANGUAGE = 'cpp'
+
 // --- Editor state ---
 const code = ref<string>(`#include <iostream>
 using namespace std;
@@ -51,11 +79,106 @@ int main() {
 }
 `)
 
+/**
+ * The buffer's contents as this page last set them.
+ *
+ * Comparing `code` against this is how the page decides whether the user
+ * has typed something that a language switch would silently destroy.
+ * Tracking a boolean instead would go stale as soon as the user undid
+ * their edits back to the original.
+ */
+const pristineCode = ref<string>(code.value)
+
+// --- Language state ---
+const languages = ref<LanguageOption[]>([])
+const languageId = ref<string>(DEFAULT_PROBLEM_LANGUAGE)
+const catalogueError = ref<string>('')
+
+const selectedLanguage = computed<LanguageOption | null>(
+  () => languages.value.find((o) => o.id === languageId.value) ?? null,
+)
+
+/**
+ * Monaco's language id. The sandbox's id (`"cpp"`) and Monaco's happen to
+ * match for all three languages today, but they are different namespaces:
+ * the sidecar reports both and this is the one the editor wants.
+ */
+const monacoLanguage = computed<string>(() => selectedLanguage.value?.monaco_language ?? 'cpp')
+
+const unavailableLanguages = computed<LanguageOption[]>(() =>
+  languages.value.filter((o) => !o.available),
+)
+
 // --- Judge state ---
 const isRunning = ref(false)
 const events = ref<JudgeEvent[]>([])
 const result = ref<JudgeResponse | null>(null)
 const errorMsg = ref<string>('')
+
+onMounted(async () => {
+  try {
+    const options = await getLanguageOptions()
+    languages.value = options
+
+    const preferred = pickDefaultLanguage(options)
+    if (!preferred) {
+      catalogueError.value =
+        '未检测到任何可用的编译环境，暂时无法判题。请检查下方各语言不可用的原因。'
+      return
+    }
+
+    languageId.value = preferred.id
+    // The buffer starts as a working solution to this page's built-in
+    // problem, so leaving C++ selected leaves it untouched. Any other
+    // default would otherwise show C++ source in a Python editor.
+    if (preferred.id !== DEFAULT_PROBLEM_LANGUAGE) {
+      applyTemplate(preferred)
+    }
+  } catch (err) {
+    catalogueError.value = `无法获取语言列表：${(err as Error).message}`
+  }
+})
+
+/** Replace the buffer with *option*'s starter template. */
+function applyTemplate(option: LanguageOption): void {
+  pristineCode.value = option.default_template
+  code.value = option.default_template
+  // The previous verdict belongs to a different language's program, so
+  // leaving it on screen next to the new template would mislead.
+  events.value = []
+  result.value = null
+  errorMsg.value = ''
+}
+
+/**
+ * Handle a picker change.
+ *
+ * Written as a `change` handler rather than `v-model` because the switch
+ * can be declined: when the buffer holds user edits we ask first, and if
+ * the answer is no the control has to snap back to the language the app
+ * is actually still using.
+ */
+function onLanguageChange(event: Event): void {
+  const select = event.target as HTMLSelectElement
+  const option = languages.value.find((o) => o.id === select.value)
+  if (!option || option.id === languageId.value) return
+
+  if (code.value !== pristineCode.value) {
+    const confirmed = window.confirm(
+      `切换到 ${option.display_name} 会用起始模板替换当前代码，未保存的修改将丢失。继续吗？`,
+    )
+    if (!confirmed) {
+      // `languageId` is unchanged, so Vue has no reason to re-render the
+      // <select>; snap the DOM back by hand or it sits on a language the
+      // app did not accept.
+      select.value = languageId.value
+      return
+    }
+  }
+
+  languageId.value = option.id
+  applyTemplate(option)
+}
 
 /**
  * Run the judge via the WebSocket stream. Each streamed event is
@@ -76,6 +199,7 @@ async function runJudge(): Promise<void> {
     const terminal = await streamJudge(
       {
         code: code.value,
+        language: languageId.value,
         test_cases: testCases,
         time_limit: 10.0,
         mem_limit_mb: 256,
@@ -149,16 +273,58 @@ async function runJudge(): Promise<void> {
         </div>
       </section>
 
-      <!-- Right: code editor + run button + output panel -->
+      <!-- Right: language picker + code editor + run button + output panel -->
       <section class="code-panel">
-        <div class="editor-wrapper">
-          <CodeEditor v-model="code" language="cpp" theme="vs-dark" />
-        </div>
+        <div class="toolbar">
+          <label class="lang-picker">
+            <span class="lang-label">语言</span>
+            <select
+              class="lang-select"
+              :value="languageId"
+              :disabled="isRunning || languages.length === 0"
+              @change="onLanguageChange"
+            >
+              <option
+                v-for="opt in languages"
+                :key="opt.id"
+                :value="opt.id"
+                :disabled="!opt.available"
+                :title="opt.detail ?? undefined"
+              >
+                {{ opt.display_name }}{{ opt.available ? '' : '（不可用）' }}
+              </option>
+            </select>
+          </label>
 
-        <div class="actions">
-          <button class="run-btn" :disabled="isRunning" @click="runJudge">
+          <span v-if="selectedLanguage?.version" class="lang-version">
+            {{ selectedLanguage.version }}
+          </span>
+
+          <button
+            class="run-btn"
+            :disabled="isRunning || !selectedLanguage"
+            @click="runJudge"
+          >
             {{ isRunning ? '判题中...' : '运行判题' }}
           </button>
+        </div>
+
+        <!--
+          Disabled options cannot be opened to read their tooltip, so the
+          reason — which already names the setting to change — is rendered
+          as text instead of hidden behind a title attribute.
+        -->
+        <p v-if="catalogueError" class="lang-note lang-note-error">
+          {{ catalogueError }}
+        </p>
+        <ul v-else-if="unavailableLanguages.length" class="lang-note">
+          <li v-for="opt in unavailableLanguages" :key="opt.id">
+            <strong>{{ opt.display_name }} 不可用</strong>：{{ opt.detail }}
+          </li>
+        </ul>
+
+        <div class="editor-wrapper">
+          <CodeEditor v-model="code" :language="monacoLanguage" theme="vs-dark" />
         </div>
 
         <OutputPanel
@@ -247,16 +413,72 @@ async function runJudge(): Promise<void> {
   min-width: 0;
 }
 
+/* PU-17: new markup uses the PU-0 tokens rather than fresh literals, so
+ * the PU-7/PU-8 visual rewrite has less to clean up. The styles above are
+ * pre-existing and still hardcoded — replacing those is PU-8's job. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.lang-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lang-label {
+  font-size: 13px;
+  color: var(--af-text-secondary);
+}
+
+.lang-select {
+  padding: 8px 10px;
+  font-size: 14px;
+  color: var(--af-text-primary);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border-strong);
+  border-radius: var(--af-radius-sm);
+  cursor: pointer;
+}
+
+.lang-select:disabled {
+  color: var(--af-text-muted);
+  cursor: not-allowed;
+}
+
+.lang-version {
+  font-size: 12px;
+  color: var(--af-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.lang-note {
+  margin: 0 0 12px 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--af-text-secondary);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+  list-style: none;
+}
+
+.lang-note-error {
+  color: var(--af-text-primary);
+  border-color: var(--af-warning);
+}
+
 .editor-wrapper {
   flex: 1;
   min-height: 300px;
   border: 1px solid #374151;
   border-radius: 8px;
   overflow: hidden;
-}
-
-.actions {
-  margin: 12px 0;
 }
 
 .run-btn {

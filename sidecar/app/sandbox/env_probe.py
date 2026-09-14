@@ -306,6 +306,32 @@ def probe_database() -> ProbeResult:
     )
 
 
+def _language_entry(spec: LanguageSpec) -> dict:
+    """Probe *spec* and attach the descriptor fields the editor needs.
+
+    PU-17 needs more than "is Java available": the UI has to offer a choice
+    of language, which means it needs each language's Monaco id (so the
+    editor highlights correctly) and its starter template (so switching
+    language fills the buffer with something valid).
+
+    Those two fields are attached here, at report-assembly time, rather
+    than being stored on :class:`ProbeResult`. A probe result is strictly
+    the outcome of probing; the template is a property of the language, and
+    widening the dataclass to carry it would make ``probe_database()``
+    return a structure with two permanently-null template fields.
+
+    Carrying the template on the wire rather than hardcoding it in the
+    renderer is deliberate: ``LanguageSpec.default_template`` has to stay
+    within what the configured toolchain accepts (the Java template is
+    Java 8 syntax because the JDK here is 1.8.0_291), and a second copy in
+    TypeScript could not be kept honest against that.
+    """
+    entry = _probe_language(spec).to_dict()
+    entry["monaco_language"] = spec.monaco_language
+    entry["default_template"] = spec.default_template
+    return entry
+
+
 def probe_all() -> dict:
     """Probe every capability and return a JSON-serialisable report.
 
@@ -316,12 +342,12 @@ def probe_all() -> dict:
     The language list comes from the registry, so registering a fourth
     language extends this report with no change here.
     """
-    languages = [_probe_language(spec) for spec in all_languages()]
+    languages = [_language_entry(spec) for spec in all_languages()]
     return {
-        "languages": [p.to_dict() for p in languages],
+        "languages": languages,
         "database": probe_database().to_dict(),
         "sandbox_tmp": probe_sandbox_tmp().to_dict(),
         # Convenience for the UI: everything required for the core
         # (edit -> judge) loop to work.
-        "core_ready": any(p.available for p in languages),
+        "core_ready": any(entry["available"] for entry in languages),
     }

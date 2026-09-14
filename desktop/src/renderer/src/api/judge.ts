@@ -32,6 +32,8 @@ export interface JudgeResponse {
 
 export interface JudgeRequest {
   code: string
+  /** Language id; omitted means the sidecar's default (C++). */
+  language?: string
   test_cases: TestCaseIn[]
   time_limit?: number
   mem_limit_mb?: number
@@ -45,9 +47,10 @@ export interface JudgeRequest {
 export async function judgeCode(
   code: string,
   testCases: TestCaseIn[],
-  opts?: { timeLimit?: number; memLimitMb?: number },
+  opts?: { language?: string; timeLimit?: number; memLimitMb?: number },
 ): Promise<JudgeResponse> {
   const body: JudgeRequest = { code, test_cases: testCases }
+  if (opts?.language !== undefined) body.language = opts.language
   if (opts?.timeLimit !== undefined) body.time_limit = opts.timeLimit
   if (opts?.memLimitMb !== undefined) body.mem_limit_mb = opts.memLimitMb
   const res = await http.post<JudgeResponse>('/api/v1/judge', body)

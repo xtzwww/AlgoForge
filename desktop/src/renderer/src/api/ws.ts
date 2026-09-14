@@ -41,6 +41,13 @@ export interface JudgeEvent {
 
 export interface WsJudgeRequest {
   code: string
+  /**
+   * Language the code is written in. Optional on the wire — the sidecar
+   * falls back to its default (C++) — but PU-17 always sends it, because
+   * judging C++ source as C++ when the user picked Python would report
+   * nothing but CE.
+   */
+  language?: string
   test_cases: TestCaseIn[]
   time_limit?: number
   mem_limit_mb?: number

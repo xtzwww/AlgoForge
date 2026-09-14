@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.sandbox import env_probe
+from app.sandbox.languages import all_languages
 
 client = TestClient(app)
 
@@ -46,6 +47,10 @@ def test_env_check_language_entries_are_well_formed() -> None:
             "version",
             "path",
             "detail",
+            # Added by PU-17: the editor needs Monaco's language id and a
+            # starter template to offer a language at all.
+            "monaco_language",
+            "default_template",
         }
         assert isinstance(lang["available"], bool)
         # The contract: unavailable implies an explanation, and no
@@ -53,6 +58,24 @@ def test_env_check_language_entries_are_well_formed() -> None:
         if not lang["available"]:
             assert lang["detail"], f"{lang['id']} unavailable without a detail"
             assert lang["version"] is None
+
+
+def test_env_check_language_entries_match_the_registry() -> None:
+    """The report must not drift from the descriptors the sandbox uses.
+
+    A Monaco id that disagreed with the registry would highlight the
+    buffer as the wrong language, and a stale template could be syntax
+    the configured toolchain rejects.
+    """
+    specs = {spec.id: spec for spec in all_languages()}
+    languages = client.get("/api/v1/env-check").json()["languages"]
+
+    assert {lang["id"] for lang in languages} == set(specs)
+    for lang in languages:
+        spec = specs[lang["id"]]
+        assert lang["display_name"] == spec.display_name
+        assert lang["monaco_language"] == spec.monaco_language
+        assert lang["default_template"] == spec.default_template
 
 
 # ------------------------------------------------------ degradation
