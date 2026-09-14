@@ -36,6 +36,7 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 from app.models.base import Base  # noqa: E402
 import app.models.problem  # noqa: E402, F401 — register on Base.metadata
+import app.models.test_case  # noqa: E402, F401 — register on Base.metadata
 import app.models.submission  # noqa: E402, F401 — register on Base.metadata
 import app.models.mistake_book  # noqa: E402, F401 — register on Base.metadata
 import app.models.review  # noqa: E402, F401 — register on Base.metadata

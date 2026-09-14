@@ -92,6 +92,7 @@ sidecar/*.sqlite3
 
 # Local assistant workspace state (memory/logs) — not part of the project
 .workbuddy/
+.workbuddy-ai/
 
 # Milvus / Docker volumes (not tracked)
 milvus_data/
