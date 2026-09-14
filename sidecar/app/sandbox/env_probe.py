@@ -27,6 +27,7 @@ from sqlalchemy import create_engine, text
 
 from app.config import settings
 from app.db import _resolve_sync_url
+from app.sandbox.compiler import sandbox_tmp_base as _sandbox_tmp_base
 from app.sandbox.languages import (
     CPP_SPEC,
     JAVA_SPEC,
@@ -189,17 +190,20 @@ def probe_java() -> ProbeResult:
 def sandbox_tmp_base() -> Path:
     """Directory that sandbox temporary files are created under.
 
-    On Windows this is ``C:\\Windows\\Temp`` rather than the OS default,
-    because MinGW's linker cannot open output files on non-ASCII paths
-    and this machine's user profile contains CJK characters ("雪团子").
+    Re-exported from :mod:`app.sandbox.compiler`, which owns the policy
+    because that is where the sandbox's own scratch directories are made.
+    PU-16 folded the two copies together as the NOTE left here by PU-3
+    asked: ``judge`` and ``compile_and_run`` had been resolving the
+    location independently, and ``compile_and_run`` had been picking the
+    OS default — the non-ASCII path that breaks MinGW, so every C++
+    compile it attempted failed. There is now exactly one computation, and
+    this probe therefore reports on the directory the sandbox really uses
+    rather than a lookalike.
 
-    NOTE: ``sandbox/judge.py`` carries an identical inline computation.
-    That copy should be folded into this function once PU-15/PU-16 touch
-    the judge pipeline — it is left alone here to keep PU-3's diff tight.
+    The name is kept because this module's public surface is what
+    ``/api/v1/env-check`` and its tests refer to.
     """
-    if os.name == "nt":
-        return Path(r"C:\Windows\Temp") / "algoforge_judge"
-    return Path(os.environ.get("TMPDIR", "/tmp")) / "algoforge_judge"
+    return _sandbox_tmp_base()
 
 
 def probe_sandbox_tmp() -> ProbeResult:

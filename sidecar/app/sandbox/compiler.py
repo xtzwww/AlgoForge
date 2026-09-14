@@ -68,7 +68,9 @@ class CompileResult:
     def to_dict(self) -> dict:
         return {
             "success": self.success,
-            "executable_path": str(self.executable_path) if self.executable_path else None,
+            "executable_path": (
+                str(self.executable_path) if self.executable_path else None
+            ),
             "output": self.output,
             "exit_code": self.exit_code,
         }
@@ -94,48 +96,53 @@ class RunResult:
         }
 
 
+def sandbox_tmp_base() -> Path:
+    """Directory the sandbox creates its scratch directories under.
+
+    On Windows this is ``C:\\Windows\\Temp`` rather than the OS default,
+    because MinGW's linker cannot open output files on non-ASCII paths and
+    this machine's user profile contains CJK characters ("雪团子").
+    ``conftest.py`` places test sources in the same tree for that reason,
+    and ``env_probe`` reports on this very directory in
+    ``/api/v1/env-check`` — so a read-only temp dir becomes an actionable
+    startup message instead of an opaque linker failure on the first
+    submission.
+
+    Single source of truth: ``judge``, ``compile_and_run`` and the
+    environment probe all resolve the location through here, so they
+    cannot disagree about where the sandbox is allowed to write. (They did
+    before PU-16: ``judge`` and ``compile_and_run`` used different
+    locations, and the second one was the non-ASCII default — every C++
+    compile it attempted failed.)
+    """
+    if os.name == "nt":
+        return Path(r"C:\Windows\Temp") / "algoforge_judge"
+    # tempfile.gettempdir() honours TMPDIR/TEMP and picks a sane fallback,
+    # so this does not need to re-implement that lookup.
+    return Path(tempfile.gettempdir()) / "algoforge_judge"
+
+
 def sandbox_tmpdir() -> tempfile.TemporaryDirectory:
     """Create the scratch directory used by one build/run cycle.
 
-    Two things here are deliberate:
-
-    **The location.** On Windows this is ``C:\\Windows\\Temp`` rather than
-    the OS default. The default is derived from the user profile, which on
-    this machine contains CJK characters ("雪团子"), and MinGW's linker
-    cannot open output files on non-ASCII paths — every compile would fail
-    with an opaque linker error. ``conftest.py`` places test sources in the
-    same tree for the same reason.
-
-    **``ignore_cleanup_errors=True``.** Not a convenience: it is a fix.
-    The built binary lives in this directory and is killed on TLE/MLE. On
-    Windows a killed process can still hold a handle to its own executable
-    for a short while, and ``shutil.rmtree`` then fails with
-    ``PermissionError`` while unwinding the context manager — so the
-    exception escaped the calling function entirely. That surfaced as an
-    intermittent failure of the MLE test which only appeared under
+    The location comes from :func:`sandbox_tmp_base`; the other deliberate
+    choice here is ``ignore_cleanup_errors=True``, which is a fix rather
+    than a convenience. The built binary lives in this directory and is
+    killed on TLE/MLE, and on Windows a killed process can still hold a
+    handle to its own executable for a short while. ``shutil.rmtree`` then
+    fails with ``PermissionError`` while unwinding the context manager —
+    so the exception escaped the calling function entirely. That surfaced
+    as an intermittent failure of the MLE test which only appeared under
     full-suite load, and in production it would turn an ordinary
     submission into a 500 because the sandbox could not delete its own
     scratch files. A stray directory in the temp folder is the much lesser
     problem.
-
-    Note:
-        This helper lives here rather than in ``judge.py`` because
-        ``compile_and_run`` needs the same policy and, before PU-16, was
-        creating its scratch directory in the OS-default location — which
-        is exactly the non-ASCII path described above. ``judge`` keeps a
-        ``_judge_tmpdir`` alias pointing at this function for its existing
-        callers and tests.
     """
-    if os.name == "nt":
-        base = Path(r"C:\Windows\Temp") / "algoforge_judge"
-        base.mkdir(parents=True, exist_ok=True)
-        return tempfile.TemporaryDirectory(
-            prefix="judge_",
-            dir=str(base),
-            ignore_cleanup_errors=True,
-        )
+    base = sandbox_tmp_base()
+    base.mkdir(parents=True, exist_ok=True)
     return tempfile.TemporaryDirectory(
-        prefix="algoforge_judge_",
+        prefix="judge_",
+        dir=str(base),
         ignore_cleanup_errors=True,
     )
 
