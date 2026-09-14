@@ -13,6 +13,7 @@ from app.api.health import router as health_router
 from app.api.env_check import router as env_check_router
 from app.api.run_code import router as run_code_router
 from app.api.judge import router as judge_router
+from app.api.problems import router as problems_router
 from app.api.ws import router as ws_router
 from app.api.mistake_book import router as mistake_book_router
 from app.api.profile import router as profile_router
@@ -46,6 +47,7 @@ app.include_router(health_router)
 app.include_router(env_check_router)
 app.include_router(run_code_router)
 app.include_router(judge_router)
+app.include_router(problems_router)
 app.include_router(ws_router)
 app.include_router(mistake_book_router)
 app.include_router(profile_router)

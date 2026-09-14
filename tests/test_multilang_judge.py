@@ -19,16 +19,105 @@ from __future__ import annotations
 
 import os
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.api.ws import _parse_request
 from app.config import settings
 from app.main import app
-from app.sandbox.judge import JudgeStatus, TestCase, judge
+from app.models.base import Base
+from app.models.problem import Problem
+from app.models.test_case import TestCase
+from app.sandbox import judge_input as judge_input_module
+from app.sandbox.judge import JudgeStatus, judge
+from app.sandbox.judge import TestCase as JudgeTestCase
 from app.sandbox.languages import UnknownLanguageError
+
+
+@contextmanager
+def _memory_session() -> Iterator[Session]:
+    """Yield an in-memory SQLite session with the schema created.
+
+    ``StaticPool`` keeps every checkout on one connection so the schema
+    and rows survive across the session's lifetime — the default pool
+    would hand out a new, empty in-memory database per connection.
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(engine, expire_on_commit=False)
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def _seed_problem(
+    session: Session,
+    *,
+    problem_id: int = 1,
+    time_limit: float = 10.0,
+    memory_limit: int = 256,
+    cases: list[tuple[str, str, bool]] | None = None,
+) -> Problem:
+    """Insert a problem with ``(input, output, is_sample)`` cases."""
+    problem = Problem(
+        id=problem_id,
+        title="Seeded",
+        knowledge_tags=[],
+        description="",
+        samples=[],
+        time_limit=time_limit,
+        memory_limit=memory_limit,
+    )
+    session.add(problem)
+    session.flush()
+    for ordinal, (case_in, case_out, is_sample) in enumerate(cases or [], start=1):
+        session.add(
+            TestCase(
+                problem_id=problem.id,
+                ordinal=ordinal,
+                input=case_in,
+                expected_output=case_out,
+                is_sample=is_sample,
+            )
+        )
+    session.commit()
+    return problem
+
+
+@contextmanager
+def _patched_judge_session() -> Iterator[None]:
+    """Point the resolver's default session at an empty in-memory DB.
+
+    The REST route calls ``resolve`` without a session, so the only hook
+    is the module-level ``get_session`` the resolver imported. Patching
+    it here is what lets the 404 test drive the route without a live
+    PostgreSQL. The database is intentionally empty — an unknown id is
+    the whole point.
+    """
+    with _memory_session() as session:
+        real = judge_input_module.get_session
+
+        def fake() -> Session:
+            return session
+
+        judge_input_module.get_session = fake  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            judge_input_module.get_session = real  # type: ignore[assignment]
 
 # ------------------------------------------------------------ C++ fixtures
 
@@ -168,8 +257,8 @@ def _cases(kind: str) -> list[pytest.ParameterSet]:
 
 
 _SUM_CASES = [
-    TestCase(input="3 5\n", expected_output="8\n"),
-    TestCase(input="-5 5\n", expected_output="0\n"),
+    JudgeTestCase(input="3 5\n", expected_output="8\n"),
+    JudgeTestCase(input="-5 5\n", expected_output="0\n"),
 ]
 
 
@@ -199,7 +288,7 @@ def test_language_is_case_insensitive_on_the_request() -> None:
     """Handlers pass the id straight through; the registry canonicalises it."""
     result = judge(
         _CPP_AC,
-        [TestCase(input="1 2\n", expected_output="3\n")],
+        [JudgeTestCase(input="1 2\n", expected_output="3\n")],
         time_limit=15.0,
         mem_limit_mb=256,
         language="  Cpp ",
@@ -220,7 +309,7 @@ def test_broken_source_yields_ce(language: str, code: str) -> None:
     """
     result = judge(
         code,
-        [TestCase(input="", expected_output="")],
+        [JudgeTestCase(input="", expected_output="")],
         time_limit=15.0,
         mem_limit_mb=256,
         language=language,
@@ -238,7 +327,7 @@ def test_broken_source_yields_ce(language: str, code: str) -> None:
 def test_infinite_loop_yields_tle(language: str, code: str) -> None:
     result = judge(
         code,
-        [TestCase(input="", expected_output="anything\n")],
+        [JudgeTestCase(input="", expected_output="anything\n")],
         time_limit=1.0,
         mem_limit_mb=256,
         language=language,
@@ -268,7 +357,7 @@ def test_python_non_ascii_output_is_not_mangled() -> None:
 
     result = judge(
         code,
-        [TestCase(input="", expected_output="你好，世界\n")],
+        [JudgeTestCase(input="", expected_output="你好，世界\n")],
         time_limit=15.0,
         mem_limit_mb=256,
         language="python",
@@ -288,7 +377,7 @@ def test_unknown_language_is_rejected_before_any_work() -> None:
     with pytest.raises(UnknownLanguageError) as excinfo:
         judge(
             "int main() {}",
-            [TestCase(input="", expected_output="")],
+            [JudgeTestCase(input="", expected_output="")],
             language="cppp",
         )
 
@@ -370,3 +459,148 @@ def test_ws_streams_a_verdict_for_a_non_cpp_language() -> None:
 
     assert msgs[-1]["type"] == "judge_done", msgs[-1]
     assert msgs[-1]["status"] == "AC"
+
+
+# ==========================================================================
+# PU-12: judging by problem_id
+#
+# These cover the transport layer only — the resolution rules themselves
+# are asserted in ``test_judge_input.py``. What is checked here is that
+# both entry points actually route through the resolver: the WS parser
+# returns the resolved cases, and the REST route 404s on an unknown
+# problem instead of leaking a 500.
+# ==========================================================================
+
+
+def test_ws_parse_request_resolves_a_problem_id() -> None:
+    """``problem_id`` is accepted in place of ``test_cases``.
+
+    Uses an injected in-memory session: the production default would
+    open an engine against the documented PostgreSQL DSN, which is not
+    running here. ``_parse_request`` takes a session for exactly this
+    reason.
+    """
+    with _memory_session() as session:
+        _seed_problem(session, problem_id=1, cases=[("1 2\n", "3\n", False)])
+
+        code, resolved, language = _parse_request(
+            {"code": "x", "problem_id": 1, "time_limit": 2.0, "mem_limit_mb": 128},
+            session=session,
+        )
+
+    assert code == "x"
+    assert language == "cpp"
+    assert resolved.problem_id == 1
+    assert resolved.time_limit == 2.0
+    assert resolved.mem_limit_mb == 128
+    # The hidden case reached the judge — that is the point of this mode.
+    assert [c.input for c in resolved.test_cases] == ["1 2\n"]
+
+
+def test_ws_parse_request_rejects_unknown_problem_id() -> None:
+    """An unknown id raises rather than judging against nothing."""
+    with _memory_session() as session, pytest.raises(ValueError, match="not found"):
+        _parse_request({"code": "x", "problem_id": 7}, session=session)
+
+
+def test_ws_parse_request_rejects_both_input_modes() -> None:
+    """``problem_id`` + ``test_cases`` is refused, not resolved.
+
+    Precedence guessed here would be a silent behavior difference
+    between a client that sends both and one that sends one.
+    """
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _parse_request(
+            {
+                "code": "x",
+                "problem_id": 1,
+                "test_cases": [{"input": "", "expected_output": ""}],
+            }
+        )
+
+
+def test_ws_parse_request_requires_an_input_mode() -> None:
+    """Neither mode supplied is an error."""
+    with pytest.raises(ValueError, match="one of"):
+        _parse_request({"code": "x"})
+
+
+def test_rest_judge_404s_on_unknown_problem_id() -> None:
+    """A missing problem is a 404, not a 422 or a 500.
+
+    The distinction matters to a client: 404 means "that id does not
+    exist", 422 means "your body is malformed".
+
+    Patches the resolver's view of ``get_session`` so the route's own
+    database call lands on an empty in-memory database. Seeding nothing
+    is what makes the id unknown.
+    """
+    with _patched_judge_session():
+        # No rows seeded, so any id is unknown.
+        client = TestClient(app)
+        response = client.post(
+            "/api/v1/judge",
+            json={"code": _CPP_AC, "problem_id": 987654321},
+        )
+
+    assert response.status_code == 404
+    assert "987654321" in response.json()["detail"]
+
+
+def test_rest_judge_422s_when_no_input_mode_supplied() -> None:
+    """Omitting both ``problem_id`` and ``test_cases`` is a 422."""
+    client = TestClient(app)
+    response = client.post("/api/v1/judge", json={"code": _CPP_AC})
+    assert response.status_code == 422
+
+
+def test_rest_judge_422s_when_both_input_modes_supplied() -> None:
+    """Supplying both is a 422 rather than a silent precedence choice."""
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/judge",
+        json={
+            "code": _CPP_AC,
+            "problem_id": 1,
+            "test_cases": [{"input": "1 2\n", "expected_output": "3\n"}],
+        },
+    )
+    assert response.status_code == 422
+    assert "mutually exclusive" in response.json()["detail"]
+
+
+def test_rest_judge_inline_mode_still_works() -> None:
+    """The self-test path is unchanged by the new mode."""
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/judge",
+        json={
+            "code": _CPP_AC,
+            "test_cases": [{"input": "1 2\n", "expected_output": "3\n"}],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "AC"
+    assert body["problem_id"] is None
+
+
+def test_rest_judge_response_type_is_still_bean_shaped() -> None:
+    """``problem_id`` is additive, and the old keys are all present.
+
+    A response model that *dropped* a field would be a breaking change
+    for the existing frontend; this pins the shape.
+    """
+    client = TestClient(app)
+    body = client.post(
+        "/api/v1/judge",
+        json={
+            "code": _CPP_AC,
+            "test_cases": [{"input": "1 2\n", "expected_output": "3\n"}],
+        },
+    ).json()
+
+    for key in ("status", "compile_output", "passed", "total", "test_cases"):
+        assert key in body, key
+    assert "problem_id" in body
+    assert body["total"] == 1

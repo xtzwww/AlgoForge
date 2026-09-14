@@ -48,9 +48,60 @@ export interface WsJudgeRequest {
    * nothing but CE.
    */
   language?: string
-  test_cases: TestCaseIn[]
+  /**
+   * Catalogue problem to pull cases and limits from (PU-12). Mutually
+   * exclusive with `test_cases`; exactly one is required. This is the
+   * mode the product uses — the sidecar reads the hidden cases itself,
+   * so they never reach the browser.
+   */
+  problem_id?: number
+  /**
+   * Inline cases for ad-hoc self-testing. Mutually exclusive with
+   * `problem_id`.
+   */
+  test_cases?: TestCaseIn[]
+  /**
+   * Seconds. In `problem_id` mode this overrides the problem's own
+   * limit; in inline mode it is the limit.
+   */
   time_limit?: number
+  /** MB. Same override rule as `time_limit`. */
   mem_limit_mb?: number
+}
+
+/**
+ * Judge against a stored problem's cases (PU-12) — the preferred mode.
+ *
+ * Thin wrapper over {@link streamJudge} so callers do not have to
+ * remember which of the two mutually exclusive fields to set.
+ */
+export function streamJudgeProblem(
+  code: string,
+  problemId: number,
+  onEvent: (event: JudgeEvent) => void,
+  opts?: { language?: string; timeLimit?: number; memLimitMb?: number },
+): Promise<JudgeEvent> {
+  const req: WsJudgeRequest = { code, problem_id: problemId }
+  if (opts?.language !== undefined) req.language = opts.language
+  if (opts?.timeLimit !== undefined) req.time_limit = opts.timeLimit
+  if (opts?.memLimitMb !== undefined) req.mem_limit_mb = opts.memLimitMb
+  return streamJudge(req, onEvent)
+}
+
+/**
+ * Judge against caller-supplied cases — the self-test path.
+ */
+export function streamJudgeCases(
+  code: string,
+  testCases: TestCaseIn[],
+  onEvent: (event: JudgeEvent) => void,
+  opts?: { language?: string; timeLimit?: number; memLimitMb?: number },
+): Promise<JudgeEvent> {
+  const req: WsJudgeRequest = { code, test_cases: testCases }
+  if (opts?.language !== undefined) req.language = opts.language
+  if (opts?.timeLimit !== undefined) req.time_limit = opts.timeLimit
+  if (opts?.memLimitMb !== undefined) req.mem_limit_mb = opts.memLimitMb
+  return streamJudge(req, onEvent)
 }
 
 /**

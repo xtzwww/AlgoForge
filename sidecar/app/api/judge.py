@@ -1,31 +1,53 @@
 """Judge API endpoint.
 
 POST /api/v1/judge
-  Body: {
+  Body, cases by problem id:
+  {
+    "code": "<source code>",
+    "language": "cpp",       // optional, default "cpp"
+    "problem_id": 7,         // stored cases + the problem's own limits
+    "time_limit": 5.0,       // optional, seconds — overrides the problem
+    "mem_limit_mb": 512      // optional, MB — overrides the problem
+  }
+
+  Body, inline cases (self-test):
+  {
     "code": "<source code>",
     "language": "cpp",       // optional, default "cpp"
     "test_cases": [{"input": "...", "expected_output": "..."}],
     "time_limit": 10.0,      // optional, seconds, default 10
     "mem_limit_mb": 256      // optional, MB, default 256
   }
+
   Response: {
     "status": "AC" | "WA" | "TLE" | "MLE" | "CE" | "RE",
     "compile_output": "...",
     "passed": 2,
     "total": 3,
+    "problem_id": 7,         // null in inline mode
     "test_cases": [{ "status", "input", "expected_output", "actual_output", ... }]
   }
+
+``problem_id`` was added by PU-12. It is the mode the product uses: the
+server reads the hidden cases itself, so the client never receives them.
+``test_cases`` remains for ad-hoc self-testing, where there is no problem
+row to point at. Exactly one of the two is required; the rules and the
+error messages live in :mod:`app.sandbox.judge_input` so this route and
+``WS /ws/run-log`` cannot drift apart.
 
 The REST twin of ``WS /ws/run-log``. It shares the same pipeline but
 returns one finished response instead of streaming progress, which is
 what tests and simple clients want.
 """
 
-from fastapi import APIRouter
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api import LanguageId
-from app.sandbox.judge import TestCase, judge
+from app.sandbox.judge import judge
+from app.sandbox.judge_input import JudgeInputError, resolve
 
 router = APIRouter(prefix="/api/v1", tags=["judge"])
 
@@ -39,12 +61,17 @@ class JudgeRequest(BaseModel):
     code: str
     #: Language the code is written in. A bad id is a 422, not a 500.
     language: LanguageId = "cpp"
-    test_cases: list[TestCaseIn]
-    # Per-case wall-clock timeout in seconds. Defaults to 10s.
-    time_limit: float = Field(default=10.0, ge=0.1, le=60.0)
-    # Per-case memory ceiling in MB. Defaults to 256 MB. The language's
-    # own allowance is added on top before the runner's check fires.
-    mem_limit_mb: int = Field(default=256, ge=1, le=2048)
+    #: Catalogue problem to pull cases from. Mutually exclusive with
+    #: ``test_cases``.
+    problem_id: Optional[int] = None
+    #: Inline cases for self-testing. Mutually exclusive with
+    #: ``problem_id``.
+    test_cases: Optional[list[TestCaseIn]] = None
+    # Per-case wall-clock timeout in seconds. In ``problem_id`` mode this
+    # overrides the problem's own limit; in inline mode it is the limit.
+    time_limit: Optional[float] = Field(default=None, ge=0.1, le=60.0)
+    # Per-case memory ceiling in MB. Same override rule as ``time_limit``.
+    mem_limit_mb: Optional[int] = Field(default=None, ge=1, le=2048)
 
 
 class TestCaseOut(BaseModel):
@@ -61,6 +88,10 @@ class JudgeResponse(BaseModel):
     compile_output: str
     passed: int
     total: int
+    #: Echo of the request's ``problem_id``, or null for inline cases.
+    #: Lets a client that fires off several submissions tell the
+    #: responses apart without correlating by hand.
+    problem_id: Optional[int] = None
     test_cases: list[TestCaseOut]
 
 
@@ -73,15 +104,35 @@ async def judge_code(req: JudgeRequest) -> JudgeResponse:
     Per-case verdicts are aggregated into an overall verdict with
     priority CE > TLE > MLE > RE > WA > AC.
     """
-    test_cases = [
-        TestCase(input=tc.input, expected_output=tc.expected_output)
-        for tc in req.test_cases
-    ]
+    # Widen the schema's list-of-models back to the raw shape the resolver
+    # speaks, so both entry points share one code path and one set of
+    # error messages rather than the REST route reimplementing them.
+    raw_cases = (
+        [tc.model_dump() for tc in req.test_cases]
+        if req.test_cases is not None
+        else None
+    )
+    try:
+        resolved = resolve(
+            problem_id=req.problem_id,
+            test_cases=raw_cases,
+            time_limit=req.time_limit,
+            mem_limit_mb=req.mem_limit_mb,
+        )
+    except JudgeInputError as exc:
+        # A malformed request or an unknown problem is the caller's
+        # mistake, not a server fault. 404 when the problem is missing so
+        # the client can distinguish "wrong id" from "wrong body".
+        status = 404 if "not found" in str(exc) else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from None
+
     result = judge(
         req.code,
-        test_cases,
-        time_limit=req.time_limit,
-        mem_limit_mb=req.mem_limit_mb,
+        resolved.test_cases,
+        time_limit=resolved.time_limit,
+        mem_limit_mb=resolved.mem_limit_mb,
         language=req.language,
     )
-    return JudgeResponse(**result.to_dict())
+    payload = result.to_dict()
+    payload["problem_id"] = resolved.problem_id
+    return JudgeResponse(**payload)
