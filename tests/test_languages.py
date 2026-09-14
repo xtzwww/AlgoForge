@@ -392,3 +392,66 @@ def test_resolved_java_bin_dir_is_derived_from_compiler_path() -> None:
         r"C:\jdk\bin\javac.exe",
     ):
         assert settings.resolved_java_bin_dir == r"C:\jdk\bin"
+
+
+# ------------------------------------------- environment facts (PU-16)
+#
+# PU-16 gave the descriptor three fields describing the *process*
+# environment rather than the command line. They are pinned here with the
+# rest of the descriptor contract: the sandbox reads them without
+# inspecting ``spec.id``, so a wrong value cannot be caught downstream.
+
+
+def test_cpp_artefact_is_the_binary_the_run_step_launches() -> None:
+    """If these two disagreed, build-then-run would look for two files."""
+    expected = WORK / ("main.exe" if os.name == "nt" else "main")
+
+    assert CPP_SPEC.build_artefact(WORK) == expected
+    assert CPP_SPEC.run_cmd(WORK) == [str(expected)]
+
+
+def test_interpreted_languages_declare_no_single_artefact() -> None:
+    """Java builds a class *tree*; Python is executed from its source.
+
+    Both would have to name an arbitrary file to return anything here, so
+    they report None and callers go through ``run_cmd`` instead.
+    """
+    assert PYTHON_SPEC.build_artefact(WORK) is None
+    assert JAVA_SPEC.build_artefact(WORK) is None
+
+
+def test_only_java_asks_for_a_memory_allowance() -> None:
+    """A JVM's RSS is dominated by fixed overhead, not by the submission."""
+    assert CPP_SPEC.rss_allowance_mb() == 0
+    assert PYTHON_SPEC.rss_allowance_mb() == 0
+    assert settings.java_rss_allowance_mb > 0
+    assert JAVA_SPEC.rss_allowance_mb() == settings.java_rss_allowance_mb
+
+
+def test_cpp_bin_dir_honours_the_explicit_override() -> None:
+    """``CPP_COMPILER_BIN_DIR`` exists for DLLs that are not beside g++."""
+    with patch.object(settings, "cpp_compiler_bin_dir", r"D:\runtime\dlls"):
+        assert CPP_SPEC.toolchain_bin_dir() == r"D:\runtime\dlls"
+
+
+def test_python_bin_dir_is_derived_from_the_interpreter() -> None:
+    interpreter = settings.resolved_python_interpreter
+    if os.sep not in interpreter and "/" not in interpreter:
+        # A bare name resolves through PATH; there is nothing to prepend.
+        assert PYTHON_SPEC.toolchain_bin_dir() == ""
+    else:
+        assert PYTHON_SPEC.toolchain_bin_dir() == str(Path(interpreter).parent)
+
+
+def test_java_bin_dir_hint_is_lazy() -> None:
+    """Config is read when asked, so a JDK outside PATH can still resolve.
+
+    This is what makes ``JAVA_RUNTIME_PATH=java`` work once the compiler
+    path is configured: the sandbox prepends the JDK's own bin directory
+    rather than trusting the ambient PATH.
+    """
+    with patch.object(settings, "java_compiler_path", "javac"):
+        assert JAVA_SPEC.toolchain_bin_dir() == ""
+
+    with patch.object(settings, "java_compiler_path", r"C:\jdk\bin\javac.exe"):
+        assert JAVA_SPEC.toolchain_bin_dir() == r"C:\jdk\bin"

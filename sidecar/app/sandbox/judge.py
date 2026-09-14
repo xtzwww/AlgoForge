@@ -1,28 +1,32 @@
-"""Judge logic — compile, run, and compare output against test cases.
+"""Judge logic — build, run, and compare output against test cases.
 
-Judging pipeline (P1-14 refactor):
-1. Compile the submitted code **once** with ``compile_cpp`` (P1-11).
-2. On compilation failure, return CE immediately without running any
-   test cases.
-3. For each test case, run the binary with ``run_executable`` (P1-12),
+Judging pipeline (P1-14 refactor, generalised to any language by PU-16):
+1. Build the submitted code **once** with ``compile_source`` (P1-11,
+   formerly ``compile_cpp``).
+2. On build failure, return CE immediately without running any test cases.
+3. For each test case, run the program with ``run_executable`` (P1-12),
    which enforces a wall-clock timeout and a memory ceiling.
 4. Classify each run: TLE / MLE / RE / AC / WA.
 5. Aggregate into an overall verdict with priority
    CE > TLE > MLE > RE > WA > AC.
 
 P1-13's ``judge_output`` is reused for the AC/WA comparison.
+
+PU-16 replaced the hardcoded ``main.cpp`` / ``[exe_path]`` pair with the
+language descriptor: the source filename and the run command both come
+from ``LanguageSpec``, which is what lets Java (whose run step is
+``java -cp <dir> Main``) go through the same pipeline as C++.
 """
 
 from __future__ import annotations
 
-import os
-import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
-from app.sandbox.compiler import CompileResult, compile_cpp
+from app.sandbox.compiler import CompileResult, compile_source, sandbox_tmpdir
+from app.sandbox.languages import get_language
 from app.sandbox.runner import ExecutionResult, run_executable
 
 # Type of the optional progress callback. The callback receives a dict
@@ -191,40 +195,26 @@ def _aggregate_status(per_case: list[JudgeStatus]) -> JudgeStatus:
     return min(per_case, key=_STATUS_PRIORITY.index)
 
 
-def _judge_tmpdir() -> tempfile.TemporaryDirectory:
-    """Create the scratch directory used by one judging run.
+def _judge_tmpdir():
+    """Alias for :func:`app.sandbox.compiler.sandbox_tmpdir`.
 
-    Two things here are deliberate:
+    PU-16 moved the implementation next to ``compile_and_run`` so both
+    share one directory policy — that function had been creating its
+    scratch space in the OS default location, which is the non-ASCII path
+    that breaks MinGW, so every C++ compile it attempted failed. Two
+    copies of this policy would drift; there is now one.
 
-    **The location.** On Windows this is ``C:\\Windows\\Temp`` rather than
-    the OS default. The default is derived from the user profile, which on
-    this machine contains CJK characters ("雪团子"), and MinGW's linker
-    cannot open output files on non-ASCII paths — every compile would fail
-    with an opaque linker error.
+    The name survives because ``tests/test_judge_integration.py``
+    exercises this seam directly: the directory's location and its cleanup
+    behaviour are both load-bearing for correctness, and neither is
+    observable from a verdict alone until something goes wrong in
+    production.
 
-    **``ignore_cleanup_errors=True``.** Not a convenience: it is a fix.
-    The judged binary lives in this directory and is killed on TLE/MLE.
-    On Windows a killed process can still hold a handle to its own
-    executable for a short while, and ``shutil.rmtree`` then fails with
-    ``PermissionError`` while unwinding the context manager — so the
-    exception escaped ``judge()`` itself. That surfaced as an intermittent
-    failure of the MLE test that only appeared under full-suite load, and
-    in production it would turn an ordinary submission into a 500 because
-    the judge could not delete its own scratch files. A stray directory in
-    the temp folder is the much lesser problem.
+    See :func:`app.sandbox.compiler.sandbox_tmpdir` for why the directory
+    lives under ``C:\\Windows\\Temp`` and why
+    ``ignore_cleanup_errors=True`` is a fix rather than a convenience.
     """
-    if os.name == "nt":
-        base = Path(r"C:\Windows\Temp") / "algoforge_judge"
-        base.mkdir(parents=True, exist_ok=True)
-        return tempfile.TemporaryDirectory(
-            prefix="judge_",
-            dir=str(base),
-            ignore_cleanup_errors=True,
-        )
-    return tempfile.TemporaryDirectory(
-        prefix="algoforge_judge_",
-        ignore_cleanup_errors=True,
-    )
+    return sandbox_tmpdir()
 
 
 def judge(
@@ -233,19 +223,24 @@ def judge(
     *,
     time_limit: float = 10.0,
     mem_limit_mb: int = 256,
+    language: Optional[str] = None,
     on_event: Optional[JudgeEventCallback] = None,
 ) -> JudgeResult:
-    """Compile *code* once and judge it against *test_cases*.
+    """Build *code* once and judge it against *test_cases*.
 
-    The binary is compiled a single time (P1-11 ``compile_cpp``) and
+    The program is built a single time (P1-11, now ``compile_source``) and
     reused for every test case via P1-12 ``run_executable``, which is
     where the wall-clock timeout and memory ceilings are enforced.
 
     Args:
-        code: C++ source code to judge.
+        code: Source code to judge, written in *language*.
         test_cases: List of :class:`TestCase` with stdin + expected stdout.
         time_limit: Per-case wall-clock timeout in seconds.
-        mem_limit_mb: Per-case memory ceiling in megabytes.
+        mem_limit_mb: Per-case memory ceiling in megabytes. The language's
+            own allowance is added on top (see ``run_executable``), so a
+            JVM's fixed overhead does not read as an exceeded limit.
+        language: Language id such as ``"cpp"``. ``None`` or blank selects
+            the default (C++), which is what P1-14's callers relied on.
         on_event: Optional progress callback. When provided, the
             following events are emitted (in order):
 
@@ -267,23 +262,31 @@ def judge(
             ``asyncio.run_coroutine_threadsafe`` to bridge into the
             event loop).
 
+    Raises:
+        UnknownLanguageError: *language* is not registered.
+
     Returns:
         :class:`JudgeResult` with the overall verdict and per-case
         details. Compilation failure short-circuits to a CE result with
         an empty ``test_cases`` list and the compiler diagnostics in
         ``compile_output``.
     """
-    # The source and binary live in a temp dir that we own for the
-    # duration of judging. The binary is reused across all cases.
-    # See _judge_tmpdir() for why it is located where it is and why
-    # cleanup failures are tolerated.
+    spec = get_language(language)
+
+    # The source and the build products live in a temp dir that we own for
+    # the duration of judging, so the program is built once and reused
+    # across all cases. See _judge_tmpdir() for why it is located where it
+    # is and why cleanup failures are tolerated.
     with _judge_tmpdir() as tmpdir:
         tmp = Path(tmpdir)
-        src_path = tmp / "main.cpp"
+        # The filename is the descriptor's, not a literal: javac refuses a
+        # file that is not named after its public class, so `main.java`
+        # could not be compiled no matter what flags were passed.
+        src_path = spec.source_path(tmp)
         src_path.write_text(code, encoding="utf-8")
 
         _emit(on_event, {"type": "compile_start"})
-        compile_result: CompileResult = compile_cpp(src_path)
+        compile_result: CompileResult = compile_source(src_path, spec.id)
         _emit(
             on_event,
             {
@@ -310,8 +313,11 @@ def judge(
             )
             return ce_result
 
-        assert compile_result.executable_path is not None  # narrowed by success
-        exe_path = compile_result.executable_path
+        # The run command comes from the descriptor and is derived from the
+        # work directory rather than from the build artefact: Java's is
+        # `java -cp <dir> Main`, which has no single file to point at, and
+        # Python's is the interpreter plus the source.
+        run_argv = spec.run_cmd(tmp)
 
         per_case_statuses: list[JudgeStatus] = []
         case_results: list[TestCaseResult] = []
@@ -322,10 +328,11 @@ def judge(
                 {"type": "case_start", "index": i, "input": tc.input},
             )
             run: ExecutionResult = run_executable(
-                exe_path,
+                run_argv,
                 stdin=tc.input,
                 time_limit=time_limit,
                 mem_limit_mb=mem_limit_mb,
+                language=spec.id,
             )
             status = _classify_run(run, tc.expected_output)
             per_case_statuses.append(status)

@@ -4,7 +4,8 @@ WS /ws/run-log
   1. Client connects.
   2. Client sends one JSON message:
        {
-         "code": "<C++ source>",
+         "code": "<source code>",
+         "language": "cpp",       // optional, default "cpp"
          "test_cases": [{"input": "...", "expected_output": "..."}],
          "time_limit": 10.0,      // optional, seconds, default 10
          "mem_limit_mb": 256      // optional, MB, default 256
@@ -13,6 +14,11 @@ WS /ws/run-log
      progress events (compile_start, compile_done, case_start,
      case_done, judge_done) back as JSON messages.
   4. Server closes the connection after the final judge_done event.
+
+``language`` was added by PU-16. Because this endpoint takes raw JSON
+rather than a Pydantic model, the id is validated explicitly and a bad
+one comes back as a ``judge_error`` event — the same treatment every
+other malformed field gets here.
 
 The synchronous ``judge`` function runs in a worker thread via
 ``asyncio.to_thread``. Its ``on_event`` callback bridges into the
@@ -28,12 +34,15 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.api import validate_language_id
 from app.sandbox.judge import TestCase, judge
 
 router = APIRouter(tags=["ws"])
 
 
-def _parse_request(payload: dict[str, Any]) -> tuple[str, list[TestCase], float, int]:
+def _parse_request(
+    payload: dict[str, Any],
+) -> tuple[str, list[TestCase], float, int, str]:
     """Validate the client's WS message into judge arguments.
 
     Raises ``ValueError`` with a human-readable message on bad input;
@@ -58,6 +67,14 @@ def _parse_request(payload: dict[str, Any]) -> tuple[str, list[TestCase], float,
             )
         )
 
+    # Missing means "the default language"; a blank string means the same.
+    # Anything else has to name a registered language, or the judge would
+    # fail deep inside the sandbox instead of here.
+    try:
+        language = validate_language_id(payload.get("language"))
+    except ValueError as exc:
+        raise ValueError(f"invalid 'language': {exc}") from None
+
     time_limit = float(payload.get("time_limit", 10.0))
     if not (0.1 <= time_limit <= 60.0):
         raise ValueError("time_limit must be between 0.1 and 60.0 seconds")
@@ -66,7 +83,7 @@ def _parse_request(payload: dict[str, Any]) -> tuple[str, list[TestCase], float,
     if not (1 <= mem_limit_mb <= 2048):
         raise ValueError("mem_limit_mb must be between 1 and 2048 MB")
 
-    return code, cases, time_limit, mem_limit_mb
+    return code, cases, time_limit, mem_limit_mb, language
 
 
 @router.websocket("/ws/run-log")
@@ -85,7 +102,7 @@ async def run_log(websocket: WebSocket) -> None:
         return
 
     try:
-        code, cases, time_limit, mem_limit_mb = _parse_request(payload)
+        code, cases, time_limit, mem_limit_mb, language = _parse_request(payload)
     except ValueError as exc:
         await websocket.send_json({"type": "judge_error", "error": str(exc)})
         return
@@ -107,6 +124,7 @@ async def run_log(websocket: WebSocket) -> None:
                 cases,
                 time_limit=time_limit,
                 mem_limit_mb=mem_limit_mb,
+                language=language,
                 on_event=on_event,
             )
         except Exception as exc:

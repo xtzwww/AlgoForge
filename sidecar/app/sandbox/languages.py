@@ -28,6 +28,23 @@ are entirely expressible as data do not need three subclasses; that would
 be ceremony, not abstraction. Subclassing becomes justified when a
 language needs genuinely different *behaviour* (e.g. an interactive
 driver), and that is not the case here.
+
+PU-16 added three descriptor fields that describe the *process
+environment* rather than the command line. They live here because they
+are per-language facts, and the alternative — testing ``spec.id`` inside
+the sandbox modules — reintroduces exactly the branching this layer was
+built to remove:
+
+* :attr:`LanguageSpec.toolchain_bin_dir` — the directory that has to be on
+  ``PATH`` for the toolchain to work at all. MinGW needs it so compiled
+  binaries find ``libstdc++``/``libgcc``; a JDK whose ``bin`` is not on
+  ``PATH`` needs it so a bare ``java`` resolves.
+* :attr:`LanguageSpec.build_artefact` — the build product the run step
+  consumes, *when* that product is a single nameable file.
+* :attr:`LanguageSpec.rss_allowance_mb` — how much resident memory a
+  runtime gets on top of the stated limit before the sandbox's OS-level
+  check fires. Only the JVM needs any, and for a structural reason: it
+  reserves memory before running a byte of user code.
 """
 
 from __future__ import annotations
@@ -110,6 +127,21 @@ class LanguageSpec:
             ``Main.class``) instead of the caller assuming one shape.
         version_cmd: ``() -> argv`` used by the environment self-check.
             A callable for the same settings-timing reason as above.
+        toolchain_bin_dir: ``() -> dir`` giving the directory to prepend to
+            ``PATH`` when building or running this language. Empty string
+            means "nothing to prepend" (the toolchain is already reachable
+            by absolute path). Lazy for the same settings-timing reason as
+            ``compile_cmd``.
+        build_artefact: ``(work_dir) -> path | None`` naming the single
+            file the run step consumes, or ``None`` when there is no such
+            file. C++ produces one binary; a Python submission is executed
+            from its source (``py_compile``'s cache is never run) and Java
+            compiles to a class *tree* read via ``-cp``, so both report
+            ``None``. Informational only — what actually gets executed is
+            decided by :attr:`run_cmd`, which takes the directory.
+        rss_allowance_mb: ``() -> MB`` of resident memory granted on top of
+            the request's ``mem_limit_mb`` before the OS-level check fires.
+            0 for languages whose RSS tracks their own allocation.
         source_suffix: Convenience for callers that need the extension
             alone (e.g. temp-file naming or Monaco language inference).
     """
@@ -123,6 +155,9 @@ class LanguageSpec:
     compile_cmd: Optional[Callable[[Path, Path], list[str]]]
     run_cmd: Callable[[Path], list[str]]
     version_cmd: Callable[[], list[str]]
+    toolchain_bin_dir: Callable[[], str]
+    build_artefact: Callable[[Path], Optional[Path]]
+    rss_allowance_mb: Callable[[], int]
 
     @property
     def source_suffix(self) -> str:
@@ -287,6 +322,102 @@ def _version_java() -> list[str]:
     return [settings.java_compiler_path, "-version"]
 
 
+# ----------------------------------------------------- environment builders
+
+
+def _bin_dir_of(command: str) -> str:
+    """Parent directory of *command*, or ``''`` when it is a bare name.
+
+    A bare name is resolved through ``PATH`` by the OS, so there is no
+    directory the sandbox could usefully prepend.
+    """
+    if not command or (os.sep not in command and "/" not in command):
+        return ""
+    return str(Path(command).parent)
+
+
+def _bin_dir_cpp() -> str:
+    """PATH hint for g++, honouring an explicit ``CPP_COMPILER_BIN_DIR``.
+
+    Delegates to :attr:`Settings.resolved_compiler_bin_dir` rather than
+    re-deriving it from the compiler path, because that property exists
+    precisely to cover the case where the MinGW runtime DLLs live
+    somewhere other than beside ``g++``.
+    """
+    return settings.resolved_compiler_bin_dir
+
+
+def _bin_dir_python() -> str:
+    """PATH hint for the interpreter, derived from the configured path.
+
+    Usually empty: :attr:`Settings.resolved_python_interpreter` falls back
+    to ``sys.executable``, which is absolute.
+    """
+    return _bin_dir_of(settings.resolved_python_interpreter)
+
+
+def _bin_dir_java() -> str:
+    """PATH hint for the JDK, so a bare ``java``/``javac`` can resolve.
+
+    This is what makes ``JAVA_RUNTIME_PATH=java`` work on a machine whose
+    JDK is not on ``PATH`` but whose compiler path is configured.
+    """
+    return settings.resolved_java_bin_dir
+
+
+def _artefact_cpp(work_dir: Path) -> Optional[Path]:
+    """The binary ``-o`` points g++ at."""
+    return _cpp_executable(work_dir)
+
+
+def _artefact_python(_work_dir: Path) -> Optional[Path]:
+    """``None`` — a Python submission is executed from its source file.
+
+    ``py_compile`` does produce ``__pycache__``, but the run step never
+    loads it (the source is passed to the interpreter directly), so there
+    is no artefact whose path means anything to a caller.
+    """
+    return None
+
+
+def _artefact_java(_work_dir: Path) -> Optional[Path]:
+    """``None`` — Java compiles to a class *tree*, not one file.
+
+    ``javac -d`` may emit several ``.class`` files for a single source
+    file, and the run step consumes them through ``-cp``. Naming one of
+    them here would be a convenient lie.
+    """
+    return None
+
+
+def _rss_allowance_none() -> int:
+    """No headroom: for these languages RSS tracks the program's own use."""
+    return 0
+
+
+def _rss_allowance_java() -> int:
+    """Headroom covering the JVM's non-heap footprint.
+
+    The runner decides MLE by polling the process's resident memory, but
+    for a JVM that number is dominated by things the submission does not
+    control: metaspace, the code cache, GC structures, thread stacks. Even
+    an empty ``main`` sits well above zero, so polling a JVM against the
+    same ceiling used for C++ produces false MLE verdicts on correct code.
+
+    The real memory bound for Java is the ``-Xmx`` already baked into
+    :func:`_run_java`. This allowance only stops the OS-level check from
+    firing first — it is the "relax Java's memory verdict" half of the
+    PHASE-UX decision, paired with ``-Xmx`` on the other half.
+
+    Known limitation: a Java submission that exhausts its heap dies with
+    ``OutOfMemoryError`` and is therefore classified RE, not MLE. Making
+    that an MLE verdict would mean reading JVM stderr for a language-
+    specific string inside the generic classifier, which is a worse trade
+    than an honest RE with the cause visible in ``stderr``.
+    """
+    return settings.java_rss_allowance_mb
+
+
 # ------------------------------------------------------------ the registry
 
 PYTHON_SPEC = LanguageSpec(
@@ -299,6 +430,9 @@ PYTHON_SPEC = LanguageSpec(
     compile_cmd=_compile_python,
     run_cmd=_run_python,
     version_cmd=_version_python,
+    toolchain_bin_dir=_bin_dir_python,
+    build_artefact=_artefact_python,
+    rss_allowance_mb=_rss_allowance_none,
 )
 
 CPP_SPEC = LanguageSpec(
@@ -311,6 +445,9 @@ CPP_SPEC = LanguageSpec(
     compile_cmd=_compile_cpp,
     run_cmd=_run_cpp,
     version_cmd=_version_cpp,
+    toolchain_bin_dir=_bin_dir_cpp,
+    build_artefact=_artefact_cpp,
+    rss_allowance_mb=_rss_allowance_none,
 )
 
 JAVA_SPEC = LanguageSpec(
@@ -323,6 +460,9 @@ JAVA_SPEC = LanguageSpec(
     compile_cmd=_compile_java,
     run_cmd=_run_java,
     version_cmd=_version_java,
+    toolchain_bin_dir=_bin_dir_java,
+    build_artefact=_artefact_java,
+    rss_allowance_mb=_rss_allowance_java,
 )
 
 #: Language used when a request does not specify one. Kept as C++ to match

@@ -183,6 +183,22 @@ class Settings(BaseSettings):
             "OutOfMemoryError at a predictable point."
         ),
     )
+    java_rss_allowance_mb: int = Field(
+        default=512,
+        ge=0,
+        description=(
+            "Extra resident-memory allowance granted to Java runs on top "
+            "of the request's mem_limit_mb before the runner's OS-level "
+            "memory check fires. A JVM's RSS is dominated by metaspace, "
+            "the code cache and GC structures rather than by the "
+            "submission's own allocation, so checking it against a "
+            "C++-sized ceiling yields false MLE verdicts on correct code. "
+            "The real Java memory bound is java_max_heap_mb; this value "
+            "only keeps the OS-level check from firing first. Raise it if "
+            "a correct Java submission is still reported as MLE; set it "
+            "to 0 to measure Java's RSS directly."
+        ),
+    )
 
     # --------------------------------------------------------- Convenience
     @property

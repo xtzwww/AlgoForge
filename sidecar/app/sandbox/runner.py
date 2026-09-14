@@ -11,23 +11,37 @@ without paying the compilation cost each time.
 
 Memory monitoring uses ``psutil`` (listed in README as part of the
 sandbox stack). The process's RSS is polled at a short interval; if it
-exceeds ``mem_limit_mb`` the process is killed and the result is
-flagged with ``memory_exceeded=True``. This is a best-effort check —
-AGENTS.md mandates "不自研 setrlimit", and psutil polling is the
-pragmatic Windows-compatible alternative. It is "够判 AC/WA/TLE" as
-required.
+exceeds ``mem_limit_mb`` — plus the language's ``rss_allowance_mb``, see
+``LanguageSpec`` — the process is killed and the result is flagged with
+``memory_exceeded=True``. This is a best-effort check — AGENTS.md
+mandates "不自研 setrlimit", and psutil polling is the pragmatic
+Windows-compatible alternative. It is "够判 AC/WA/TLE" as required. A
+language whose RSS does not track its own allocation (Java) is bounded by
+its own toolchain flag instead, with the allowance keeping the OS-level
+check from firing first.
+
+PU-16 generalised the first argument from "a binary path" to "a command":
+Java runs as ``java -Xmx… -cp <dir> Main`` and Python as
+``<interpreter> main.py``, neither of which is a single file. The language
+is now an explicit argument too, because it decides which toolchain
+directory joins ``PATH`` and how much resident memory to tolerate before
+the ceiling fires.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import psutil
 
 from app.sandbox.compiler import _build_env
+from app.sandbox.languages import get_language
 
 # Shortest wait used inside the monitoring loop. This is the granularity
 # at which we check "did the process exit?" — and therefore also the
@@ -63,7 +77,9 @@ class ExecutionResult:
         exit_code: Process exit code. -1 indicates the process was
             killed (timeout or memory) or never started.
         timed_out: True if the process exceeded ``time_limit``.
-        memory_exceeded: True if the process exceeded ``mem_limit_mb``.
+        memory_exceeded: True if the process exceeded the effective RSS
+            ceiling — ``mem_limit_mb`` plus the language's
+            ``rss_allowance_mb``.
     """
 
     success: bool
@@ -111,43 +127,102 @@ def _peak_rss(proc: psutil.Process) -> int:
     return peak
 
 
+def _as_argv(command: str | Path | Sequence[str]) -> list[str]:
+    """Normalize the command argument of :func:`run_executable` to a list.
+
+    A single path (or bare command name) is wrapped; a sequence is taken
+    as the complete argv. Doing this once here means the rest of the
+    function only ever deals with one shape.
+    """
+    if isinstance(command, (str, Path)):
+        return [str(command)]
+    return [str(part) for part in command]
+
+
+def _is_launchable(program: Path) -> bool:
+    """Whether *program* looks like something the OS could launch.
+
+    A path (absolute or relative) is checked on disk. A bare command name
+    has no file to stat and is resolved through ``PATH`` by the OS, so it
+    is looked up with ``shutil.which`` — otherwise a configured
+    ``JAVA_RUNTIME_PATH=java`` would be reported as missing purely because
+    ``Path("java").exists()`` is False.
+    """
+    text = str(program)
+    if os.sep in text or "/" in text:
+        return program.exists()
+    return shutil.which(text) is not None
+
+
 def run_executable(
-    exec_path: str | Path,
+    command: str | Path | Sequence[str],
     stdin: str | None = None,
     time_limit: float = 10.0,
     mem_limit_mb: int = 256,
+    *,
+    language: str | None = None,
 ) -> ExecutionResult:
-    """Run a compiled binary with a timeout and memory ceiling.
+    """Run a built program with a timeout and a memory ceiling.
 
     Args:
-        exec_path: Path to the executable produced by ``compile_cpp``.
+        command: Either the path of the program to run, or the complete
+            argv that launches it. The sequence form exists for languages
+            whose run command is not a single file — Java needs
+            ``java -Xmx… -cp <dir> Main``, Python needs
+            ``<interpreter> main.py``. Build it with the descriptor's
+            ``run_cmd`` rather than by hand.
         stdin: Optional text fed to the program's standard input.
         time_limit: Wall-clock timeout in seconds.
-        mem_limit_mb: Memory ceiling in megabytes. The process's RSS
-            is polled; if it exceeds this value the process is killed.
+        mem_limit_mb: Memory ceiling in megabytes. The process's RSS is
+            polled; if it exceeds this value plus the language's allowance
+            (see below) the process is killed.
+        language: Language id. Decides which toolchain directory joins
+            ``PATH`` and how much resident memory is tolerated. ``None``
+            selects the default (C++), matching the pre-PU-16 behaviour of
+            this function, and prepends every registered toolchain's bin
+            directory.
 
     Returns:
         An :class:`ExecutionResult`. The ``success`` flag is True only
         when the process exited 0 without hitting either limit.
 
+    Raises:
+        UnknownLanguageError: *language* is not registered.
+
     The function never raises for process-level failures (missing
     executable, OS errors, limits exceeded) — those are reported in the
     returned result so callers can treat them uniformly.
+
+    Note:
+        The effective RSS ceiling is ``mem_limit_mb`` **plus** the
+        language's ``rss_allowance_mb``. For a JVM, resident memory is
+        dominated by metaspace, the code cache and GC structures rather
+        than by the submission's own allocation, so measuring it against a
+        C++-sized ceiling yields false MLE verdicts on correct code; Java's
+        ``-Xmx`` is the real bound there, and the allowance only keeps the
+        OS-level check from winning the race. See
+        ``LanguageSpec.rss_allowance_mb``.
     """
-    exe = Path(exec_path)
-    if not exe.exists():
+    argv = _as_argv(command)
+    program = Path(argv[0])
+    if not _is_launchable(program):
         return ExecutionResult(
             success=False,
             stdout="",
-            stderr=f"Executable not found: {exe}",
+            stderr=f"Executable not found: {program}",
             exit_code=-1,
         )
 
-    mem_limit_bytes = mem_limit_mb * 1024 * 1024
+    spec = get_language(language)
+    # The allowance is added rather than replacing the limit so the
+    # request's mem_limit_mb keeps meaning what it says: for languages
+    # with no allowance (C++, Python) nothing changes at all.
+    effective_mb = mem_limit_mb + spec.rss_allowance_mb()
+    mem_limit_bytes = effective_mb * 1024 * 1024
 
     try:
         proc = subprocess.Popen(
-            [str(exe)],
+            argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -157,9 +232,10 @@ def run_executable(
             encoding="utf-8",
             errors="replace",
             # MinGW executables need the MinGW runtime DLLs (libstdc++,
-            # libgcc_s, etc.) which live in cpp_compiler_bin_dir. Reuse
-            # the compiler's env builder so the binary can find them.
-            env=_build_env(),
+            # libgcc_s, etc.) which live in cpp_compiler_bin_dir; a JDK
+            # outside PATH needs its own bin directory. Reuse the
+            # compiler's env builder so the language descriptor decides.
+            env=_build_env(spec),
         )
     except OSError as exc:
         return ExecutionResult(
@@ -261,7 +337,7 @@ def run_executable(
         return ExecutionResult(
             success=False,
             stdout=stdout,
-            stderr=f"Memory Limit Exceeded (>{mem_limit_mb}MB)",
+            stderr=f"Memory Limit Exceeded (>{effective_mb}MB)",
             exit_code=-1,
             memory_exceeded=True,
         )
