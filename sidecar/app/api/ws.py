@@ -57,10 +57,18 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.api import validate_language_id
+from app.records import SubmissionContext, record_submission_quietly
 from app.sandbox.judge import judge
 from app.sandbox.judge_input import JudgeInputError, ResolvedJudgeInput, resolve
 
 router = APIRouter(tags=["ws"])
+
+#: Indirection over :func:`app.records.record_submission_quietly` so tests
+#: can substitute the write without a database. Both routes resolve the
+#: name through here at call time; the tests in ``test_judge_recording.py``
+#: replace it, which is what lets the WS and REST judge paths be tested
+#: without a live PostgreSQL. Production keeps the real function.
+record_judge_outcome = record_submission_quietly
 
 
 def _parse_request(
@@ -138,6 +146,14 @@ async def run_log(websocket: WebSocket) -> None:
         await websocket.send_json({"type": "judge_error", "error": str(exc)})
         return
 
+    context = SubmissionContext(
+        code=code,
+        language=language,
+        problem_id=resolved.problem_id,
+        time_limit=resolved.time_limit,
+        mem_limit_mb=resolved.mem_limit_mb,
+    )
+
     # Bridge between the judging worker thread and this async coroutine.
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     loop = asyncio.get_running_loop()
@@ -147,17 +163,55 @@ async def run_log(websocket: WebSocket) -> None:
         # to enqueue the message without blocking.
         asyncio.run_coroutine_threadsafe(queue.put(msg), loop)
 
+    def progress_only(msg: dict[str, Any]) -> None:
+        """Forward progress events, withholding the terminal one.
+
+        ``judge()`` emits its own ``judge_done`` from inside the judging
+        function, which would reach the client *before* the history row
+        is written. The reader loop treats that event as "stop", so the
+        client would be told the run finished while ``record_submission``
+        was still executing — and a client that reads the history right
+        after would legitimately find nothing.
+
+        The terminal event is therefore held back here and sent by
+        :func:`judge_and_record` once the row is committed, so "done"
+        means done: verdict delivered *and* history written.
+
+        ``judge_error`` is filtered too even though ``judge()`` does not
+        emit it today — the reader loop also treats it as terminal, so
+        anything terminal must come from the one place that knows the
+        write has finished.
+        """
+        if msg.get("type") not in ("judge_done", "judge_error"):
+            on_event(msg)
+
+    def judge_and_record() -> None:
+        """Judge, store the outcome, then tell the client it is finished.
+
+        Recording is deliberately *after* the verdict is complete and
+        still on this thread: it needs a synchronous session (see
+        ``app/records.py``), and doing it here keeps the write off the
+        event loop. ``record_submission`` never raises, so a history
+        failure cannot break the stream the client is reading.
+        """
+        outcome = judge(
+            code,
+            resolved.test_cases,
+            time_limit=resolved.time_limit,
+            mem_limit_mb=resolved.mem_limit_mb,
+            language=language,
+            on_event=progress_only,
+        )
+        record_judge_outcome(outcome, context)
+        # Terminal event last, so the client cannot observe a finished
+        # run whose history has not landed yet.
+        terminal = outcome.to_dict()
+        terminal["type"] = "judge_done"
+        on_event(terminal)
+
     async def run_judge() -> None:
         try:
-            await asyncio.to_thread(
-                judge,
-                code,
-                resolved.test_cases,
-                time_limit=resolved.time_limit,
-                mem_limit_mb=resolved.mem_limit_mb,
-                language=language,
-                on_event=on_event,
-            )
+            await asyncio.to_thread(judge_and_record)
         except Exception as exc:
             # Propagate unexpected failures as a terminal event so the
             # reader loop unblocks and the client sees what happened.

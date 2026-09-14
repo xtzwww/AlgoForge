@@ -41,7 +41,12 @@ class MistakeBookEntry(Base):
         problem_id: Denormalized from submission for cheaper queries
             (avoid join when listing by problem).
         error_cause: Free-form text the user writes when adding the
-            entry. May be empty.
+            entry. May be empty. An empty value on a PU-13 auto-archived
+            entry is what marks it as not yet analysed by the agent.
+        error_cause_fingerprint: Digest of the originating submission's
+            (problem_id, language, code), set only on auto-archived
+            entries. Used to keep resubmitting the same wrong code from
+            creating duplicate entries.
         knowledge_tags: Snapshot of :attr:`Problem.knowledge_tags` at
             the time this entry was created. Stored separately so that
             re-tagging the problem later doesn't retroactively rewrite
@@ -63,6 +68,15 @@ class MistakeBookEntry(Base):
         Integer, ForeignKey("problems.id"), nullable=False
     )
     error_cause: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: PU-13: digest of (problem_id, language, code) for the submission
+    #: that produced this entry. Written only for auto-archived entries,
+    #: where it lets a resubmission of the same wrong code be recognised
+    #: as a duplicate — see ``app/records.py``. User-created entries leave
+    #: it NULL and are exempt from that check, because a user adding an
+    #: entry by hand is making a deliberate statement.
+    error_cause_fingerprint: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True
+    )
     knowledge_tags: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list
     )
@@ -76,7 +90,13 @@ class MistakeBookEntry(Base):
     )
 
     def to_dict(self) -> dict:
-        """JSON-safe dict for API serialization."""
+        """JSON-safe dict for API serialization.
+
+        ``error_cause_fingerprint`` is deliberately omitted. It is an
+        internal dedupe key with no meaning to a client, and publishing it
+        would invite a frontend to depend on a value that is only an
+        implementation detail of ``app/records.py``.
+        """
         return {
             "id": self.id,
             "submission_id": self.submission_id,

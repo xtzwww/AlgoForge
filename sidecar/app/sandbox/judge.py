@@ -63,7 +63,13 @@ class TestCase:
 
 @dataclass
 class TestCaseResult:
-    """The judge verdict for a single test case."""
+    """The judge verdict for a single test case.
+
+    ``exec_time`` / ``memory_used`` come straight from the runner's
+    measurement of that case and are ``None`` when nothing was sampled.
+    PU-13 aggregates them onto the submission row; the judge itself does
+    not care about them.
+    """
 
     status: JudgeStatus
     input: str
@@ -71,6 +77,8 @@ class TestCaseResult:
     actual_output: str
     stderr: str = ""
     exit_code: int = 0
+    exec_time: Optional[float] = None
+    memory_used: Optional[int] = None
 
     def to_dict(self) -> dict:
         return {
@@ -80,6 +88,8 @@ class TestCaseResult:
             "actual_output": self.actual_output,
             "stderr": self.stderr,
             "exit_code": self.exit_code,
+            "exec_time": self.exec_time,
+            "memory_used": self.memory_used,
         }
 
 
@@ -344,6 +354,11 @@ def judge(
                     actual_output=run.stdout,
                     stderr=run.stderr,
                     exit_code=run.exit_code,
+                    # PU-13: carried through so the submission row can
+                    # report what the run actually cost. See the field
+                    # docstring for why None is distinct from 0.
+                    exec_time=run.exec_time,
+                    memory_used=run.memory_used,
                 )
             )
             _emit(
@@ -356,6 +371,8 @@ def judge(
                     "exit_code": run.exit_code,
                     "timed_out": run.timed_out,
                     "memory_exceeded": run.memory_exceeded,
+                    "exec_time": run.exec_time,
+                    "memory_used": run.memory_used,
                 },
             )
 

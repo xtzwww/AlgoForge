@@ -17,6 +17,35 @@ if str(SIDECAR_DIR) not in sys.path:
     sys.path.insert(0, str(SIDECAR_DIR))
 
 
+@pytest.fixture(autouse=True)
+def _no_real_submission_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the judge routes from writing to a real database.
+
+    Since PU-13 the judge records every verdict by calling
+    ``app.records.record_submission``, whose default session comes from
+    ``app.db.get_session``. That opens an engine against the documented
+    PostgreSQL DSN — which is not running here — so a judge test that
+    does not opt out would hang on a connection instead of failing.
+
+    The replacement records nothing. Tests that *do* care about the write
+    assert it through their own explicit hook (see
+    ``tests/test_judge_recording.py``); this fixture only guarantees that
+    the default is quiet.
+
+    ``autouse`` because this is a correctness requirement for the suite as
+    a whole, not an opt-in for individual tests — forgetting it in one
+    module would make that module hang rather than fail.
+    """
+    from app.api import judge as judge_module
+    from app.api import ws as ws_module
+
+    def _skip(result: object, context: object) -> None:
+        return None
+
+    monkeypatch.setattr(judge_module, "record_judge_outcome", _skip)
+    monkeypatch.setattr(ws_module, "record_judge_outcome", _skip)
+
+
 @pytest.fixture
 def ascii_tmp_path() -> Path:
     """A per-test temp directory on an ASCII-only path.

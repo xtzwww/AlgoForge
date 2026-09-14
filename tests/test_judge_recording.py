@@ -1,0 +1,589 @@
+"""End-to-end tests for PU-13's judge → store → mistake-book chain.
+
+This module is the closure of gap 7 in ``docs/PHASE-UX.md``: before
+PU-13, ``submissions`` had no writer while ``MistakeBookEntry`` required
+a ``submission_id`` that had to already exist, so the mistake book's
+normal route was unreachable. The tests here drive the whole chain —
+submit code over the judge route, then read the mistake book back — and
+would fail if any link were missing.
+
+The root ``conftest.py`` installs an autouse fixture that stubs out the
+write so the suite does not need a live database. Every test in this
+module **undoes** that stub with a recording one, because the write is
+precisely the behaviour under test. That is why the stubbing lives in a
+module-level fixture here rather than being left implicit.
+
+Everything runs against in-memory SQLite through injected sessions, for
+the same reason the rest of the suite does: no PostgreSQL on this
+machine.
+
+Ordering
+--------
+These tests read the history immediately after the WebSocket stream
+reports ``judge_done``, which is only sound because the WS route sends
+that terminal event *after* the write has committed. An earlier revision
+let ``judge()``'s own ``judge_done`` through to the client first, so the
+read raced the write; the count assertions here are what caught it.
+"""
+
+from __future__ import annotations
+
+from typing import Iterator
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.api import judge as judge_module
+from app.api import mistake_book as mb_module
+from app.api import submissions as submissions_module
+from app.api import ws as ws_module
+from app.main import app
+from app.models.base import Base
+from app.models.mistake_book import MistakeBookEntry
+from app.models.problem import Problem
+from app.models.submission import Submission
+from app.models.test_case import TestCase
+from app.records import SubmissionContext, record_submission
+from app.sandbox import judge_input as judge_input_module
+
+# A correct A+B program and a wrong one. Kept minimal so the tests are
+# about the chain, not about the judge.
+_CPP_AC = """\
+#include <iostream>
+int main() {
+    int a, b;
+    std::cin >> a >> b;
+    std::cout << a + b << std::endl;
+    return 0;
+}
+"""
+
+_CPP_WA = """\
+#include <iostream>
+int main() {
+    int a, b;
+    std::cin >> a >> b;
+    std::cout << a - b << std::endl;
+    return 0;
+}
+"""
+
+
+@pytest.fixture
+def engine():
+    """In-memory SQLite engine on a StaticPool (one shared connection).
+
+    One shared connection is what makes the in-memory database *shared*
+    at all: every session for this test talks to the same DB, which is
+    what lets a write from a worker thread be visible to the request
+    that reads it back.
+    """
+    eng = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(eng)
+    return eng
+
+
+@pytest.fixture
+def session(engine) -> Iterator[Session]:
+    """A session on the shared in-memory database."""
+    SessionLocal = sessionmaker(engine, expire_on_commit=False)
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def seeded(session: Session) -> Session:
+    """A judgeable problem: two cases, one visible, one hidden."""
+    problem = Problem(
+        id=1,
+        title="A + B",
+        knowledge_tags=["基础", "模拟"],
+        description="Add two integers.",
+        samples=[{"input": "1 2", "output": "3"}],
+        time_limit=10.0,
+        memory_limit=256,
+    )
+    session.add(problem)
+    session.flush()
+    session.add(
+        TestCase(
+            problem_id=1,
+            ordinal=1,
+            input="1 2\n",
+            expected_output="3\n",
+            is_sample=True,
+        )
+    )
+    session.add(
+        TestCase(
+            problem_id=1,
+            ordinal=2,
+            input="10 20\n",
+            expected_output="30\n",
+            is_sample=False,
+        )
+    )
+    session.commit()
+    return session
+
+
+@pytest.fixture
+def client(
+    engine, seeded: Session, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[TestClient]:
+    """Client whose judge routes read and write through the test engine.
+
+    Two kinds of redirection, both on the module the name is looked up
+    in rather than where it was defined:
+
+    * the write hook, so the verdict is stored in the in-memory database;
+    * ``get_session`` inside the route modules, so resolution and the
+      read endpoints see the same data.
+
+    The write gets a **fresh session per call**, not the fixture's. That
+    matters: judging happens on a worker thread, and a session shared
+    across threads raises ``IllegalStateChangeError`` as soon as one
+    thread commits while another is mid-transaction. Production behaves
+    the same way — ``record_submission`` opens its own session — so
+    sharing one here would test a topology the app never uses.
+    """
+    def _record(result: object, context: object) -> None:
+        SessionLocal = sessionmaker(engine, expire_on_commit=False)
+        with SessionLocal() as write_session:
+            record_submission(result, context, session=write_session)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(judge_module, "record_judge_outcome", _record)
+    monkeypatch.setattr(ws_module, "record_judge_outcome", _record)
+
+    # The read side, for the judge's problem lookup plus the
+    # mistake-book and submission endpoints. Patch each module's own
+    # binding: a ``from app.db import get_session`` binds the function
+    # into the importing module's namespace, so patching app.db would do
+    # nothing.
+    def _test_session() -> Session:
+        SessionLocal = sessionmaker(engine, expire_on_commit=False)
+        return SessionLocal()
+
+    monkeypatch.setattr(judge_input_module, "get_session", _test_session)
+    monkeypatch.setattr(mb_module, "get_session", _test_session)
+    monkeypatch.setattr(submissions_module, "get_session", _test_session)
+
+    with TestClient(app) as c:
+        yield c
+
+
+def _judge_via_ws(client: TestClient, code: str) -> list[dict]:
+    """Run a submission over the WebSocket route, returning all events."""
+    with client.websocket_connect("/ws/run-log") as ws:
+        ws.send_json(
+            {
+                "code": code,
+                "language": "cpp",
+                "problem_id": 1,
+                "time_limit": 15.0,
+                "mem_limit_mb": 256,
+            }
+        )
+        events = []
+        while True:
+            msg = ws.receive_json()
+            events.append(msg)
+            if msg.get("type") in ("judge_done", "judge_error"):
+                return events
+
+
+# --- The chain ---------------------------------------------------------
+
+
+def test_ac_submission_is_recorded_and_visible(
+    client: TestClient, seeded: Session
+) -> None:
+    """An accepted run through the WS route lands in the history."""
+    events = _judge_via_ws(client, _CPP_AC)
+    assert events[-1]["type"] == "judge_done", events[-1]
+    assert events[-1]["status"] == "AC"
+
+    body = client.get("/api/v1/submissions").json()
+    assert body["total"] == 1
+    row = body["items"][0]
+    assert row["status"] == "AC"
+    assert row["problem_id"] == 1
+    assert row["language"] == "cpp"
+
+
+def test_hidden_case_is_used_by_the_judge(
+    client: TestClient, seeded: Session
+) -> None:
+    """Both cases run, hidden included.
+
+    A program that is right on the sample but wrong on the hidden case
+    must fail — that is the whole point of the hidden-case mechanism, and
+    it only holds if the judge reads the table rather than the request.
+    """
+    # 1 2 -> 3 (right) but 10 20 -> -10 (wrong).
+    events = _judge_via_ws(client, _CPP_WA)
+    assert events[-1]["type"] == "judge_done", events[-1]
+    assert events[-1]["status"] == "WA"
+    assert events[-1]["total"] == 2, "the hidden case did not run"
+
+
+def test_wa_submission_creates_a_mistake_book_entry(
+    client: TestClient, seeded: Session
+) -> None:
+    """**Gap 7 closed.** A wrong answer reaches the mistake book.
+
+    Before PU-13 this could not happen: no route wrote ``submissions``,
+    and the mistake-book create endpoint rejected a ``submission_id``
+    that did not exist. This asserts the whole path end to end rather
+    than each link in isolation.
+    """
+    _judge_via_ws(client, _CPP_WA)
+
+    entries = client.get("/api/v1/mistake-book").json()
+    assert len(entries) == 1, "the mistake book is still unreachable"
+    entry = entries[0]
+    assert entry["problem_id"] == 1
+    assert entry["knowledge_tags"] == ["基础", "模拟"]
+    assert entry["error_cause"] == "", "the agent fills this in during S2"
+    assert entry["submission_id"] is not None
+
+    # The referenced submission really exists — this is the FK the old
+    # flow could never satisfy.
+    sub = client.get(f"/api/v1/submissions/{entry['submission_id']}")
+    assert sub.status_code == 200
+    assert sub.json()["status"] == "WA"
+
+
+def test_recorded_submission_keeps_the_full_source(
+    client: TestClient, seeded: Session
+) -> None:
+    """The detail endpoint returns the code that was actually run.
+
+    Read back from the stored row, not from the request, so a bug that
+    stored the wrong field would show up here.
+    """
+    _judge_via_ws(client, _CPP_WA)
+
+    sub_id = client.get("/api/v1/submissions").json()["items"][0]["id"]
+    detail = client.get(f"/api/v1/submissions/{sub_id}").json()
+
+    assert detail["code"] == _CPP_WA
+    assert detail["status"] == "WA"
+
+
+def test_recorded_submission_keeps_measurements(
+    client: TestClient, seeded: Session
+) -> None:
+    """A judged run reports a time and a memory figure.
+
+    Anything else means the runner's measurements are not reaching the
+    row, which is the whole reason PU-13 extended ``ExecutionResult``.
+    """
+    _judge_via_ws(client, _CPP_AC)
+
+    row = client.get("/api/v1/submissions").json()["items"][0]
+    assert row["exec_time"] is not None
+    assert row["exec_time"] > 0.0
+    assert row["memory_used"] is not None
+    assert row["memory_used"] >= 1
+
+
+def test_resubmitting_the_same_wrong_code_creates_one_entry(
+    client: TestClient, seeded: Session
+) -> None:
+    """Submitting the same wrong code twice yields one mistake entry.
+
+    Two submissions are recorded — the user did run twice — but only one
+    mistake, because the second teaches nothing new.
+    """
+    _judge_via_ws(client, _CPP_WA)
+    _judge_via_ws(client, _CPP_WA)
+
+    assert client.get("/api/v1/submissions").json()["total"] == 2
+    assert len(client.get("/api/v1/mistake-book").json()) == 1
+
+
+def test_ac_after_wa_leaves_the_mistake_entry(
+    client: TestClient, seeded: Session
+) -> None:
+    """Fixing the code does not erase the mistake.
+
+    The entry is a record that the mistake happened, which is what the
+    review loop schedules against; deleting it on success would quietly
+    empty the mistake book as the user improves.
+    """
+    _judge_via_ws(client, _CPP_WA)
+    _judge_via_ws(client, _CPP_AC)
+
+    history = client.get("/api/v1/submissions").json()
+    assert history["total"] == 2
+    assert {row["status"] for row in history["items"]} == {"AC", "WA"}
+    assert len(client.get("/api/v1/mistake-book").json()) == 1
+
+
+# --- Listing and filtering --------------------------------------------
+
+
+def test_submissions_are_listed_newest_first(
+    client: TestClient, seeded: Session
+) -> None:
+    """The most recent run is at the top.
+
+    The usual reason to open this list is "what did I just run", which an
+    ascending order would put on the last page.
+    """
+    _judge_via_ws(client, _CPP_WA)
+    _judge_via_ws(client, _CPP_AC)
+
+    items = client.get("/api/v1/submissions").json()["items"]
+    assert len(items) == 2
+    assert items[0]["status"] == "AC", "the newer run is not first"
+
+
+def test_list_omits_the_source(client: TestClient, seeded: Session) -> None:
+    """A list row carries no code and no captured output."""
+    _judge_via_ws(client, _CPP_WA)
+
+    body = client.get("/api/v1/submissions").json()
+    row = body["items"][0]
+    assert "code" not in row
+    assert "stdout" not in row
+    assert "stderr" not in row
+    assert _CPP_WA not in client.get("/api/v1/submissions").text
+
+
+def test_list_filters_by_status(client: TestClient, seeded: Session) -> None:
+    """The status filter narrows the history."""
+    _judge_via_ws(client, _CPP_WA)
+    _judge_via_ws(client, _CPP_AC)
+
+    body = client.get("/api/v1/submissions", params={"status": "WA"}).json()
+    assert body["total"] == 1
+    assert body["items"][0]["status"] == "WA"
+
+
+def test_list_rejects_an_unknown_status(
+    client: TestClient, seeded: Session
+) -> None:
+    """An unknown verdict is a 422, not a silently-empty page."""
+    resp = client.get("/api/v1/submissions", params={"status": "NOPE"})
+    assert resp.status_code == 422
+    assert "AC" in resp.json()["detail"]
+
+
+def test_list_filters_by_language(client: TestClient, seeded: Session) -> None:
+    """The language filter narrows the history."""
+    _judge_via_ws(client, _CPP_AC)
+
+    assert (
+        client.get("/api/v1/submissions", params={"language": "cpp"}).json()[
+            "total"
+        ]
+        == 1
+    )
+    assert (
+        client.get("/api/v1/submissions", params={"language": "java"}).json()[
+            "total"
+        ]
+        == 0
+    )
+
+
+def test_list_paginates(client: TestClient, seeded: Session) -> None:
+    """``page`` / ``page_size`` slice the history; ``total`` does not.
+
+    Three rows at a page size of two is deliberately not a multiple of
+    the page size: the last page is short, and conflating "short page"
+    with "wrong page" is the bug this shape catches.
+    """
+    for _ in range(3):
+        _judge_via_ws(client, _CPP_AC)
+
+    first = client.get(
+        "/api/v1/submissions", params={"page": 1, "page_size": 2}
+    ).json()
+    assert first["total"] == 3, "total counts the whole history, not the page"
+    assert len(first["items"]) == 2
+
+    second = client.get(
+        "/api/v1/submissions", params={"page": 2, "page_size": 2}
+    ).json()
+    assert second["total"] == 3
+    assert len(second["items"]) == 1, "the last page is short, not full"
+
+    # The pages must partition the history: no row on both, none missing.
+    ids = [row["id"] for row in first["items"] + second["items"]]
+    assert sorted(ids) == [1, 2, 3]
+
+
+def test_list_rejects_page_size_above_ceiling(
+    client: TestClient, seeded: Session
+) -> None:
+    """``MAX_PAGE_SIZE`` is enforced."""
+    assert (
+        client.get("/api/v1/submissions", params={"page_size": 101}).status_code
+        == 422
+    )
+
+
+def test_detail_404s_on_unknown_id(client: TestClient, seeded: Session) -> None:
+    """Unknown id → 404 naming the id."""
+    resp = client.get("/api/v1/submissions/999")
+    assert resp.status_code == 404
+    assert "999" in resp.json()["detail"]
+
+
+def test_empty_history_is_a_valid_page(
+    client: TestClient, seeded: Session
+) -> None:
+    """No submissions yet is a 200 with an empty list."""
+    body = client.get("/api/v1/submissions").json()
+    assert body == {"items": [], "total": 0, "page": 1, "page_size": 20}
+
+
+# --- The REST twin -----------------------------------------------------
+
+
+def test_rest_judge_also_records(client: TestClient, seeded: Session) -> None:
+    """The HTTP route records too, not just the WebSocket.
+
+    Both entry points must behave the same; a history that depends on
+    which transport the client used would be a silent trap.
+    """
+    resp = client.post(
+        "/api/v1/judge",
+        json={
+            "code": _CPP_WA,
+            "language": "cpp",
+            "problem_id": 1,
+            "time_limit": 15.0,
+            "mem_limit_mb": 256,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "WA"
+
+    assert client.get("/api/v1/submissions").json()["total"] == 1
+    assert len(client.get("/api/v1/mistake-book").json()) == 1
+
+
+def test_ce_submission_is_recorded_without_measurements(
+    client: TestClient, seeded: Session
+) -> None:
+    """A compile error is recorded, with no time or memory.
+
+    Nothing ran, so there is nothing to measure; the column stays null
+    rather than claiming an instant, memory-free execution.
+    """
+    resp = client.post(
+        "/api/v1/judge",
+        json={"code": "int main( {", "language": "cpp", "problem_id": 1},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "CE"
+
+    row = client.get("/api/v1/submissions").json()["items"][0]
+    assert row["status"] == "CE"
+    assert row["exec_time"] is None
+    assert row["memory_used"] is None
+
+
+def test_free_run_is_recorded_but_not_archived(
+    client: TestClient, seeded: Session
+) -> None:
+    """A run with no problem is stored but files no mistake.
+
+    ``MistakeBookEntry.problem_id`` is NOT NULL, and a mistake against no
+    particular problem is nothing the review loop can schedule.
+    """
+    resp = client.post(
+        "/api/v1/judge",
+        json={
+            "code": _CPP_WA,
+            "language": "cpp",
+            "test_cases": [{"input": "1 2\n", "expected_output": "3\n"}],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "WA"
+
+    history = client.get("/api/v1/submissions").json()
+    assert history["total"] == 1
+    assert history["items"][0]["problem_id"] is None
+    assert client.get("/api/v1/mistake-book").json() == []
+
+
+def test_recording_failure_does_not_break_the_verdict(
+    client: TestClient, seeded: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A history write that blows up still returns the verdict.
+
+    The user waited for the answer; losing the row is a much smaller harm
+    than losing it. ``record_submission`` swallows exceptions for this
+    reason, and this pins that it does.
+
+    The patch goes on ``app.records.record_submission`` — the *inner*
+    function — not on the route's ``record_judge_outcome`` hook. The
+    hook **is** the guard, so replacing it with a raising function would
+    remove the protection being tested and prove nothing.
+    """
+    import app.records as records_module
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("database is on fire")
+
+    # A raising inner recorder stands in for a database failure on the
+    # write path: it is exactly what record_submission_quietly must
+    # absorb.
+    monkeypatch.setattr(records_module, "record_submission", _boom)
+
+    resp = client.post(
+        "/api/v1/judge",
+        json={"code": _CPP_AC, "language": "cpp", "problem_id": 1},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "AC"
+
+
+def test_stored_rows_match_the_database(session: Session, seeded: Session) -> None:
+    """Sanity check on the rows the tests above produced.
+
+    Reads through the ORM rather than the API, so a serialization bug in
+    the endpoints cannot mask a storage bug.
+    """
+    from app.sandbox.judge import JudgeResult, JudgeStatus, TestCaseResult
+
+    result = JudgeResult(
+        status=JudgeStatus.WA,
+        test_cases=[
+            TestCaseResult(
+                status=JudgeStatus.WA,
+                input="10 20\n",
+                expected_output="30\n",
+                actual_output="-10\n",
+                exec_time=0.03,
+                memory_used=9,
+            )
+        ],
+    )
+    record_submission(
+        result,
+        SubmissionContext(code="x", language="cpp", problem_id=1),
+        session=session,
+    )
+
+    sub = session.execute(select(Submission)).scalars().one()
+    assert sub.stdout == "-10\n"
+    assert sub.exec_time == pytest.approx(0.03)
+    assert sub.memory_used == 9
+    assert session.execute(select(MistakeBookEntry)).scalars().one().problem_id == 1

@@ -17,7 +17,7 @@ from app.models.problem import (
     Problem,
 )
 from app.models.review import ReviewRecord
-from app.models.submission import Submission
+from app.models.submission import STATUSES, Submission
 from app.models.test_case import TestCase
 
 __all__ = [
@@ -25,6 +25,7 @@ __all__ = [
     "DEFAULT_MEMORY_LIMIT",
     "DEFAULT_TIME_LIMIT",
     "DIFFICULTIES",
+    "STATUSES",
     "KnowledgeStat",
     "MistakeBookEntry",
     "Problem",

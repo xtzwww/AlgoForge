@@ -40,16 +40,24 @@ returns one finished response instead of streaming progress, which is
 what tests and simple clients want.
 """
 
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api import LanguageId
-from app.sandbox.judge import judge
+from app.records import SubmissionContext, record_submission_quietly
+from app.sandbox.judge import JudgeResult, judge
 from app.sandbox.judge_input import JudgeInputError, resolve
 
 router = APIRouter(prefix="/api/v1", tags=["judge"])
+
+#: Indirection over :func:`app.records.record_submission_quietly`,
+#: mirroring the hook in ``app/api/ws.py``. Tests replace this to
+#: exercise the judge route without a database; production keeps the real
+#: function.
+record_judge_outcome = record_submission_quietly
 
 
 class TestCaseIn(BaseModel):
@@ -126,13 +134,33 @@ async def judge_code(req: JudgeRequest) -> JudgeResponse:
         status = 404 if "not found" in str(exc) else 422
         raise HTTPException(status_code=status, detail=str(exc)) from None
 
-    result = judge(
-        req.code,
-        resolved.test_cases,
+    context = SubmissionContext(
+        code=req.code,
+        language=req.language,
+        problem_id=resolved.problem_id,
         time_limit=resolved.time_limit,
         mem_limit_mb=resolved.mem_limit_mb,
-        language=req.language,
     )
+
+    # Judging is blocking — it compiles and runs a subprocess per case —
+    # and recording is blocking database I/O. Both go to a worker thread
+    # so this coroutine does not stall the event loop for every other
+    # request, which is also what the WS route does.
+    def _judge_and_record() -> JudgeResult:
+        outcome = judge(
+            req.code,
+            resolved.test_cases,
+            time_limit=resolved.time_limit,
+            mem_limit_mb=resolved.mem_limit_mb,
+            language=req.language,
+        )
+        # Ordered after the verdict exists so the row can never describe
+        # a run that did not finish. The hook is the quiet variant: a
+        # history-write failure must not cost the user their verdict.
+        record_judge_outcome(outcome, context)
+        return outcome
+
+    result = await asyncio.to_thread(_judge_and_record)
     payload = result.to_dict()
     payload["problem_id"] = resolved.problem_id
     return JudgeResponse(**payload)

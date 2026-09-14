@@ -30,13 +30,14 @@ the ceiling fires.
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 import psutil
 
@@ -80,6 +81,21 @@ class ExecutionResult:
         memory_exceeded: True if the process exceeded the effective RSS
             ceiling — ``mem_limit_mb`` plus the language's
             ``rss_allowance_mb``.
+        exec_time: Wall-clock seconds the process ran, as measured
+            around the poll loop. This is the *observed* duration, which
+            for a timeout is the limit (the process was killed when it
+            was reached) rather than however long the kill took.
+        memory_used: Peak RSS observed in megabytes, rounded up, or
+            ``None`` when no sample was taken. Sampling can fail for a
+            process that exits before the first poll or that the OS will
+            not let us inspect, and a missing measurement is reported as
+            missing rather than as zero — "0 MB" would read as a real
+            reading and is worse than no answer.
+
+            Note this is the raw observation, deliberately *not* the
+            effective ceiling: a JVM's ``rss_allowance_mb`` is a verdict
+            threshold, not part of what the submission allocated, so
+            folding it in would misreport every Java run.
     """
 
     success: bool
@@ -88,6 +104,8 @@ class ExecutionResult:
     exit_code: int
     timed_out: bool = False
     memory_exceeded: bool = False
+    exec_time: float = 0.0
+    memory_used: Optional[int] = None
 
     def to_dict(self) -> dict:
         return {
@@ -97,6 +115,8 @@ class ExecutionResult:
             "exit_code": self.exit_code,
             "timed_out": self.timed_out,
             "memory_exceeded": self.memory_exceeded,
+            "exec_time": self.exec_time,
+            "memory_used": self.memory_used,
         }
 
 
@@ -264,6 +284,12 @@ def run_executable(
     mem_exceeded = False
     retcode: int | None = None
     start = time.monotonic()
+    # Highest RSS seen across the sampling loop, in bytes. 0 means "no
+    # sample was taken" — either the process finished before the first
+    # poll or psutil refused to inspect it. That distinction is preserved
+    # all the way out as ``memory_used=None`` rather than being flattened
+    # to a zero reading.
+    peak_rss_bytes = 0
 
     # One psutil.Process object reused across the loop. Constructing it
     # per sample is comparatively expensive and would itself slow the
@@ -308,6 +334,11 @@ def run_executable(
 
         if mon is not None:
             rss = _peak_rss(mon)
+            # Keep the high-water mark for the reported memory_used. The
+            # MLE branch below breaks out of the loop on the same value,
+            # so a killed run still reports the reading that killed it
+            # rather than the last one before the kill.
+            peak_rss_bytes = max(peak_rss_bytes, rss)
             if rss > mem_limit_bytes:
                 proc.kill()
                 proc.wait()
@@ -325,6 +356,19 @@ def run_executable(
     stdout = stdout or ""
     stderr = stderr or ""
 
+    # Measured here, after the loop, so it covers the whole run including
+    # the drain. For a killed run this is the limit rather than the kill
+    # overhead, which is what a user comparing against the limit expects.
+    elapsed = time.monotonic() - start
+    # Rounded up: 0.4 MB of real allocation should not print as "0 MB",
+    # and a value that crosses the ceiling should never round below it.
+    # ``None`` when nothing was ever sampled — see the field docstring.
+    memory_used = (
+        max(1, math.ceil(peak_rss_bytes / (1024 * 1024)))
+        if peak_rss_bytes
+        else None
+    )
+
     if timed_out:
         return ExecutionResult(
             success=False,
@@ -332,6 +376,8 @@ def run_executable(
             stderr=f"Time Limit Exceeded (>{time_limit}s)",
             exit_code=-1,
             timed_out=True,
+            exec_time=elapsed,
+            memory_used=memory_used,
         )
     if mem_exceeded:
         return ExecutionResult(
@@ -340,6 +386,8 @@ def run_executable(
             stderr=f"Memory Limit Exceeded (>{effective_mb}MB)",
             exit_code=-1,
             memory_exceeded=True,
+            exec_time=elapsed,
+            memory_used=memory_used,
         )
 
     assert retcode is not None  # narrowed by the loop exit condition
@@ -348,4 +396,6 @@ def run_executable(
         stdout=stdout,
         stderr=stderr,
         exit_code=retcode,
+        exec_time=elapsed,
+        memory_used=memory_used,
     )
