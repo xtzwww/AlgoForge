@@ -45,6 +45,13 @@
  * `problemId` is null → free-run mode, the scratchpad with the page's
  * own two cases. The mode is re-resolved on every prop change.
  *
+ * **PU-10 changed one thing here.** The editor no longer receives a
+ * theme name: `CodeEditor.vue` defaults to the AlgoForge theme
+ * registered by `monaco-theme.ts`, and this page's job is now only to
+ * hand over the language. The default language still comes from
+ * `pickDefaultLanguage()`, which reads the sidecar's toolchain probe —
+ * i.e. from what this machine can actually build, not from a constant.
+ *
  * **This page still does not know the router exists** (PU-7): it takes
  * `problemId` and emits `exit`; `views/ProblemPracticeView.vue` is the
  * adapter that turns `exit` into a navigation. Its title is published
@@ -58,6 +65,7 @@ import { runCases, submitCases, submitProblem, type JudgeEvent } from '../api/ws
 import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
 import { getProblem, getProblemTestCases, type ProblemDetail } from '../api/problems'
 import { getLanguageOptions, pickDefaultLanguage, type LanguageOption } from '../api/languages'
+import { hasNativeHighlighting, type MonacoLanguageId } from '../monaco-theme'
 import { publishPageCrumb } from '../composables/usePageCrumb'
 
 const props = withDefaults(
@@ -232,8 +240,33 @@ const selectedLanguage = computed<LanguageOption | null>(
   () => languages.value.find((o) => o.id === languageId.value) ?? null
 )
 
-/** Monaco's language id, a different namespace from the sandbox's id. */
-const monacoLanguage = computed<string>(() => selectedLanguage.value?.monaco_language ?? 'cpp')
+/**
+ * Monaco's language id, a different namespace from the sandbox's id.
+ *
+ * PU-10: this is the sidecar's `monaco_language` passed straight through.
+ * It is typed as `MonacoLanguageId` so an id Monaco has no tokenizer for
+ * is a compile error rather than an unhighlighted buffer — see
+ * `monaco-theme.ts` for why no substitution happens here.
+ */
+const monacoLanguage = computed<MonacoLanguageId>(
+  () => (selectedLanguage.value?.monaco_language ?? 'cpp') as MonacoLanguageId
+)
+
+/**
+ * True when Monaco has no tokenizer for the selected language.
+ *
+ * Every language the sidecar currently ships (`cpp`, `python`, `java`)
+ * has a real grammar, so this is false in practice — it exists because
+ * the *registry* is the authority and a future language might not be in
+ * it. Silence would leave the user to conclude the editor is broken.
+ *
+ * Asked in a computed rather than at module scope because Monaco's
+ * language registry is only populated once `monaco.ts` has been
+ * imported, which happens when `CodeEditor.vue` is evaluated.
+ */
+const highlightingIsApproximate = computed<boolean>(
+  () => !!selectedLanguage.value && !hasNativeHighlighting(selectedLanguage.value.monaco_language)
+)
 
 const unavailableLanguages = computed<LanguageOption[]>(() =>
   languages.value.filter((o) => !o.available)
@@ -664,6 +697,16 @@ function submit(): Promise<void> {
         <strong>{{ opt.display_name }} 不可用</strong>：{{ opt.detail }}
       </li>
     </ul>
+    <!--
+      PU-10: honesty about the tokenizer, not about the toolchain. The
+      judging is real regardless; only the colours could be missing.
+      False for every language the sidecar currently ships.
+    -->
+    <p v-if="highlightingIsApproximate" class="notice">
+      {{ selectedLanguage?.display_name }} 在编辑器中暂无语法高亮（本机 Monaco
+      未内置该语言的词法规则），
+      <strong>判题仍然按 {{ selectedLanguage?.display_name }} 执行</strong>。
+    </p>
     <p v-if="runBlockedReason" class="notice">{{ runBlockedReason }}</p>
 
     <div class="practice-body">
@@ -735,7 +778,12 @@ function submit(): Promise<void> {
       <!-- Editor + output -->
       <section class="code-panel">
         <div class="editor-wrapper">
-          <CodeEditor v-model="code" :language="monacoLanguage" theme="vs-dark" />
+          <!--
+            No `theme` prop (PU-10): the editor defaults to the AlgoForge
+            theme registered by `monaco-theme.ts`. Passing a name from
+            here is how the two would drift.
+          -->
+          <CodeEditor v-model="code" :language="monacoLanguage" />
         </div>
 
         <OutputPanel
