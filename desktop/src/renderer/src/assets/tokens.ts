@@ -42,7 +42,7 @@ export const palette = {
   danger: '#ef4444',
   info: '#06b6d4',
   purple: '#8b5cf6',
-  orange: '#f97316',
+  orange: '#f97316'
 } as const
 
 /**
@@ -62,7 +62,7 @@ export const verdictColor = {
   CE: palette.purple,
   RE: palette.orange,
   /** Not a JudgeStatus — used when a status string is unrecognised. */
-  UNKNOWN: palette.textSecondary,
+  UNKNOWN: palette.textSecondary
 } as const
 
 export type Verdict = keyof typeof verdictColor
@@ -72,10 +72,53 @@ export function colorForVerdict(status: string): string {
   return (verdictColor as Record<string, string>)[status] ?? verdictColor.UNKNOWN
 }
 
+/**
+ * Mastery ramp (PU-9) — the four bands an accuracy figure falls into.
+ *
+ * Lives here as well as in `tokens.css` because ECharts needs literal
+ * hex: `RadarChart.vue` cannot read a CSS variable into a series option,
+ * so it reads `--af-mastery-*` off the computed style at mount. Keeping
+ * the hex in this file too means a reader finds the ramp next to the
+ * palette rather than only inside a component's mount hook.
+ *
+ * Ordered weakest → strongest; `masteryColor()` is the only thing that
+ * should index it.
+ */
+export const masteryColor = {
+  weak: palette.danger,
+  poor: palette.orange,
+  fair: '#eab308',
+  good: palette.success
+} as const
+
+/**
+ * Map an accuracy in [0, 1] to one of the four mastery bands.
+ *
+ * The bands are 0.8 / 0.6 / 0.4, matching `ProfileView`'s pre-PU-9
+ * thresholds so nothing shifts visually. Exported rather than inlined in
+ * the view because the radar, the table rows and the summary figure all
+ * grade the same number and must agree on the answer.
+ */
+export function masteryColorFor(accuracy: number): string {
+  if (accuracy >= 0.8) return masteryColor.good
+  if (accuracy >= 0.6) return masteryColor.fair
+  if (accuracy >= 0.4) return masteryColor.poor
+  return masteryColor.weak
+}
+
+/** Difficulty badge colours — keys match `ProblemSummary.difficulty`. */
+export const difficultyColor = {
+  easy: palette.success,
+  medium: palette.warning,
+  hard: palette.danger
+} as const
+
 /** Layout constants shared between CSS and JS (e.g. Monaco sizing). */
 export const layout = {
   sidebarWidth: 220,
   sidebarWidthCollapsed: 60,
   topbarHeight: 48,
   problemPanelWidth: 360,
+  /** Max width of a page's content column; see tokens.css (PU-9). */
+  contentMaxWidth: 1080
 } as const

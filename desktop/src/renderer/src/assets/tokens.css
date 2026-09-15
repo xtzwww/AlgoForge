@@ -56,6 +56,35 @@
   /* PU-6: the practice page's problem statement column. Below 900px the
    * page stacks vertically and this width stops applying. */
   --spacing-problem-panel: 360px;
+
+  /* ---- Content column ---- */
+  /* PU-9: the mistake book, the profile and the review plan are all a
+   * single column of cards. Full-bleed cards across a 2560px monitor put
+   * the tag at one edge and the verdict at the other, which is where a
+   * table stops being readable. One shared ceiling keeps the three pages
+   * agreeing on where a page's content ends — a second value here is how
+   * they would start to disagree. */
+  --af-content-max: 1080px;
+
+  /* ---- Mastery scale ---- */
+  /* PU-9: the accuracy ramp, moved out of ProfileView's `accuracyColor()`
+   * so the radar, the table's progress bars and the summary figure all
+   * read the same four tokens. Indexed by band, not by raw percentage —
+   * the bands are a product decision (what counts as "good enough to move
+   * on"), and a token per band is what makes changing them a one-file
+   * edit. Order is weakest → strongest. */
+  --af-mastery-1: #ef4444;
+  --af-mastery-2: #f97316;
+  --af-mastery-3: #eab308;
+  --af-mastery-4: #22c55e;
+
+  /* ---- Difficulty scale ---- */
+  /* PU-9: the catalogue's 入门/中等/困难 badges. Half the views already
+   * carry one of these as a hex literal; naming them here means the
+   * badge, not the view, decides what "困难" looks like. */
+  --af-difficulty-easy: #22c55e;
+  --af-difficulty-medium: #f59e0b;
+  --af-difficulty-hard: #ef4444;
 }
 
 /* ============================================================
@@ -106,6 +135,22 @@
   --af-radius-sm: 4px;
   --af-radius-md: 8px;
   --af-radius-lg: 12px;
+
+  /* Content column — see the `@theme` block for why this is shared. */
+  --af-content-max: 1080px;
+
+  /* Mastery / difficulty scales. Hex is unavoidable here: ECharts'
+   * `defineTheme` and its series options take literal colours, not CSS
+   * variables. `RadarChart.vue` reads these through `getComputedStyle`
+   * for exactly that reason, so the values still live in one file. */
+  --af-mastery-1: #ef4444;
+  --af-mastery-2: #f97316;
+  --af-mastery-3: #eab308;
+  --af-mastery-4: #22c55e;
+
+  --af-difficulty-easy: #22c55e;
+  --af-difficulty-medium: #f59e0b;
+  --af-difficulty-hard: #ef4444;
 
   /* Elevation */
   --af-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);

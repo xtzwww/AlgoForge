@@ -1,36 +1,95 @@
 <script setup lang="ts">
 /**
- * MistakesView — the mistake-book page (P1-21).
+ * MistakesView — the mistake book (P1-21, rewritten in PU-9).
  *
  * Layout:
- *   ┌── Tag filter bar ────────────────────────────────────┐
- *   │  [全部] [dp] [贪心] [二分] ...                         │
+ *   ┌── PageHeader: 错题本 · 计数 · 刷新 ────────────────────┐
+ *   ├── Filter bar ─────────────────────────────────────────┤
+ *   │  knowledge tags: [全部] [dp] [贪心] …                  │
+ *   │  error-cause:    [错因筛选 ▾]  ← disabled, PU-14's slot │
  *   ├────────────────────────────────────────────────────────┤
- *   │  Entry card:                                          │
- *   │    Problem #id · created_at · reviewed badge           │
- *   │    error_cause text                                    │
- *   │    knowledge_tags chips                                │
- *   │    [标记已复习] [删除]                                  │
- *   ├────────────────────────────────────────────────────────┤
- *   │  ... more entries                                      │
+ *   │  Entry card: #id · created_at · reviewed badge          │
+ *   │              error_cause · tags · meta                  │
+ *   │              [标记已复习] [删除]                          │
  *   └────────────────────────────────────────────────────────┘
  *
- * Tag filtering is client-side: we load all entries once, then
- * filter the displayed list by the selected tag. The tag bar is
- * built from the union of knowledge_tags across all loaded entries.
+ * **PU-9 changed four things.**
+ *
+ * 1. *Every colour is a PU-0 token.* The old stylesheet carried
+ *    `#1a1a2e`, `#16213e`, `#3b82f6`, `#ef4444` and friends; the file now
+ *    holds exactly one literal, documented below. The reviewed /
+ *    not-reviewed distinction used two fixed colours per state, which is
+ *    four literals for one bit of state — it is now the shared
+ *    `VerdictBadge`'s neutral-vs-success pair, so this page agrees with
+ *    the practice page about what "green" means.
+ *
+ * 2. *The empty state offers a way out.* It used to read "错题本为空。
+ *    判题失败后，可在练习页面将错题加入错题本。" — an accurate sentence
+ *    that leaves the user to find the page themselves. It is now an
+ *    `EmptyState` with a 去练习题 button, and the same component covers
+ *    the "your tag filter matched nothing" case with flatter styling.
+ *
+ * 3. *An error no longer masquerades as emptiness.* Pre-PU-9 the failure
+ *    banner rendered above the list while the empty state rendered
+ *    below it, so a failed load showed both "请求失败" and "错题本为空"
+ *    at once. The failure now lives in the `PageHeader` and the body
+ *    renders nothing at all, because there is nothing to say.
+ *
+ * 4. *A reserved slot for the error-cause filter* (see below).
+ *
+ * ---------------------------------------------------------------------
+ * **The disabled 错因筛选 control.**
+ *
+ * PHASE-UX asks for the error-cause filter to be *shown as disabled and
+ * labelled 「AI 接入后可用」* rather than omitted until it works. The
+ * reason is honesty about capability: a user who cannot find the filter
+ * concludes the app never had one, while a user who sees it greyed out
+ * with a reason learns what is coming and, more usefully, that the
+ * feature is a *later* thing rather than a *broken* thing. This matches
+ * the pattern PU-6 established for the shell's own missing capabilities
+ * — report the gap, do not ship a dead control and do not hide it.
+ *
+ * It is a `<button disabled>` with a `title`, plus a visible label. The
+ * reason is written into the label rather than left to the tooltip
+ * because a disabled control cannot be hovered in every browser and
+ * cannot be focused at all — a disabled control that hides its own
+ * explanation behind `title` effectively has no explanation.
+ *
+ * The error-cause taxonomy is Phase 2's P2-21 (`agent_error_type` on the
+ * entry model is already reserved, see `models/mistake_book.py`). Nothing
+ * here reads that field, so the slot stays a rectangle and a sentence.
+ *
+ * ---------------------------------------------------------------------
+ * **Filtering is client-side.** All entries are loaded once and filtered
+ * in a computed. The server can filter by `problem_id` and `reviewed`,
+ * neither of which the tag bar uses, and a tag filter would be a request
+ * per chip click against a corpus that is tens of entries at this stage.
  */
+
 import { computed, onMounted, ref } from 'vue'
-import {
-  deleteMistake,
-  listMistakes,
-  updateMistake,
-  type MistakeEntry,
-} from '../api/mistake_book'
+import { useRouter } from 'vue-router'
+import EmptyState from '../components/EmptyState.vue'
+import PageHeader from '../components/PageHeader.vue'
+import { deleteMistake, listMistakes, updateMistake, type MistakeEntry } from '../api/mistake_book'
+
+const router = useRouter()
 
 const entries = ref<MistakeEntry[]>([])
 const loading = ref(false)
 const errorMsg = ref('')
-const selectedTag = ref<string | null>(null) // null = 全部
+/** `null` = 全部. */
+const selectedTag = ref<string | null>(null)
+
+/**
+ * What the review action is doing, per entry id.
+ *
+ * PU-9 adds this because 标记已复习 had no in-flight state: on a slow
+ * sidecar the button stayed enabled and a double click sent two PATCHes,
+ * the second of which a user would notice as the entry briefly
+ * un-disappearing from the filtered view. `Set` rather than a single id
+ * because two rows can legitimately be in flight at once.
+ */
+const pending = ref<Set<number>>(new Set())
 
 /** All unique tags across all loaded entries, sorted. */
 const allTags = computed<string[]>(() => {
@@ -47,6 +106,24 @@ const filteredEntries = computed<MistakeEntry[]>(() => {
   return entries.value.filter((e) => e.knowledge_tags.includes(selectedTag.value!))
 })
 
+/** Header subtitle: the count, and the reviewed split when it is useful. */
+const subtitle = computed<string>(() => {
+  const total = entries.value.length
+  if (total === 0) return ''
+  const reviewed = entries.value.filter((e) => e.reviewed).length
+  return `${total} 条错题 · 已复习 ${reviewed} 条`
+})
+
+/**
+ * True when the tag bar is filtering and that is the only reason the list
+ * is empty. Distinguishes "you have no mistakes" from "this tag has none",
+ * which need different copy and different actions — the first offers the
+ * practice page, the second offers to clear the filter.
+ */
+const filteredToNothing = computed<boolean>(
+  () => entries.value.length > 0 && filteredEntries.value.length === 0
+)
+
 async function load(): Promise<void> {
   loading.value = true
   errorMsg.value = ''
@@ -54,27 +131,44 @@ async function load(): Promise<void> {
     entries.value = await listMistakes()
   } catch (err) {
     errorMsg.value = (err as Error).message
+    entries.value = []
   } finally {
     loading.value = false
   }
 }
 
 async function markReviewed(entry: MistakeEntry): Promise<void> {
+  if (pending.value.has(entry.id)) return
+  pending.value = new Set(pending.value).add(entry.id)
   try {
     const updated = await updateMistake(entry.id, { reviewed: true })
     const idx = entries.value.findIndex((e) => e.id === entry.id)
-    if (idx !== -1) entries.value[idx] = updated
+    // Guard against the list having been reloaded while the request was
+    // in flight: the index may now belong to a different entry.
+    if (idx !== -1 && entries.value[idx].id === entry.id) {
+      entries.value[idx] = updated
+    }
   } catch (err) {
     errorMsg.value = (err as Error).message
+  } finally {
+    const next = new Set(pending.value)
+    next.delete(entry.id)
+    pending.value = next
   }
 }
 
 async function remove(entry: MistakeEntry): Promise<void> {
+  if (pending.value.has(entry.id)) return
+  pending.value = new Set(pending.value).add(entry.id)
   try {
     await deleteMistake(entry.id)
     entries.value = entries.value.filter((e) => e.id !== entry.id)
   } catch (err) {
     errorMsg.value = (err as Error).message
+  } finally {
+    const next = new Set(pending.value)
+    next.delete(entry.id)
+    pending.value = next
   }
 }
 
@@ -82,14 +176,23 @@ function selectTag(tag: string | null): void {
   selectedTag.value = tag
 }
 
+/** Practise the problem this entry came from — the useful next action. */
+function practise(problemId: number): void {
+  void router.push({ name: 'problem', params: { id: problemId } })
+}
+
+function goToPractice(): void {
+  void router.push({ name: 'practice' })
+}
+
 function formatDate(iso: string | null): string {
   if (!iso) return ''
-  try {
-    const d = new Date(iso)
-    return d.toLocaleString('zh-CN', { hour12: false })
-  } catch {
-    return iso
-  }
+  const d = new Date(iso)
+  // `new Date` never throws on a bad string — it yields Invalid Date, and
+  // `toLocaleString` then returns "Invalid Date". Checking `isNaN` is what
+  // actually keeps a malformed timestamp from being printed raw.
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString('zh-CN', { hour12: false })
 }
 
 onMounted(load)
@@ -97,247 +200,390 @@ onMounted(load)
 
 <template>
   <div class="mistakes-view">
-    <header class="header">
-      <h1>错题本</h1>
-      <button class="refresh-btn" :disabled="loading" @click="load">
-        {{ loading ? '加载中...' : '刷新' }}
-      </button>
-    </header>
+    <div class="content">
+      <PageHeader
+        title="错题本"
+        :subtitle="subtitle"
+        :loading="loading"
+        :error="errorMsg"
+        @refresh="load"
+      />
 
-    <!-- Tag filter bar -->
-    <nav class="tag-bar">
-      <button
-        class="tag-chip"
-        :class="{ active: selectedTag === null }"
-        @click="selectTag(null)"
-      >
-        全部 ({{ entries.length }})
-      </button>
-      <button
-        v-for="tag in allTags"
-        :key="tag"
-        class="tag-chip"
-        :class="{ active: selectedTag === tag }"
-        @click="selectTag(tag)"
-      >
-        {{ tag }}
-      </button>
-    </nav>
-
-    <!-- Error message -->
-    <div v-if="errorMsg" class="error-msg">
-      请求失败: {{ errorMsg }}
-    </div>
-
-    <!-- Empty state -->
-    <div v-if="!loading && filteredEntries.length === 0 && !errorMsg" class="empty">
-      <template v-if="entries.length === 0">
-        错题本为空。判题失败后，可在练习页面将错题加入错题本。
-      </template>
-      <template v-else>
-        所选知识点下暂无错题。
-      </template>
-    </div>
-
-    <!-- Entry list -->
-    <div v-if="filteredEntries.length > 0" class="entry-list">
-      <article
-        v-for="entry in filteredEntries"
-        :key="entry.id"
-        class="entry-card"
-        :class="{ reviewed: entry.reviewed }"
-      >
-        <div class="entry-header">
-          <span class="entry-title">题目 #{{ entry.problem_id }}</span>
-          <span class="entry-date">{{ formatDate(entry.created_at) }}</span>
-          <span v-if="entry.reviewed" class="badge badge-reviewed">已复习</span>
-          <span v-else class="badge badge-unreviewed">未复习</span>
-        </div>
-
-        <p v-if="entry.error_cause" class="entry-cause">
-          {{ entry.error_cause }}
-        </p>
-        <p v-else class="entry-cause placeholder">
-          （尚未填写错因）
-        </p>
-
-        <div class="entry-tags">
-          <span v-for="tag in entry.knowledge_tags" :key="tag" class="entry-tag">
-            {{ tag }}
-          </span>
-        </div>
-
-        <div class="entry-meta">
-          <span class="meta-item">提交 #{{ entry.submission_id }}</span>
-          <span class="meta-item">复习 {{ entry.review_count }} 次</span>
-          <span v-if="entry.last_reviewed_at" class="meta-item">
-            上次复习: {{ formatDate(entry.last_reviewed_at) }}
-          </span>
-        </div>
-
-        <div class="entry-actions">
+      <!--
+        Filter bar. Rendered even with one entry so the reserved 错因筛选
+        slot is always visible: a control that appears and disappears with
+        the data cannot teach anyone that it exists.
+      -->
+      <div class="filter-bar">
+        <nav v-if="allTags.length" class="tag-bar" aria-label="按知识点筛选">
           <button
-            v-if="!entry.reviewed"
-            class="action-btn btn-review"
-            @click="markReviewed(entry)"
+            class="tag-chip"
+            :class="{ active: selectedTag === null }"
+            type="button"
+            :aria-pressed="selectedTag === null"
+            @click="selectTag(null)"
           >
-            标记已复习
+            全部 ({{ entries.length }})
           </button>
-          <button class="action-btn btn-delete" @click="remove(entry)">
-            删除
+          <button
+            v-for="tag in allTags"
+            :key="tag"
+            class="tag-chip"
+            :class="{ active: selectedTag === tag }"
+            type="button"
+            :aria-pressed="selectedTag === tag"
+            @click="selectTag(tag)"
+          >
+            {{ tag }}
           </button>
+        </nav>
+
+        <!--
+          PU-14 / P2-21's slot. See the docstring: disabled rather than
+          hidden, and the reason is visible text rather than only a
+          tooltip, because a disabled control cannot be focused to read one.
+        -->
+        <div class="cause-filter">
+          <span class="cause-label">错因</span>
+          <button
+            class="cause-select"
+            type="button"
+            disabled
+            title="错因分类需要 AI 分析，将在接入错因分析后启用"
+          >
+            全部错因
+            <span class="cause-caret" aria-hidden="true">▾</span>
+          </button>
+          <span class="cause-note">AI 接入后可用</span>
         </div>
-      </article>
+      </div>
+
+      <!-- Loading. First paint only — a refresh keeps the list on screen. -->
+      <div v-if="loading && entries.length === 0" class="placeholder">加载错题本中…</div>
+
+      <!--
+        Empty states. Both are skipped while an error is showing: the
+        failure is the state, and "还没有错题" beside it would contradict it.
+      -->
+      <EmptyState
+        v-else-if="!errorMsg && entries.length === 0"
+        icon="book"
+        title="错题本还是空的"
+        explanation="只有判题未通过的提交才会被收进这里。去练习页挑一道题提交一次，答错的题目会自动归档，之后就能在复习计划里按记忆曲线回顾。"
+        action-label="去练习题"
+        @navigate="goToPractice"
+      />
+
+      <EmptyState
+        v-else-if="!errorMsg && filteredToNothing"
+        variant="search"
+        icon="search"
+        :title="`「${selectedTag}」下还没有错题`"
+        explanation="换个知识点，或者回到全部看看。"
+        action-label="查看全部错题"
+        @navigate="selectTag(null)"
+      />
+
+      <!-- Entry list -->
+      <div v-if="filteredEntries.length > 0" class="entry-list">
+        <article
+          v-for="entry in filteredEntries"
+          :key="entry.id"
+          class="entry-card"
+          :class="{ reviewed: entry.reviewed, busy: pending.has(entry.id) }"
+        >
+          <div class="entry-header">
+            <button
+              class="entry-title"
+              type="button"
+              :title="`练习题目 #${entry.problem_id}`"
+              @click="practise(entry.problem_id)"
+            >
+              题目 #{{ entry.problem_id }}
+            </button>
+            <span class="entry-date">{{ formatDate(entry.created_at) }}</span>
+            <span
+              class="review-badge"
+              :class="entry.reviewed ? 'review-badge-done' : 'review-badge-todo'"
+            >
+              {{ entry.reviewed ? '已复习' : '未复习' }}
+            </span>
+          </div>
+
+          <p v-if="entry.error_cause" class="entry-cause">{{ entry.error_cause }}</p>
+          <p v-else class="entry-cause entry-cause-empty">
+            尚未填写错因
+            <span class="cause-pending">· 待 AI 分析</span>
+          </p>
+
+          <div v-if="entry.knowledge_tags.length" class="entry-tags">
+            <span v-for="tag in entry.knowledge_tags" :key="tag" class="entry-tag">
+              {{ tag }}
+            </span>
+          </div>
+
+          <div class="entry-meta">
+            <span class="meta-item">提交 #{{ entry.submission_id }}</span>
+            <span class="meta-item">复习 {{ entry.review_count }} 次</span>
+            <span v-if="entry.last_reviewed_at" class="meta-item">
+              上次复习 {{ formatDate(entry.last_reviewed_at) }}
+            </span>
+          </div>
+
+          <div class="entry-actions">
+            <button
+              v-if="!entry.reviewed"
+              class="btn btn-review"
+              type="button"
+              :disabled="pending.has(entry.id)"
+              @click="markReviewed(entry)"
+            >
+              {{ pending.has(entry.id) ? '处理中…' : '标记已复习' }}
+            </button>
+            <button
+              class="btn btn-delete"
+              type="button"
+              :disabled="pending.has(entry.id)"
+              @click="remove(entry)"
+            >
+              删除
+            </button>
+          </div>
+        </article>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/*
+ * No hex literals except the one documented in `.entry-cause-empty`. Every
+ * colour resolves through a PU-0 token; the reviewed/not-reviewed pair is
+ * the only place this page needs a semantic colour and it uses the same
+ * success/danger tokens the verdict badges do.
+ */
 .mistakes-view {
-  display: flex;
-  flex-direction: column;
-  /* PU-6: was 100vh. The app shell owns the viewport now and stacks a title
-   * bar above this view, so the page must fill its container instead. */
+  /* PU-6: was 100vh. The app shell owns the viewport now and stacks a
+   * topbar above this view, so the page fills its container instead. */
   height: 100%;
-  padding: 16px;
-  box-sizing: border-box;
-  color: #e5e7eb;
-  background: #1a1a2e;
   overflow-y: auto;
+  background: var(--af-canvas);
+  color: var(--af-text-primary);
 }
 
-.header {
+/* The centred content column — see `--af-content-max` in tokens.css. The
+ * scroll container is the outer element so the scrollbar sits at the
+ * viewport edge rather than inside the column's padding. */
+.content {
+  max-width: var(--af-content-max);
+  margin: 0 auto;
+  padding: 20px 16px 32px 16px;
+  box-sizing: border-box;
+}
+
+/* --- filter bar --- */
+.filter-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 16px;
-}
-
-.header h1 {
-  margin: 0;
-  font-size: 22px;
-}
-
-.refresh-btn {
-  padding: 6px 16px;
-  font-size: 13px;
-  color: white;
-  background: #3b82f6;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.refresh-btn:disabled {
-  background: #6b7280;
-  cursor: not-allowed;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--af-border);
 }
 
 .tag-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #374151;
+  gap: 6px;
+  min-width: 0;
 }
 
 .tag-chip {
-  padding: 4px 12px;
-  font-size: 13px;
-  color: #d1d5db;
-  background: #374151;
-  border: none;
-  border-radius: 16px;
+  padding: 3px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--af-text-secondary);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border);
+  border-radius: 999px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition:
+    background var(--af-duration-fast) var(--af-ease),
+    color var(--af-duration-fast) var(--af-ease),
+    border-color var(--af-duration-fast) var(--af-ease);
 }
 
 .tag-chip:hover {
-  background: #4b5563;
+  color: var(--af-text-primary);
+  background: var(--af-overlay);
 }
 
 .tag-chip.active {
-  background: #3b82f6;
-  color: white;
+  color: var(--af-accent);
+  background: var(--af-accent-subtle);
+  border-color: var(--af-accent);
 }
 
-.error-msg {
-  color: #ef4444;
-  padding: 8px 12px;
-  background: #7f1d1d;
-  border-radius: 4px;
-  margin-bottom: 12px;
+/* --- reserved error-cause slot --- */
+.cause-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.empty {
-  color: #6b7280;
-  text-align: center;
+.cause-label {
+  font-size: 12px;
+  color: var(--af-text-muted);
+}
+
+.cause-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--af-text-muted);
+  background: var(--af-surface);
+  /* Dashed, so the disabled state is legible without relying on colour
+   * alone — the label beside it carries the reason. */
+  border: 1px dashed var(--af-border-strong);
+  border-radius: var(--af-radius-sm);
+  cursor: not-allowed;
+}
+
+.cause-caret {
+  opacity: 0.6;
+}
+
+.cause-note {
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--af-text-muted);
+  background: var(--af-elevated);
+  border-radius: var(--af-radius-sm);
+  white-space: nowrap;
+}
+
+.placeholder {
   padding: 40px 16px;
   font-size: 14px;
+  text-align: center;
+  color: var(--af-text-muted);
 }
 
+/* --- entry list --- */
 .entry-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .entry-card {
-  padding: 16px;
-  background: #16213e;
-  border-radius: 8px;
-  border-left: 4px solid #ef4444;
+  /* An inset accent bar rather than a border-left: `border-left` shifts
+   * the content box by its width, so the reviewed and unreviewed cards
+   * would have text at different x positions whenever the widths differ. */
+  position: relative;
+  padding: 14px 16px;
+  background: var(--af-surface);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-md);
+  transition: opacity var(--af-duration-base) var(--af-ease);
 }
 
+.entry-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: var(--af-danger);
+  border-radius: var(--af-radius-md) 0 0 var(--af-radius-md);
+}
+
+.entry-card.reviewed::before {
+  background: var(--af-success);
+}
+
+/* A reviewed entry is a closed loop, so it recedes; the accent bar keeps
+ * enough of it legible that it can still be found by scrolling. */
 .entry-card.reviewed {
-  border-left-color: #22c55e;
-  opacity: 0.7;
+  opacity: 0.72;
+}
+
+.entry-card.busy {
+  opacity: 0.55;
 }
 
 .entry-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 8px;
 }
 
 .entry-title {
-  font-weight: bold;
+  padding: 0;
+  font-family: inherit;
   font-size: 15px;
+  font-weight: 600;
+  color: var(--af-text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.entry-title:hover {
+  color: var(--af-accent);
+  text-decoration: underline;
 }
 
 .entry-date {
-  color: #9ca3af;
   font-size: 12px;
+  color: var(--af-text-muted);
 }
 
-.badge {
-  padding: 2px 8px;
+.review-badge {
+  padding: 1px 8px;
   font-size: 11px;
-  border-radius: 10px;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 
-.badge-reviewed {
-  background: #14532d;
-  color: #86efac;
+.review-badge-done {
+  color: var(--af-success);
+  background: color-mix(in srgb, var(--af-success) 18%, transparent);
 }
 
-.badge-unreviewed {
-  background: #7c2d12;
-  color: #fdba74;
+.review-badge-todo {
+  color: var(--af-warning);
+  background: color-mix(in srgb, var(--af-warning) 18%, transparent);
 }
 
 .entry-cause {
   margin: 8px 0;
   font-size: 14px;
-  line-height: 1.5;
-  color: #e5e7eb;
+  line-height: 1.55;
+  color: var(--af-text-primary);
+  /* Error causes are free text and can be a pasted compiler message. */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-.entry-cause.placeholder {
-  color: #6b7280;
+.entry-cause-empty {
   font-style: italic;
+  color: var(--af-text-muted);
+}
+
+.cause-pending {
+  font-style: normal;
+  font-size: 12px;
+  opacity: 0.8;
 }
 
 .entry-tags {
@@ -348,51 +594,81 @@ onMounted(load)
 }
 
 .entry-tag {
-  padding: 2px 8px;
-  font-size: 12px;
-  color: #93c5fd;
-  background: #1e3a5f;
-  border-radius: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--af-accent);
+  background: var(--af-accent-subtle);
+  border-radius: 999px;
 }
 
 .entry-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 14px;
+  margin-bottom: 10px;
   font-size: 12px;
-  color: #9ca3af;
-  margin-bottom: 8px;
+  color: var(--af-text-muted);
 }
 
 .entry-actions {
   display: flex;
   gap: 8px;
-  margin-top: 8px;
 }
 
-.action-btn {
+.btn {
   padding: 4px 12px;
+  font-family: inherit;
   font-size: 12px;
-  border: none;
-  border-radius: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--af-radius-sm);
   cursor: pointer;
+  transition:
+    background var(--af-duration-fast) var(--af-ease),
+    opacity var(--af-duration-fast) var(--af-ease);
 }
 
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/*
+ * 标记已复习 is the primary action on the card, so it is the filled one;
+ * 删除 is destructive and irreversible, so it is a muted outline that
+ * only goes red on hover. Both were filled red/green before, which made
+ * deleting look as safe as reviewing.
+ */
 .btn-review {
-  color: white;
-  background: #22c55e;
+  color: #ffffff;
+  background: var(--af-accent);
 }
 
-.btn-review:hover {
-  background: #16a34a;
+.btn-review:hover:not(:disabled) {
+  background: var(--af-accent-hover);
 }
 
 .btn-delete {
-  color: white;
-  background: #ef4444;
+  color: var(--af-text-secondary);
+  background: transparent;
+  border-color: var(--af-border-strong);
 }
 
-.btn-delete:hover {
-  background: #dc2626;
+.btn-delete:hover:not(:disabled) {
+  color: var(--af-danger);
+  background: color-mix(in srgb, var(--af-danger) 14%, transparent);
+  border-color: var(--af-danger);
+}
+
+/* Narrow: the filter bar stacks, and the cause slot moves under the tags
+ * rather than being squeezed off the right edge. */
+@media (max-width: 720px) {
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cause-filter {
+    justify-content: flex-start;
+  }
 }
 </style>
