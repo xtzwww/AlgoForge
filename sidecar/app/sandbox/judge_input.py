@@ -24,6 +24,10 @@ The two modes
 Exactly one of the two must be present. Accepting both would leave the
 precedence rule ("which one wins?") to be guessed, and accepting neither
 leaves the judge with nothing to run against.
+
+A third, independent rule also lives here: :func:`parse_record_flag`,
+which reads the 运行-vs-提交 switch (PU-8). It is here for the same
+reason as the rest — two transports, one meaning.
 """
 
 from __future__ import annotations
@@ -218,6 +222,50 @@ def _validated_time_limit(value: float) -> float:
     if not (0.1 <= limit <= 60.0):
         raise JudgeInputError("time_limit must be between 0.1 and 60.0 seconds")
     return limit
+
+
+def parse_record_flag(payload: dict[str, Any]) -> bool:
+    """Read the ``record`` flag, defaulting to ``True`` (PU-8).
+
+    Why this is here rather than in either transport: it is a *shared
+    wire rule*, exactly like the case-resolution rules above, and the
+    two entry points must not disagree about what a missing key or a
+    string ``"false"`` means.
+
+    Semantics. The client-facing split is 运行 vs 提交:
+
+    * **提交** (submit) — the full case set, verdict recorded in
+      ``submissions`` and, on failure, filed in the mistake book. The
+      default, because a client that says nothing wants the product's
+      normal behaviour.
+    * **运行** (run) — a scratch run against a few cases. The verdict is
+      still computed and streamed back, but nothing is written: no
+      history row, no mistake-book entry. Neither is *scoring* done —
+      a scratch run over the visible samples is not an attempt at the
+      problem, so counting it would pollute the profile.
+
+    Ordering is deliberate: the two entry points are sent the same
+    behaviour, and a client that omits the key gets the recording path
+    rather than silently losing its history. A non-boolean is rejected
+    instead of coerced — ``record: "false"`` being truthy is exactly the
+    class of silent bug that would make a scratch run write history.
+
+    Args:
+        payload: The raw request object (either transport's shape).
+
+    Returns:
+        ``False`` only when the payload explicitly said so.
+
+    Raises:
+        JudgeInputError: ``record`` is present but not a boolean.
+    """
+    raw = payload.get("record")
+    # Absent and JSON null both mean "the client did not opt out".
+    if raw is None:
+        return True
+    if not isinstance(raw, bool):
+        raise JudgeInputError("'record' must be a boolean")
+    return raw
 
 
 def _validated_mem_limit(value: int) -> int:

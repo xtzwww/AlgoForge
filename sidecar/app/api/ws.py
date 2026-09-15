@@ -10,7 +10,8 @@ WS /ws/run-log
          "language": "cpp",     // optional, default "cpp"
          "problem_id": 7,       // server reads the stored cases
          "time_limit": 5.0,     // optional — overrides the problem
-         "mem_limit_mb": 512    // optional — overrides the problem
+         "mem_limit_mb": 512,   // optional — overrides the problem
+         "record": true         // optional, default true
        }
 
      Inline cases (self-test):
@@ -19,7 +20,8 @@ WS /ws/run-log
          "language": "cpp",     // optional, default "cpp"
          "test_cases": [{"input": "...", "expected_output": "..."}],
          "time_limit": 10.0,    // optional, seconds, default 10
-         "mem_limit_mb": 256    // optional, MB, default 256
+         "mem_limit_mb": 256,   // optional, MB, default 256
+         "record": true         // optional, default true
        }
 
      Exactly one of ``problem_id`` / ``test_cases`` is required.
@@ -27,6 +29,17 @@ WS /ws/run-log
      progress events (compile_start, compile_done, case_start,
      case_done, judge_done) back as JSON messages.
   4. Server closes the connection after the final judge_done event.
+
+``record`` was added by PU-8 and is what separates 运行 from 提交 in the
+practice page. ``true`` (the default) is a submit: the verdict is
+written to ``submissions`` and a failure is filed in the mistake book.
+``false`` is a scratch run: the verdict is computed and streamed as
+usual, but nothing is persisted and nothing is scored — a run over the
+visible samples is not an attempt at the problem. The terminal event is
+sent either way, because the reader loop below treats ``judge_done`` as
+"stop" and a withheld terminal event would hang the client. The flag's
+parsing lives in :mod:`app.sandbox.judge_input` alongside the other
+shared wire rules.
 
 ``language`` was added by PU-16. Because this endpoint takes raw JSON
 rather than a Pydantic model, the id is validated explicitly and a bad
@@ -59,7 +72,12 @@ from sqlalchemy.orm import Session
 from app.api import validate_language_id
 from app.records import SubmissionContext, record_submission_quietly
 from app.sandbox.judge import judge
-from app.sandbox.judge_input import JudgeInputError, ResolvedJudgeInput, resolve
+from app.sandbox.judge_input import (
+    JudgeInputError,
+    ResolvedJudgeInput,
+    parse_record_flag,
+    resolve,
+)
 
 router = APIRouter(tags=["ws"])
 
@@ -73,13 +91,13 @@ record_judge_outcome = record_submission_quietly
 
 def _parse_request(
     payload: dict[str, Any], session: Optional[Session] = None
-) -> tuple[str, ResolvedJudgeInput, str]:
+) -> tuple[str, ResolvedJudgeInput, str, bool]:
     """Validate the client's WS message into judge arguments.
 
-    Returns ``(code, resolved_input, language)``. Case resolution — which
-    may hit the database — happens here so a bad ``problem_id`` is
-    reported before the judge starts, and so the caller only has to wrap
-    one call.
+    Returns ``(code, resolved_input, language, record)``. Case resolution
+    — which may hit the database — happens here so a bad ``problem_id``
+    is reported before the judge starts, and so the caller only has to
+    wrap one call.
 
     Args:
         payload: The raw JSON message.
@@ -119,7 +137,7 @@ def _parse_request(
         session=session,
     )
 
-    return code, resolved, language
+    return code, resolved, language, parse_record_flag(payload)
 
 
 @router.websocket("/ws/run-log")
@@ -138,7 +156,7 @@ async def run_log(websocket: WebSocket) -> None:
         return
 
     try:
-        code, resolved, language = _parse_request(payload)
+        code, resolved, language, record = _parse_request(payload)
     except JudgeInputError as exc:
         await websocket.send_json({"type": "judge_error", "error": str(exc)})
         return
@@ -186,13 +204,19 @@ async def run_log(websocket: WebSocket) -> None:
             on_event(msg)
 
     def judge_and_record() -> None:
-        """Judge, store the outcome, then tell the client it is finished.
+        """Judge, optionally store the outcome, then tell the client it is finished.
 
         Recording is deliberately *after* the verdict is complete and
         still on this thread: it needs a synchronous session (see
         ``app/records.py``), and doing it here keeps the write off the
         event loop. ``record_submission`` never raises, so a history
         failure cannot break the stream the client is reading.
+
+        A scratch run (``record`` false, PU-8) skips the write but not
+        the terminal event. The reader loop treats ``judge_done`` as
+        "stop", so withholding it on the no-record path would hang the
+        client on a stream that had in fact finished — the terminal
+        event is about the *judge* being done, not about a row existing.
         """
         outcome = judge(
             code,
@@ -202,7 +226,8 @@ async def run_log(websocket: WebSocket) -> None:
             language=language,
             on_event=progress_only,
         )
-        record_judge_outcome(outcome, context)
+        if record:
+            record_judge_outcome(outcome, context)
         # Terminal event last, so the client cannot observe a finished
         # run whose history has not landed yet.
         terminal = outcome.to_dict()

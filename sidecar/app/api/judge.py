@@ -7,7 +7,8 @@ POST /api/v1/judge
     "language": "cpp",       // optional, default "cpp"
     "problem_id": 7,         // stored cases + the problem's own limits
     "time_limit": 5.0,       // optional, seconds — overrides the problem
-    "mem_limit_mb": 512      // optional, MB — overrides the problem
+    "mem_limit_mb": 512,     // optional, MB — overrides the problem
+    "record": true           // optional, default true
   }
 
   Body, inline cases (self-test):
@@ -16,7 +17,8 @@ POST /api/v1/judge
     "language": "cpp",       // optional, default "cpp"
     "test_cases": [{"input": "...", "expected_output": "..."}],
     "time_limit": 10.0,      // optional, seconds, default 10
-    "mem_limit_mb": 256      // optional, MB, default 256
+    "mem_limit_mb": 256,     // optional, MB, default 256
+    "record": true           // optional, default true
   }
 
   Response: {
@@ -34,6 +36,10 @@ server reads the hidden cases itself, so the client never receives them.
 row to point at. Exactly one of the two is required; the rules and the
 error messages live in :mod:`app.sandbox.judge_input` so this route and
 ``WS /ws/run-log`` cannot drift apart.
+
+``record`` was added by PU-8, to back the practice page's 运行/提交
+split. ``True`` (default) persists the verdict; ``False`` computes and
+returns it without writing anything. See the field's docstring.
 
 The REST twin of ``WS /ws/run-log``. It shares the same pipeline but
 returns one finished response instead of streaming progress, which is
@@ -80,6 +86,13 @@ class JudgeRequest(BaseModel):
     time_limit: Optional[float] = Field(default=None, ge=0.1, le=60.0)
     # Per-case memory ceiling in MB. Same override rule as ``time_limit``.
     mem_limit_mb: Optional[int] = Field(default=None, ge=1, le=2048)
+    #: Whether to persist the verdict. ``True`` (the default) is a
+    #: submit: the row lands in ``submissions`` and a failure is filed in
+    #: the mistake book. ``False`` is a scratch run — verdict computed
+    #: and returned, nothing written and nothing scored (PU-8). Parsed by
+    #: :func:`app.sandbox.judge_input.parse_record_flag` so this route and
+    #: ``WS /ws/run-log`` cannot disagree about the default.
+    record: bool = True
 
 
 class TestCaseOut(BaseModel):
@@ -157,7 +170,13 @@ async def judge_code(req: JudgeRequest) -> JudgeResponse:
         # Ordered after the verdict exists so the row can never describe
         # a run that did not finish. The hook is the quiet variant: a
         # history-write failure must not cost the user their verdict.
-        record_judge_outcome(outcome, context)
+        #
+        # ``record=False`` is PU-8's scratch run: the verdict is still
+        # returned in full, it just does not become history. Skipping
+        # rather than writing-and-deleting keeps the mistake book's
+        # dedupe window from seeing attempts that never counted.
+        if req.record:
+            record_judge_outcome(outcome, context)
         return outcome
 
     result = await asyncio.to_thread(_judge_and_record)

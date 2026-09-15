@@ -388,7 +388,11 @@ def test_ws_language_defaults_to_cpp_when_omitted() -> None:
     """P1-15 clients send no language field and must keep working."""
     payload = {"code": "x", "test_cases": [{"input": "", "expected_output": ""}]}
 
-    assert _parse_request(payload)[-1] == "cpp"
+    # Unpacked positionally rather than indexed from the end: the tuple
+    # grew a `record` element in PU-8, and a `[-1]` would have silently
+    # started asserting about that instead of the language.
+    _code, _resolved, language, _record = _parse_request(payload)
+    assert language == "cpp"
 
 
 def test_ws_language_is_canonicalised() -> None:
@@ -398,7 +402,8 @@ def test_ws_language_is_canonicalised() -> None:
         "test_cases": [{"input": "", "expected_output": ""}],
     }
 
-    assert _parse_request(payload)[-1] == "java"
+    _code, _resolved, language, _record = _parse_request(payload)
+    assert language == "java"
 
 
 def test_ws_rejects_an_unknown_language_as_a_judge_error() -> None:
@@ -483,13 +488,15 @@ def test_ws_parse_request_resolves_a_problem_id() -> None:
     with _memory_session() as session:
         _seed_problem(session, problem_id=1, cases=[("1 2\n", "3\n", False)])
 
-        code, resolved, language = _parse_request(
+        code, resolved, language, record = _parse_request(
             {"code": "x", "problem_id": 1, "time_limit": 2.0, "mem_limit_mb": 128},
             session=session,
         )
 
     assert code == "x"
     assert language == "cpp"
+    # PU-8: an omitted `record` means "submit", not "scratch run".
+    assert record is True
     assert resolved.problem_id == 1
     assert resolved.time_limit == 2.0
     assert resolved.mem_limit_mb == 128

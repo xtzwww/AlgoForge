@@ -202,6 +202,40 @@ def _judge_via_ws(client: TestClient, code: str) -> list[dict]:
                 return events
 
 
+def _judge_via_ws_with(
+    client: TestClient, code: str, *, record: object = ..., extra_raw: bool = False
+) -> list[dict]:
+    """Like :func:`_judge_via_ws`, but sends an explicit ``record`` value.
+
+    The sentinel default is what lets the "omitted" case be tested as a
+    distinct thing from ``record: true``: a helper that always set the
+    key could not tell the two apart, and the default is half the
+    contract.
+
+    ``extra_raw`` exists for the must-be-a-boolean test, which has to put
+    a non-boolean on the wire. It is an opt-in flag rather than a widened
+    type so every other call keeps type checking on the value it passes.
+    """
+    payload: dict = {
+        "code": code,
+        "language": "cpp",
+        "problem_id": 1,
+        "time_limit": 15.0,
+        "mem_limit_mb": 256,
+    }
+    if extra_raw or record is not ...:
+        payload["record"] = record
+
+    with client.websocket_connect("/ws/run-log") as ws:
+        ws.send_json(payload)
+        events = []
+        while True:
+            msg = ws.receive_json()
+            events.append(msg)
+            if msg.get("type") in ("judge_done", "judge_error"):
+                return events
+
+
 # --- The chain ---------------------------------------------------------
 
 
@@ -587,3 +621,96 @@ def test_stored_rows_match_the_database(session: Session, seeded: Session) -> No
     assert sub.exec_time == pytest.approx(0.03)
     assert sub.memory_used == 9
     assert session.execute(select(MistakeBookEntry)).scalars().one().problem_id == 1
+
+
+# --- The record flag (PU-8) -------------------------------------------
+#
+# The practice page splits 运行 from 提交, and the difference is entirely
+# this flag. What these tests pin is that the flag changes *whether the
+# verdict is stored*, and nothing else: the verdict itself, the stream of
+# progress events, and the terminal event must all be identical, because
+# the page renders a scratch run through the same output panel as a
+# submit.
+
+
+def test_record_false_skips_the_history_write(client: TestClient, seeded: Session) -> None:
+    """A scratch run computes the verdict but writes no row."""
+    events = _judge_via_ws_with(client, _CPP_AC, record=False)
+    assert events[-1]["type"] == "judge_done", events[-1]
+    assert events[-1]["status"] == "AC"
+    assert events[-1]["passed"] == 2
+
+    assert client.get("/api/v1/submissions").json()["total"] == 0
+
+
+def test_record_false_still_sends_the_terminal_event(
+    client: TestClient, seeded: Session
+) -> None:
+    """The stream terminates even though nothing was written.
+
+    This is the trap the WS route has to avoid: the reader loop treats
+    ``judge_done`` as "stop", so a no-record path that also skipped the
+    terminal event would leave the client waiting on a run that had
+    already finished. The assertion above would hang rather than fail,
+    which is why it is spelled out here as its own test.
+    """
+    events = _judge_via_ws_with(client, _CPP_AC, record=False)
+    assert [e["type"] for e in events][-1] == "judge_done"
+
+
+def test_record_false_does_not_archive_a_mistake(client: TestClient, seeded: Session) -> None:
+    """A wrong scratch run files nothing in the mistake book.
+
+    Archiving is scoped to failures, so a scratch run over the visible
+    sample is exactly the case that would otherwise pollute the book: the
+    user is iterating, not attempting. Nothing is scored, so nothing is
+    filed.
+    """
+    events = _judge_via_ws_with(client, _CPP_WA, record=False)
+    assert events[-1]["status"] == "WA"
+
+    assert client.get("/api/v1/submissions").json()["total"] == 0
+    assert client.get("/api/v1/mistake-book").json() == []
+
+
+def test_record_defaults_to_true_over_ws(client: TestClient, seeded: Session) -> None:
+    """Omitting the flag records, so an older client keeps its history."""
+    assert "record" not in _judge_via_ws_with(client, _CPP_AC)
+    assert client.get("/api/v1/submissions").json()["total"] == 1
+
+
+def test_record_false_over_rest(client: TestClient, seeded: Session) -> None:
+    """The REST route honours the same flag with the same meaning."""
+    resp = client.post(
+        "/api/v1/judge",
+        json={"code": _CPP_AC, "language": "cpp", "problem_id": 1, "record": False},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "AC"
+    assert client.get("/api/v1/submissions").json()["total"] == 0
+
+
+def test_record_must_be_a_boolean_over_ws(client: TestClient, seeded: Session) -> None:
+    """``"false"`` is rejected rather than coerced.
+
+    A truthy string is precisely the silent bug that would make a
+    scratch run write history, so the wire rule refuses it instead of
+    guessing what the client meant.
+    """
+    events = _judge_via_ws_with(client, _CPP_AC, record="false", extra_raw=True)
+    assert events[-1]["type"] == "judge_error"
+    assert "boolean" in events[-1]["error"]
+    assert client.get("/api/v1/submissions").json()["total"] == 0
+
+
+def test_record_false_still_runs_every_case(client: TestClient, seeded: Session) -> None:
+    """A scratch run is not a reduced run — the hidden case still executes.
+
+    The page scopes 运行 to the *visible* cases by sending them itself;
+    that is the client's choice, not this flag's. If the flag quietly
+    narrowed the case set, a future caller asking for a no-write full run
+    would get a different verdict than it asked for.
+    """
+    events = _judge_via_ws_with(client, _CPP_AC, record=False)
+    case_indices = [e["index"] for e in events if e["type"] == "case_done"]
+    assert case_indices == [0, 1]

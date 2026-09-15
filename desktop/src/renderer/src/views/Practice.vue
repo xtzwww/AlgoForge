@@ -1,53 +1,60 @@
 <script setup lang="ts">
 /**
- * Practice view — the main coding/judging page (P1-16, PU-14).
+ * Practice view — the coding and judging page (P1-16, PU-14, PU-8).
  *
- * Layout:
- *   ┌── Problem panel (left) ──┬── Code editor + Output panel (right) ──┐
- *   │  description + cases    │  language picker + Monaco editor       │
- *   │                         │  [运行判题] button                       │
- *   │                         │  OutputPanel (WS stream + final result) │
- *   └─────────────────────────┴─────────────────────────────────────────┘
+ * Layout (desktop):
  *
- * P1-16 changes vs P1-9 (Practice.vue):
- * - Uses the WebSocket stream (P1-15) instead of POST /api/v1/judge
- *   so the user sees compile/case events arrive in real time.
- * - Renders progress through the extracted OutputPanel component
- *   instead of inlining the result markup here.
- * - Assembles the final JudgeResponse from the terminal judge_done
- *   event + the per-case case_done events.
+ *   ┌── toolbar: language picker · [运行] [提交] ─────────────────────┐
+ *   ├── Problem panel ────────┬── Editor ─────────────────────────────┤
+ *   │  statement, formats,    │  Monaco                              │
+ *   │  tags, samples, limits  │  OutputPanel                         │
+ *   └─────────────────────────┴──────────────────────────────────────┘
  *
- * PU-17 adds the language picker: the catalogue of languages comes from
- * the sidecar's env-check, and switching loads that language's starter
- * template (after confirming when the buffer holds edits).
+ * **PU-8 changed three things.**
  *
- * PU-14 replaces the hardcoded A + B problem with the catalogue. Two
- * modes, selected by the `problemId` prop:
+ * 1. *运行 and 提交 are separate actions.* They used to be one
+ *    「运行判题」 button that did whichever half applied. Now:
  *
- * - **Problem mode** (`problemId` set): the statement, samples and
- *   limits come from `GET /problems/{id}`, and judging sends
- *   `problem_id` so the sidecar reads the hidden cases itself — they
- *   never reach this process.
- * - **Free-run mode** (`problemId` null): the old self-test behaviour,
- *   cases typed into the page. Kept deliberately, as a scratchpad for
- *   code that has no problem row yet.
+ *      | action | cases            | recorded | scored |
+ *      |--------|------------------|----------|--------|
+ *      | 运行    | the visible ones | no       | no     |
+ *      | 提交    | every case       | yes      | yes    |
  *
- * The mode is re-resolved whenever the prop changes, because the shell
- * keeps this component alive across problem switches only by accident of
- * routing — `/practice` and `/problems/:id` are different route records,
- * so the router remounts the page, but the `watch` also covers a shell
- * that reuses the instance instead.
+ *    The distinction is carried by the sidecar's `record` flag (see
+ *    `api/ws.ts`), not by the client pretending: a scratch run really
+ *    does not write history, so iterating on a WA does not fill the
+ *    mistake book with near-duplicates of the same bug. In free-run mode
+ *    the two differ only in that, because there is no problem row to
+ *    attribute a submission to and the page's two cases *are* the case
+ *    set — 运行 is still the one that keeps the user's history clean.
  *
- * PU-7: this page still does not know the router exists. It takes
+ * 2. *All hardcoded colours are gone.* The old stylesheet carried
+ *    `#1a1a2e`, `#16213e`, `#0f3460`, `#3b82f6` and friends; every one
+ *    now resolves through a PU-0 token, so retheming is a `tokens.css`
+ *    edit. Verdict colours are not here at all — they belong to
+ *    `VerdictBadge.vue`, which is bound to the backend's `JudgeStatus`.
+ *
+ * 3. *Keyboard shortcuts.* `Ctrl/Cmd + Enter` runs, `Ctrl/Cmd + Shift +
+ *    Enter` submits. This is the IDE convention and the page had none.
+ *    Bound on `window` rather than on the editor because the user's
+ *    focus is in Monaco, whose key events do not bubble to the page.
+ *
+ * **Modes.** `problemId` is set → the statement, samples and limits come
+ * from the catalogue and judging sends `problem_id`, so the sidecar
+ * reads the hidden cases itself and they never reach this process.
+ * `problemId` is null → free-run mode, the scratchpad with the page's
+ * own two cases. The mode is re-resolved on every prop change.
+ *
+ * **This page still does not know the router exists** (PU-7): it takes
  * `problemId` and emits `exit`; `views/ProblemPracticeView.vue` is the
- * route-level adapter that turns `exit` into a navigation. It also
- * publishes its title for the topbar's breadcrumb — see the `watch` on
- * `problemTitle` below.
+ * adapter that turns `exit` into a navigation. Its title is published
+ * for the topbar's breadcrumb instead, via `usePageCrumb`.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import OutputPanel from '../components/OutputPanel.vue'
-import { streamJudge, type JudgeEvent, type WsJudgeRequest } from '../api/ws'
+import VerdictBadge from '../components/VerdictBadge.vue'
+import { runCases, submitCases, submitProblem, type JudgeEvent } from '../api/ws'
 import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
 import { getProblem, getProblemTestCases, type ProblemDetail } from '../api/problems'
 import { getLanguageOptions, pickDefaultLanguage, type LanguageOption } from '../api/languages'
@@ -90,6 +97,10 @@ const FREE_RUN_CASES: TestCaseIn[] = [
   { input: '10 20', expected_output: '30' }
 ]
 
+/** Free-run limits: the sidecar's own defaults for inline cases. */
+const FREE_RUN_TIME_LIMIT = 10.0
+const FREE_RUN_MEM_LIMIT_MB = 256
+
 /**
  * The problem's language when it has no preference of its own.
  * C++ keeps the free-run buffer's default solution valid.
@@ -102,6 +113,9 @@ const problem = ref<ProblemDetail | null>(null)
 let loadToken = 0
 const problemLoading = ref(false)
 const problemError = ref('')
+
+/** Collapses the statement column to give the editor the full width. */
+const statementCollapsed = ref(false)
 
 /**
  * True when a catalogue problem is driving the page.
@@ -144,14 +158,41 @@ const displayCases = computed<TestCaseIn[]>(() => {
 })
 
 /**
+ * Cases that 运行 executes in problem mode.
+ *
+ * The *visible* ones — `ProblemDetail.test_cases` is already filtered to
+ * `is_sample = True` by the sidecar. Sending them inline rather than
+ * sending `problem_id` with `record: false` is deliberate: the visible
+ * cases are what the user can see and reason about, so a scratch run has
+ * no surprises in it, and the hidden cases stay out of the loop until
+ * the user actually submits.
+ *
+ * If a problem somehow has no visible cases, this is empty and 运行 is
+ * disabled with an explanation rather than silently falling back to the
+ * hidden set.
+ */
+const runCasesForProblem = computed<TestCaseIn[]>(() => {
+  const p = problem.value
+  if (!p) return []
+  return p.test_cases.map((c) => ({
+    input: c.input,
+    expected_output: c.expected_output
+  }))
+})
+
+/**
  * Expected outputs for the *judging* cases, keyed by case ordinal.
  *
- * In problem mode the cases live on the sidecar and this page never
- * sees the hidden ones, so `caseResults` cannot fill in an expected
- * output from a local array the way free-run mode does. It fetches the
- * full case list once per problem instead — acceptable for this local
+ * In problem mode the cases live on the sidecar and this page never sees
+ * the hidden ones, so `caseResults` cannot fill in an expected output
+ * from a local array the way free-run mode does. It fetches the full
+ * case list once per problem instead — acceptable for this local
  * single-user deployment, and exactly the call `api/problems.ts` marks
  * as the one a web deployment must drop.
+ *
+ * Used for the submitted verdict's per-case diffs; a scratch run
+ * resolves its expected outputs from `runCasesForProblem` instead, since
+ * it knows exactly which cases it sent.
  */
 const expectedByOrdinal = ref<Map<number, string>>(new Map())
 
@@ -199,7 +240,20 @@ const unavailableLanguages = computed<LanguageOption[]>(() =>
 )
 
 // --- Judge state ---
-const isRunning = ref(false)
+/**
+ * Which action is in flight, or `null` when idle.
+ *
+ * A single field rather than an `isRunning` boolean plus an
+ * `isSubmitting` flag: the two cannot overlap (the sidecar judges one
+ * run at a time on this connection), and two booleans would allow a
+ * state that means nothing and would then have to be rendered.
+ */
+type RunKind = 'run' | 'submit'
+const activeRun = ref<RunKind | null>(null)
+const isRunning = computed<boolean>(() => activeRun.value !== null)
+/** The kind of the last *finished* run, for the output panel's wording. */
+const lastRunKind = ref<RunKind>('run')
+
 const events = ref<JudgeEvent[]>([])
 const result = ref<JudgeResponse | null>(null)
 const errorMsg = ref<string>('')
@@ -208,6 +262,7 @@ onMounted(async () => {
   // Language catalogue and problem load are independent; run them
   // together so a slow env-check does not delay the statement.
   await Promise.all([loadLanguages(), loadProblem()])
+  window.addEventListener('keydown', onKeydown)
 })
 
 watch(
@@ -235,8 +290,12 @@ watch(problemTitle, (title) => publishPageCrumb(isProblemMode.value ? title : nu
 })
 
 // Leaving the page must clear the label, or the next route would inherit
-// a crumb naming a problem it is not showing.
-onUnmounted(() => publishPageCrumb(null))
+// a crumb naming a problem it is not showing — and the keyboard handler
+// must not outlive the page.
+onUnmounted(() => {
+  publishPageCrumb(null)
+  window.removeEventListener('keydown', onKeydown)
+})
 
 /**
  * Fetch the language catalogue and pick a default.
@@ -345,62 +404,139 @@ function onLanguageChange(event: Event): void {
 }
 
 /**
- * What to send the judge.
+ * Whether a given action can start right now.
  *
- * Problem mode sends `problem_id` and lets the sidecar resolve the
- * cases (hidden ones included); free-run mode sends the page's own
- * two cases. The two fields are mutually exclusive on the wire.
+ * Shared by the buttons and the shortcuts so the two can never disagree
+ * about when an action is available — a shortcut that fires while its
+ * button is disabled is the classic version of that bug.
  */
-function buildRequest(): WsJudgeRequest {
-  const req: WsJudgeRequest = {
-    code: code.value,
-    language: languageId.value
+const canSubmit = computed<boolean>(
+  () => !isRunning.value && !!selectedLanguage.value && !problemLoading.value && !problemError.value
+)
+
+/**
+ * 运行 is additionally blocked when there is nothing to run against.
+ *
+ * In problem mode that means the problem has no visible cases. Free-run
+ * always has its two, so this never blocks there.
+ */
+const canRun = computed<boolean>(
+  () => canSubmit.value && (isProblemMode.value ? runCasesForProblem.value.length > 0 : true)
+)
+
+/** Why 运行 is unavailable, when it is. `''` when it is fine. */
+const runBlockedReason = computed<string>(() => {
+  if (!canSubmit.value || !isProblemMode.value) return ''
+  if (runCasesForProblem.value.length > 0) return ''
+  return '这道题没有公开样例，请直接提交。'
+})
+
+/**
+ * Keyboard shortcuts: the IDE convention.
+ *
+ * `Ctrl/Cmd + Enter` runs, `Ctrl/Cmd + Shift + Enter` submits — the more
+ * destructive/complete action needs the extra modifier, matching how
+ * VS Code's Jupyter and most online judges bind it.
+ *
+ * `e.preventDefault()` matters more than usual here: Monaco maps plain
+ * `Enter` itself, and a canvas-based editor can also swallow the event,
+ * so an un-prevented default would insert a newline into the buffer.
+ */
+function onKeydown(e: KeyboardEvent): void {
+  if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter') return
+  e.preventDefault()
+  if (e.shiftKey) {
+    if (canSubmit.value) void submit()
+  } else if (canRun.value) {
+    void run()
   }
-  if (props.problemId !== null) {
-    req.problem_id = props.problemId
-    // Limits come from the problem record; the client does not get to
-    // loosen them in the mode designed to keep them server-side.
-  } else {
-    req.test_cases = FREE_RUN_CASES
-    req.time_limit = 10.0
-    req.mem_limit_mb = 256
-  }
-  return req
 }
 
 /**
- * Expected output for the case at *index* in the run, for display.
+ * Cases a run will execute, and the expected output lookup for its
+ * results.
  *
- * Free-run mode knows its own cases; problem mode looks the ordinal up
- * in the map fetched with the problem. `index` is 0-based here while
- * ordinals start at 1.
+ * The two are computed together because they have to agree: a mismatch
+ * between what was sent and what the panel looks up would render a
+ * diff against the wrong expected output, which is worse than no diff.
  */
-function expectedOutputAt(index: number): string {
-  if (!isProblemMode.value) {
-    return FREE_RUN_CASES[index]?.expected_output ?? ''
+interface RunPlan {
+  request: (onEvent: (ev: JudgeEvent) => void) => Promise<JudgeEvent>
+  /** Expected output for the case at 0-based *index* of this run. */
+  expectedAt: (index: number) => string
+  /** Input for the case at 0-based *index*, when the page knows it. */
+  inputAt: (index: number) => string
+}
+
+/**
+ * Build the plan for *kind*, or `null` when it cannot be built.
+ *
+ * Where the case set comes from is the whole of the 运行/提交 difference:
+ *
+ * - **submit in problem mode** — `problem_id`, so the sidecar resolves
+ *   every case including the hidden ones and the client never sees them.
+ * - **run in problem mode** — the visible cases inline. Sending them
+ *   rather than `problem_id` is what keeps the hidden cases out of a
+ *   scratch run; the sidecar would otherwise have no reason to exclude
+ *   them.
+ * - **free-run, either kind** — the page's own two cases. There is no
+ *   problem row, so both are inline requests and they differ only in the
+ *   `record` flag.
+ */
+function buildPlan(kind: RunKind): RunPlan | null {
+  const language = languageId.value
+  const problemId = props.problemId
+
+  if (problemId === null) {
+    const cases = FREE_RUN_CASES
+    const opts = {
+      language,
+      timeLimit: FREE_RUN_TIME_LIMIT,
+      memLimitMb: FREE_RUN_MEM_LIMIT_MB
+    }
+    return {
+      request: (onEvent) =>
+        kind === 'submit'
+          ? submitCases(code.value, cases, onEvent, opts)
+          : runCases(code.value, cases, onEvent, opts),
+      expectedAt: (i) => cases[i]?.expected_output ?? '',
+      inputAt: (i) => cases[i]?.input ?? ''
+    }
   }
-  return expectedByOrdinal.value.get(index + 1) ?? ''
+
+  if (kind === 'submit') {
+    const expected = expectedByOrdinal.value
+    return {
+      request: (onEvent) => submitProblem(code.value, problemId, onEvent, { language }),
+      expectedAt: (i) => expected.get(i + 1) ?? '',
+      // The stream echoes the input on `case_done`, so this is a fallback.
+      inputAt: () => ''
+    }
+  }
+
+  const cases = runCasesForProblem.value
+  if (cases.length === 0) return null
+  return {
+    request: (onEvent) => runCases(code.value, cases, onEvent, { language }),
+    expectedAt: (i) => cases[i]?.expected_output ?? '',
+    inputAt: (i) => cases[i]?.input ?? ''
+  }
 }
 
 /**
- * Input for the case at *index*, for display. The stream echoes the
- * input on `case_done`, so this is only a fallback for a frame that
- * arrives without one.
- */
-function inputAt(index: number): string {
-  if (!isProblemMode.value) return FREE_RUN_CASES[index]?.input ?? ''
-  return ''
-}
-
-/**
- * Run the judge via the WebSocket stream.
+ * Kick off a run and collect its verdict.
  *
- * Each streamed event is appended to `events` for live display; on the
- * terminal judge_done event we assemble a full JudgeResponse from the
- * events plus whatever expected outputs this page can see.
+ * `kind` is captured for the whole run rather than read from
+ * `activeRun` later: the user can start the other action the moment this
+ * one finishes, and a stale frame from the first run must not relabel
+ * the second one's panel.
  */
-async function runJudge(): Promise<void> {
-  isRunning.value = true
+async function start(kind: RunKind): Promise<void> {
+  const plan = buildPlan(kind)
+  if (!plan || isRunning.value) return
+
+  activeRun.value = kind
+  lastRunKind.value = kind
   events.value = []
   result.value = null
   errorMsg.value = ''
@@ -408,14 +544,14 @@ async function runJudge(): Promise<void> {
   const caseResults: TestCaseOut[] = []
 
   try {
-    const terminal = await streamJudge(buildRequest(), (ev: JudgeEvent) => {
+    const terminal = await plan.request((ev: JudgeEvent) => {
       events.value.push(ev)
 
       if (ev.type === 'case_done' && ev.index !== undefined) {
         caseResults.push({
           status: ev.status ?? 'RE',
-          input: ev.input ?? inputAt(ev.index),
-          expected_output: expectedOutputAt(ev.index),
+          input: ev.input ?? plan.inputAt(ev.index),
+          expected_output: plan.expectedAt(ev.index),
           actual_output: ev.actual_output ?? '',
           stderr: ev.timed_out
             ? `Time Limit Exceeded`
@@ -442,119 +578,162 @@ async function runJudge(): Promise<void> {
   } catch (err) {
     errorMsg.value = (err as Error).message
   } finally {
-    isRunning.value = false
+    activeRun.value = null
   }
+}
+
+/** 运行: run against the visible cases, record nothing. */
+function run(): Promise<void> {
+  return start('run')
+}
+
+/** 提交: run against every case, record the verdict. */
+function submit(): Promise<void> {
+  return start('submit')
 }
 </script>
 
 <template>
   <div class="practice">
-    <header class="practice-header">
-      <div class="header-left">
-        <h1>{{ problemTitle }}</h1>
-        <span v-if="isProblemMode" class="mode-badge">题库 #{{ problemId }}</span>
-        <span v-else class="mode-badge mode-badge-free">自由运行</span>
+    <!-- Toolbar: the only place the two actions live, so their relative
+         weight (提交 is primary) reads at a glance. -->
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <h1 class="problem-title">
+          <span class="title-text">{{ problemTitle }}</span>
+          <span v-if="isProblemMode" class="badge badge-mode">题库 #{{ problemId }}</span>
+          <span v-else class="badge badge-free">自由运行</span>
+          <VerdictBadge v-if="result" :status="result.status" size="sm" />
+        </h1>
       </div>
-      <button v-if="isProblemMode" class="exit-btn" @click="emit('exit')">退出到自由运行</button>
+
+      <div class="toolbar-right">
+        <button v-if="isProblemMode" class="btn btn-text" type="button" @click="emit('exit')">
+          退出到自由运行
+        </button>
+
+        <label class="lang-picker">
+          <span class="lang-label">语言</span>
+          <select
+            class="lang-select"
+            :value="languageId"
+            :disabled="isRunning || languages.length === 0"
+            @change="onLanguageChange"
+          >
+            <option
+              v-for="opt in languages"
+              :key="opt.id"
+              :value="opt.id"
+              :disabled="!opt.available"
+              :title="opt.detail ?? undefined"
+            >
+              {{ opt.display_name }}{{ opt.available ? '' : '（不可用）' }}
+            </option>
+          </select>
+        </label>
+
+        <button
+          class="btn btn-secondary"
+          type="button"
+          :disabled="!canRun"
+          :title="runBlockedReason || '运行公开样例，不记录成绩（Ctrl/Cmd + Enter）'"
+          @click="run"
+        >
+          {{ activeRun === 'run' ? '运行中…' : '运行' }}
+        </button>
+        <button
+          class="btn btn-primary"
+          type="button"
+          :disabled="!canSubmit"
+          title="运行全部用例并记录成绩（Ctrl/Cmd + Shift + Enter）"
+          @click="submit"
+        >
+          {{ activeRun === 'submit' ? '提交中…' : '提交' }}
+        </button>
+      </div>
     </header>
 
+    <!--
+      Disabled options cannot be opened to read their tooltip, so the
+      reason — which already names the setting to change — is rendered
+      as text instead of hidden behind a title attribute.
+    -->
+    <p v-if="catalogueError" class="notice notice-warn">{{ catalogueError }}</p>
+    <ul v-else-if="unavailableLanguages.length" class="notice">
+      <li v-for="opt in unavailableLanguages" :key="opt.id">
+        <strong>{{ opt.display_name }} 不可用</strong>：{{ opt.detail }}
+      </li>
+    </ul>
+    <p v-if="runBlockedReason" class="notice">{{ runBlockedReason }}</p>
+
     <div class="practice-body">
-      <!-- Left: problem description + test cases -->
-      <section class="problem-panel">
-        <div v-if="problemLoading" class="panel-note">加载题目中...</div>
-        <div v-else-if="problemError" class="panel-note panel-note-error">
-          无法加载题目 #{{ problemId }}：{{ problemError }}
-        </div>
-
-        <template v-else>
-          <h2>题目描述</h2>
-          <pre v-if="problemDescription" class="problem-desc">{{ problemDescription }}</pre>
-
-          <template v-if="problem?.input_format">
-            <h2>输入格式</h2>
-            <pre class="problem-desc">{{ problem.input_format }}</pre>
-          </template>
-          <template v-if="problem?.output_format">
-            <h2>输出格式</h2>
-            <pre class="problem-desc">{{ problem.output_format }}</pre>
-          </template>
-
-          <div v-if="problem && problem.knowledge_tags.length" class="tag-row">
-            <span v-for="tag in problem.knowledge_tags" :key="tag" class="tag">
-              {{ tag }}
-            </span>
-          </div>
-
-          <h2>{{ isProblemMode ? '样例' : '测试用例' }}</h2>
-          <div v-for="(tc, i) in displayCases" :key="i" class="test-case">
-            <div class="tc-label">{{ isProblemMode ? '样例' : '用例' }} {{ i + 1 }}</div>
-            <div class="tc-row">
-              <span class="tc-key">输入:</span>
-              <code>{{ tc.input }}</code>
-            </div>
-            <div class="tc-row">
-              <span class="tc-key">期望输出:</span>
-              <code>{{ tc.expected_output }}</code>
-            </div>
-          </div>
-
-          <p v-if="isProblemMode" class="panel-note">隐藏用例由后端持有，判题时会一并执行。</p>
-          <p v-if="problem" class="panel-note">
-            时限 {{ problem.time_limit }}s · 内存 {{ problem.memory_limit }} MB
-          </p>
-        </template>
-      </section>
-
-      <!-- Right: language picker + code editor + run button + output panel -->
-      <section class="code-panel">
-        <div class="toolbar">
-          <label class="lang-picker">
-            <span class="lang-label">语言</span>
-            <select
-              class="lang-select"
-              :value="languageId"
-              :disabled="isRunning || languages.length === 0"
-              @change="onLanguageChange"
-            >
-              <option
-                v-for="opt in languages"
-                :key="opt.id"
-                :value="opt.id"
-                :disabled="!opt.available"
-                :title="opt.detail ?? undefined"
-              >
-                {{ opt.display_name }}{{ opt.available ? '' : '（不可用）' }}
-              </option>
-            </select>
-          </label>
-
-          <span v-if="selectedLanguage?.version" class="lang-version">
-            {{ selectedLanguage.version }}
-          </span>
-
+      <!-- Problem statement -->
+      <section class="problem-panel" :class="{ collapsed: statementCollapsed }">
+        <!-- Collapsed, the column keeps only its toggle so the editor
+             gains the width; the label stays legible as a vertical strip. -->
+        <div class="panel-head">
           <button
-            class="run-btn"
-            :disabled="isRunning || !selectedLanguage || problemLoading || !!problemError"
-            @click="runJudge"
+            class="collapse-btn"
+            type="button"
+            :aria-expanded="statementCollapsed ? 'false' : 'true'"
+            :title="statementCollapsed ? '展开题面' : '折叠题面'"
+            @click="statementCollapsed = !statementCollapsed"
           >
-            {{ isRunning ? '判题中...' : '运行判题' }}
+            <span v-if="!statementCollapsed" class="collapse-icon" aria-hidden="true">‹</span>
+            <span v-else class="collapse-icon" aria-hidden="true">›</span>
+            <span class="collapse-label">{{ statementCollapsed ? '题面' : '收起' }}</span>
           </button>
         </div>
 
-        <!--
-          Disabled options cannot be opened to read their tooltip, so the
-          reason — which already names the setting to change — is rendered
-          as text instead of hidden behind a title attribute.
-        -->
-        <p v-if="catalogueError" class="lang-note lang-note-error">
-          {{ catalogueError }}
-        </p>
-        <ul v-else-if="unavailableLanguages.length" class="lang-note">
-          <li v-for="opt in unavailableLanguages" :key="opt.id">
-            <strong>{{ opt.display_name }} 不可用</strong>：{{ opt.detail }}
-          </li>
-        </ul>
+        <div v-if="!statementCollapsed" class="panel-body">
+          <div v-if="problemLoading" class="placeholder">加载题目中…</div>
+          <div v-else-if="problemError" class="placeholder placeholder-error">
+            无法加载题目 #{{ problemId }}：{{ problemError }}
+          </div>
 
+          <template v-else>
+            <pre v-if="problemDescription" class="prose">{{ problemDescription }}</pre>
+
+            <template v-if="problem?.input_format">
+              <h2>输入格式</h2>
+              <pre class="prose">{{ problem.input_format }}</pre>
+            </template>
+            <template v-if="problem?.output_format">
+              <h2>输出格式</h2>
+              <pre class="prose">{{ problem.output_format }}</pre>
+            </template>
+
+            <div v-if="problem && problem.knowledge_tags.length" class="tag-row">
+              <span v-for="tag in problem.knowledge_tags" :key="tag" class="tag">
+                {{ tag }}
+              </span>
+            </div>
+
+            <h2>{{ isProblemMode ? '样例' : '测试用例' }}</h2>
+            <div v-for="(tc, i) in displayCases" :key="i" class="sample">
+              <div class="sample-label">{{ isProblemMode ? '样例' : '用例' }} {{ i + 1 }}</div>
+              <div class="sample-row">
+                <span class="sample-key">输入</span>
+                <code>{{ tc.input || '(无)' }}</code>
+              </div>
+              <div class="sample-row">
+                <span class="sample-key">输出</span>
+                <code>{{ tc.expected_output }}</code>
+              </div>
+            </div>
+
+            <p v-if="isProblemMode" class="hint">
+              隐藏用例由后端持有，<strong>提交</strong>时会一并执行；<strong>运行</strong>只跑上面的公开样例。
+            </p>
+            <p v-if="problem" class="hint">
+              时限 {{ problem.time_limit }}s · 内存 {{ problem.memory_limit }} MB
+            </p>
+          </template>
+        </div>
+      </section>
+
+      <!-- Editor + output -->
+      <section class="code-panel">
         <div class="editor-wrapper">
           <CodeEditor v-model="code" :language="monacoLanguage" theme="vs-dark" />
         </div>
@@ -564,6 +743,7 @@ async function runJudge(): Promise<void> {
           :result="result"
           :error-msg="errorMsg"
           :is-running="isRunning"
+          :is-scratch="lastRunKind === 'run'"
         />
       </section>
     </div>
@@ -571,94 +751,377 @@ async function runJudge(): Promise<void> {
 </template>
 
 <style scoped>
+/*
+ * No hex literals: every colour is a PU-0 token. `var(--af-text-primary)`
+ * is the `:root` namespace; the `--color-af-*` spellings in `tokens.css`
+ * generate utilities and would resolve to nothing here.
+ */
 .practice {
   display: flex;
   flex-direction: column;
-  /* PU-6: was 100vh. The app shell owns the viewport now and stacks a title
-   * bar above this view, so the page must fill its container instead. */
   height: 100%;
-  padding: 16px;
+  padding: 12px;
   box-sizing: border-box;
-  color: #e5e7eb;
-  background: #1a1a2e;
+  gap: 10px;
+  background: var(--af-canvas);
+  color: var(--af-text-primary);
 }
 
-.practice-header {
+/* --- toolbar --- */
+.toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.toolbar-left {
   min-width: 0;
 }
 
-.practice-header h1 {
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.problem-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-  font-size: 22px;
-  white-space: nowrap;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.title-text {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mode-badge {
-  padding: 2px 10px;
+.badge {
+  flex-shrink: 0;
+  padding: 1px 8px;
   font-size: 11px;
-  color: #93c5fd;
-  background: #1e3a5f;
-  border-radius: 10px;
+  font-weight: 400;
+  border-radius: 999px;
   white-space: nowrap;
 }
 
-.mode-badge-free {
-  color: #9ca3af;
-  background: #374151;
+.badge-mode {
+  color: var(--af-accent);
+  background: var(--af-accent-subtle);
 }
 
-.exit-btn {
-  padding: 6px 14px;
-  font-size: 12px;
-  color: #d1d5db;
-  background: transparent;
-  border: 1px solid #4b5563;
-  border-radius: 4px;
+.badge-free {
+  color: var(--af-text-secondary);
+  background: var(--af-elevated);
+}
+
+.lang-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lang-label {
+  font-size: 13px;
+  color: var(--af-text-secondary);
+}
+
+.lang-select {
+  padding: 5px 8px;
+  font-size: 13px;
+  color: var(--af-text-primary);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border-strong);
+  border-radius: var(--af-radius-sm);
   cursor: pointer;
-  white-space: nowrap;
 }
 
-.exit-btn:hover {
-  background: #374151;
+.lang-select:disabled {
+  color: var(--af-text-muted);
+  cursor: not-allowed;
 }
 
+/* --- buttons --- */
+.btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: var(--af-radius-sm);
+  cursor: pointer;
+  transition:
+    background var(--af-duration-fast) var(--af-ease),
+    color var(--af-duration-fast) var(--af-ease);
+}
+
+.btn:disabled {
+  color: var(--af-text-muted);
+  background: var(--af-elevated);
+  border-color: var(--af-border);
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  /* White rather than a token: this is the one foreground whose job is to
+   * stay legible on the accent fill, and no PU-0 token expresses that
+   * relationship. Retuning the accent is what would change it. */
+  color: #ffffff;
+  background: var(--af-accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--af-accent-hover);
+}
+
+/* Pushed down, not filled: 运行 is the reversible action, so it should
+ * not compete with 提交 for attention. */
+.btn-secondary {
+  color: var(--af-text-primary);
+  background: var(--af-elevated);
+  border-color: var(--af-border-strong);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--af-overlay);
+}
+
+.btn-text {
+  color: var(--af-text-secondary);
+  background: transparent;
+  border-color: var(--af-border);
+  font-weight: 400;
+}
+
+.btn-text:hover {
+  color: var(--af-text-primary);
+  background: var(--af-elevated);
+}
+
+/* --- notices --- */
+.notice {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--af-text-secondary);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+  list-style: none;
+}
+
+.notice-warn {
+  color: var(--af-text-primary);
+  border-color: var(--af-warning);
+}
+
+/* --- body --- */
 .practice-body {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   flex: 1;
   min-height: 0;
 }
 
 .problem-panel {
+  display: flex;
+  flex-direction: column;
   width: var(--spacing-problem-panel);
   flex-shrink: 0;
-  overflow-y: auto;
-  padding: 12px;
-  background: #16213e;
-  border-radius: 8px;
+  background: var(--af-surface);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-md);
+  overflow: hidden;
+  transition: width var(--af-duration-base) var(--af-ease);
 }
 
-/* PU-6: below 900px the side-by-side editor + statement no longer fits, so
- * the two columns stack. The statement keeps a bounded height and scrolls
- * on its own — letting it size to content would push the editor off-screen.
+/* Collapsed: a narrow strip holding only the toggle. The width is a
+ * literal rather than a token because it is this one control's size, not
+ * a layout value anything else shares. */
+.problem-panel.collapsed {
+  width: 36px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px;
+  border-bottom: 1px solid var(--af-border);
+}
+
+.problem-panel.collapsed .panel-head {
+  justify-content: center;
+  border-bottom: none;
+}
+
+.collapse-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--af-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--af-radius-sm);
+  cursor: pointer;
+}
+
+.collapse-btn:hover {
+  color: var(--af-text-primary);
+  background: var(--af-elevated);
+}
+
+.problem-panel.collapsed .collapse-btn {
+  flex-direction: column;
+  padding: 8px 2px;
+}
+
+.collapse-label {
+  white-space: nowrap;
+}
+
+.problem-panel.collapsed .collapse-label {
+  writing-mode: vertical-rl;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 14px 14px 14px;
+}
+
+.panel-body h2 {
+  margin: 16px 0 8px 0;
+  font-size: 14px;
+  color: var(--af-text-secondary);
+}
+
+.prose {
+  margin: 0;
+  padding: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--af-text-primary);
+  background: var(--af-elevated);
+  border-radius: var(--af-radius-sm);
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.tag {
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--af-accent);
+  background: var(--af-accent-subtle);
+  border-radius: 999px;
+}
+
+.sample {
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+}
+
+.sample-label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--af-text-secondary);
+}
+
+.sample-row {
+  display: flex;
+  gap: 8px;
+  margin: 3px 0;
+  font-size: 12px;
+}
+
+.sample-key {
+  flex-shrink: 0;
+  width: 32px;
+  color: var(--af-text-muted);
+}
+
+.sample-row code {
+  padding: 1px 5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--af-text-primary);
+  background: var(--af-canvas);
+  border-radius: 3px;
+}
+
+.hint {
+  margin: 12px 0 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--af-text-muted);
+}
+
+.hint strong {
+  color: var(--af-text-secondary);
+}
+
+.placeholder {
+  padding: 16px 4px;
+  font-size: 13px;
+  color: var(--af-text-muted);
+}
+
+.placeholder-error {
+  color: var(--af-text-primary);
+}
+
+/* --- editor + output --- */
+.code-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 10px;
+}
+
+.editor-wrapper {
+  flex: 1;
+  min-height: 260px;
+  overflow: hidden;
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-md);
+}
+
+/*
+ * Below 900px the statement and the editor stop fitting side by side, so
+ * the two columns stack. The statement keeps a bounded height and
+ * scrolls on its own — letting it size to content would push the editor
+ * off-screen.
  *
- * Stacked, the page can still be taller than the viewport (the editor has a
- * 300px floor and a short window is easy to reach), so the page itself
- * becomes the scroll container. Side by side it must not: there the panels
- * scroll internally and the editor is meant to fill the leftover height. */
+ * Stacked, the page can still be taller than the viewport, so the page
+ * itself becomes the scroll container. Side by side it must not: there
+ * the panels scroll internally and the editor fills the leftover height.
+ *
+ * Declared with the breakpoint rather than as Tailwind utilities on the
+ * elements: a conditional width plus a conditional flex-direction plus an
+ * overflow override is a compound rule, and the sidebar's docstring
+ * explains why compound rules stay in CSS (two conflicting utilities in
+ * one class list are resolved by stylesheet order, not class order).
+ */
 @media (max-width: 899px) {
   .practice {
     overflow-y: auto;
@@ -673,168 +1136,14 @@ async function runJudge(): Promise<void> {
     max-height: 40vh;
     flex-shrink: 0;
   }
-}
 
-.problem-panel h2 {
-  font-size: 16px;
-  margin: 16px 0 8px 0;
-}
+  /* Collapsing buys nothing once the columns are stacked. */
+  .problem-panel.collapsed {
+    width: auto;
+  }
 
-.problem-panel h2:first-child {
-  margin-top: 0;
-}
-
-.problem-desc {
-  white-space: pre-wrap;
-  font-size: 13px;
-  line-height: 1.6;
-  background: #0f3460;
-  padding: 10px;
-  border-radius: 4px;
-  margin: 0;
-}
-
-.panel-note {
-  font-size: 12px;
-  color: #9ca3af;
-  line-height: 1.5;
-  margin: 12px 0 0 0;
-}
-
-.panel-note-error {
-  color: #fca5a5;
-}
-
-.tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.tag {
-  padding: 2px 8px;
-  font-size: 11px;
-  color: #93c5fd;
-  background: #1e3a5f;
-  border-radius: 4px;
-}
-
-.test-case {
-  background: #0f3460;
-  padding: 10px;
-  border-radius: 4px;
-  margin-bottom: 8px;
-}
-
-.tc-label {
-  font-weight: bold;
-  margin-bottom: 6px;
-}
-
-.tc-row {
-  font-size: 13px;
-  margin: 2px 0;
-}
-
-.tc-key {
-  color: #9ca3af;
-  margin-right: 6px;
-}
-
-.code-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-/* PU-17: new markup uses the PU-0 tokens rather than fresh literals, so
- * the PU-7/PU-8 visual rewrite has less to clean up. The styles above are
- * pre-existing and still hardcoded — replacing those is PU-8's job. */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-
-.lang-picker {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.lang-label {
-  font-size: 13px;
-  color: var(--af-text-secondary);
-}
-
-.lang-select {
-  padding: 8px 10px;
-  font-size: 14px;
-  color: var(--af-text-primary);
-  background: var(--af-elevated);
-  border: 1px solid var(--af-border-strong);
-  border-radius: var(--af-radius-sm);
-  cursor: pointer;
-}
-
-.lang-select:disabled {
-  color: var(--af-text-muted);
-  cursor: not-allowed;
-}
-
-.lang-version {
-  font-size: 12px;
-  color: var(--af-text-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.lang-note {
-  margin: 0 0 12px 0;
-  padding: 8px 10px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--af-text-secondary);
-  background: var(--af-elevated);
-  border: 1px solid var(--af-border);
-  border-radius: var(--af-radius-sm);
-  list-style: none;
-}
-
-.lang-note-error {
-  color: var(--af-text-primary);
-  border-color: var(--af-warning);
-}
-
-.editor-wrapper {
-  flex: 1;
-  min-height: 300px;
-  border: 1px solid #374151;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.run-btn {
-  padding: 10px 24px;
-  font-size: 15px;
-  font-weight: 600;
-  color: white;
-  background: #3b82f6;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.run-btn:hover:not(:disabled) {
-  background: #2563eb;
-}
-
-.run-btn:disabled {
-  background: #6b7280;
-  cursor: not-allowed;
+  .panel-head {
+    justify-content: flex-start;
+  }
 }
 </style>

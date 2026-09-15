@@ -63,41 +63,118 @@ export interface WsJudgeRequest {
   time_limit?: number
   /** MB. Same override rule as `time_limit`. */
   mem_limit_mb?: number
+  /**
+   * Whether the verdict is persisted (PU-8). `true` (the sidecar's
+   * default when omitted) is a **submit**: the row lands in
+   * `submissions` and a failure is filed in the mistake book. `false` is
+   * a **scratch run**: the verdict is computed and streamed back exactly
+   * as usual, but nothing is written and nothing is scored.
+   *
+   * Optional rather than required so an omitted field keeps meaning
+   * "submit" — the safe direction, since a client that forgets it would
+   * otherwise silently lose its history.
+   */
+  record?: boolean
 }
 
 /**
- * Judge against a stored problem's cases (PU-12) — the preferred mode.
+ * Options shared by the judge entry points below.
  *
- * Thin wrapper over {@link streamJudge} so callers do not have to
- * remember which of the two mutually exclusive fields to set.
+ * `record` is set by the wrapper rather than by callers: whether a run is
+ * a scratch run or a submission is the *reason* the caller picked that
+ * wrapper, so letting it also pass a flag would allow
+ * `submitProblem(..., { record: false })` — a contradiction the types
+ * should prevent rather than the server should resolve.
  */
-export function streamJudgeProblem(
+export interface JudgeStreamOptions {
+  language?: string
+  timeLimit?: number
+  memLimitMb?: number
+}
+
+function applyOptions(req: WsJudgeRequest, opts?: JudgeStreamOptions): void {
+  if (!opts) return
+  if (opts.language !== undefined) req.language = opts.language
+  if (opts.timeLimit !== undefined) req.time_limit = opts.timeLimit
+  if (opts.memLimitMb !== undefined) req.mem_limit_mb = opts.memLimitMb
+}
+
+/**
+ * Build a request against a stored problem's cases (PU-12).
+ *
+ * `record` decides submit vs scratch run (PU-8): the case set is the
+ * same either way — the sidecar reads the stored cases including the
+ * hidden ones — and only the persistence differs.
+ */
+function problemRequest(
+  code: string,
+  problemId: number,
+  record: boolean,
+  opts?: JudgeStreamOptions
+): WsJudgeRequest {
+  const req: WsJudgeRequest = { code, problem_id: problemId, record }
+  applyOptions(req, opts)
+  return req
+}
+
+/**
+ * Build a request against caller-supplied cases.
+ *
+ * The scratch-run path is the only one that uses this in the practice
+ * page: it sends the problem's *visible* samples, so the user gets a
+ * fast, non-punitive run and the hidden cases stay uninvolved.
+ */
+function inlineRequest(
+  code: string,
+  testCases: TestCaseIn[],
+  record: boolean,
+  opts?: JudgeStreamOptions
+): WsJudgeRequest {
+  const req: WsJudgeRequest = { code, test_cases: testCases, record }
+  applyOptions(req, opts)
+  return req
+}
+
+/** Submit against a stored problem: full case set, verdict recorded. */
+export function submitProblem(
   code: string,
   problemId: number,
   onEvent: (event: JudgeEvent) => void,
-  opts?: { language?: string; timeLimit?: number; memLimitMb?: number }
+  opts?: JudgeStreamOptions
 ): Promise<JudgeEvent> {
-  const req: WsJudgeRequest = { code, problem_id: problemId }
-  if (opts?.language !== undefined) req.language = opts.language
-  if (opts?.timeLimit !== undefined) req.time_limit = opts.timeLimit
-  if (opts?.memLimitMb !== undefined) req.mem_limit_mb = opts.memLimitMb
-  return streamJudge(req, onEvent)
+  return streamJudge(problemRequest(code, problemId, true, opts), onEvent)
 }
 
 /**
- * Judge against caller-supplied cases — the self-test path.
+ * There is deliberately no `runProblem`.
+ *
+ * A scratch run against a *stored* problem would have to send
+ * `problem_id` plus `record: false`, which would execute the hidden cases
+ * too — the sidecar has no reason to exclude them, and a scratch run the
+ * user cannot see the contents of is not a scratch run. The practice page
+ * therefore sends the problem's **visible** cases inline instead (see
+ * `runCases`), which is the same request shape as free-run mode. Adding
+ * this wrapper would only invite the version that leaks the hidden set.
  */
-export function streamJudgeCases(
+
+/** Submit against caller-supplied cases. */
+export function submitCases(
   code: string,
   testCases: TestCaseIn[],
   onEvent: (event: JudgeEvent) => void,
-  opts?: { language?: string; timeLimit?: number; memLimitMb?: number }
+  opts?: JudgeStreamOptions
 ): Promise<JudgeEvent> {
-  const req: WsJudgeRequest = { code, test_cases: testCases }
-  if (opts?.language !== undefined) req.language = opts.language
-  if (opts?.timeLimit !== undefined) req.time_limit = opts.timeLimit
-  if (opts?.memLimitMb !== undefined) req.mem_limit_mb = opts.memLimitMb
-  return streamJudge(req, onEvent)
+  return streamJudge(inlineRequest(code, testCases, true, opts), onEvent)
+}
+
+/** Scratch-run against caller-supplied cases — the pre-PU-8 behaviour. */
+export function runCases(
+  code: string,
+  testCases: TestCaseIn[],
+  onEvent: (event: JudgeEvent) => void,
+  opts?: JudgeStreamOptions
+): Promise<JudgeEvent> {
+  return streamJudge(inlineRequest(code, testCases, false, opts), onEvent)
 }
 
 /**

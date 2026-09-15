@@ -50,12 +50,20 @@ export interface JudgeRequest {
   time_limit?: number
   /** MB. Overrides the problem's own limit when problem_id is set. */
   mem_limit_mb?: number
+  /**
+   * Whether the verdict is persisted (PU-8). `true` is a submit, `false`
+   * a scratch run that computes the verdict without writing history.
+   * See `api/ws.ts` for the full description — the WS stream is the path
+   * the practice page actually uses.
+   */
+  record?: boolean
 }
 
 export interface JudgeOptions {
   language?: string
   timeLimit?: number
   memLimitMb?: number
+  record?: boolean
 }
 
 /**
@@ -68,7 +76,7 @@ export interface JudgeOptions {
 export async function judgeCode(
   code: string,
   problemId: number,
-  opts?: JudgeOptions,
+  opts?: JudgeOptions
 ): Promise<JudgeResponse> {
   const body: JudgeRequest = { code, problem_id: problemId }
   applyOptions(body, opts)
@@ -85,7 +93,7 @@ export async function judgeCode(
 export async function judgeCodeWithCases(
   code: string,
   testCases: TestCaseIn[],
-  opts?: JudgeOptions,
+  opts?: JudgeOptions
 ): Promise<JudgeResponse> {
   const body: JudgeRequest = { code, test_cases: testCases }
   applyOptions(body, opts)
@@ -98,4 +106,5 @@ function applyOptions(body: JudgeRequest, opts?: JudgeOptions): void {
   if (opts.language !== undefined) body.language = opts.language
   if (opts.timeLimit !== undefined) body.time_limit = opts.timeLimit
   if (opts.memLimitMb !== undefined) body.mem_limit_mb = opts.memLimitMb
+  if (opts.record !== undefined) body.record = opts.record
 }
