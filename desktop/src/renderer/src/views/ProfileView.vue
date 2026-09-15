@@ -161,7 +161,9 @@ onMounted(load)
 .profile-view {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* PU-6: was 100vh. The app shell owns the viewport now and stacks a title
+   * bar above this view, so the page must fill its container instead. */
+  height: 100%;
   padding: 16px;
   box-sizing: border-box;
   color: #e5e7eb;

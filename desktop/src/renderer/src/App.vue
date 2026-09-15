@@ -1,44 +1,94 @@
 <script setup lang="ts">
 /**
- * App shell — holds a simple tab switcher between the five main
- * pages. P1-21 added mistakes, P1-22 added profile, P1-23 adds plan,
- * PU-14 adds the problem catalogue.
+ * App shell — sidebar + top strip + content area (PU-6).
  *
- * vue-router is intentionally avoided (single-user desktop app, few
- * pages) — a `ref<Tab>` is enough.
+ * Previously this was a horizontal tab bar over the content. PU-6 turns
+ * it into the sidebar shell the visual rewrite (PU-7) builds on, and
+ * makes it survive a browser window that the user can resize at will.
  *
- * PU-14 note: the catalogue's "which problem am I practising" is what
- * a router would carry as a `problemId` route param. Without one, this
+ * What PU-6 does *not* do, because PU-7 owns it: introduce vue-router,
+ * add breadcrumbs, or wire the sidebar footer to `env-check`. Navigation
+ * is still a `ref<Tab>` here.
+ *
+ * PU-14 note: the catalogue's "which problem am I practising" is what a
+ * router would carry as a `problemId` route param. Without one, this
  * shell owns it as `selectedProblemId` and hands it to Practice as a
- * prop, so picking a problem switches tabs *and* loads the problem in
+ * prop, so picking a problem switches pages *and* loads the problem in
  * one interaction.
+ *
+ * Responsive behaviour lives in the two components (AppSidebar's media
+ * queries, TitleBar's toggle). This file owns only the one piece of
+ * state that cannot be expressed in CSS: whether the drawer is open.
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import Practice from './views/Practice.vue'
 import MistakesView from './views/MistakesView.vue'
 import ProfileView from './views/ProfileView.vue'
 import PlanView from './views/PlanView.vue'
 import ProblemListView from './views/ProblemListView.vue'
+import AppSidebar, { type NavItem } from './components/AppSidebar.vue'
+import TitleBar from './components/TitleBar.vue'
 import { initHttpClient } from './api/http'
 
 type Tab = 'practice' | 'problems' | 'mistakes' | 'profile' | 'plan'
 const activeTab = ref<Tab>('practice')
 
 /**
+ * The nav list. Icons are 24×24 path data drawn by AppSidebar; see its
+ * docstring for why they are inline rather than an icon dependency.
+ */
+const NAV_ITEMS: NavItem[] = [
+  { id: 'practice', label: '练习', path: 'M8 18l-5-6 5-6M16 6l5 6-5 6' },
+  {
+    id: 'problems',
+    label: '题库',
+    path: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01'
+  },
+  {
+    id: 'mistakes',
+    label: '错题本',
+    path: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z'
+  },
+  {
+    id: 'profile',
+    label: '画像',
+    path: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'
+  },
+  {
+    id: 'plan',
+    label: '复习',
+    path: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'
+  }
+]
+
+/**
+ * Whether the off-canvas drawer is open. Only meaningful below 1024px —
+ * above that the sidebar is always present and CSS ignores this flag, so
+ * a window grown past the breakpoint cannot leave a stale drawer.
+ */
+const drawerOpen = ref(false)
+
+/**
  * The problem Practice is pointed at, or null for free-run mode.
  *
  * Owned here rather than in Practice so that returning to the practice
- * tab by clicking its button shows the same problem the user was on
- * (the tab is a `v-if`, so Practice is unmounted and remounted on every
+ * page by clicking its nav item shows the same problem the user was on
+ * (the page is a `v-if`, so Practice is unmounted and remounted on every
  * switch — local state would not survive).
  */
 const selectedProblemId = ref<number | null>(null)
 
+/** Switch pages, and close the drawer if one is open. */
+function navigate(id: string): void {
+  activeTab.value = id as Tab
+  drawerOpen.value = false
+}
+
 /**
- * Practise a problem: remember it and move to the practice tab.
+ * Practise a problem: remember it and move to the practice page.
  *
- * The catalogue's `select` event carries the id; App is what knows
- * both halves of "go to the editor for this problem".
+ * The catalogue's `select` event carries the id; App is what knows both
+ * halves of "go to the editor for this problem".
  */
 function openProblem(problemId: number): void {
   selectedProblemId.value = problemId
@@ -50,7 +100,22 @@ function exitToFreeRun(): void {
   selectedProblemId.value = null
 }
 
+/**
+ * Escape closes the drawer.
+ *
+ * Registered on the window rather than on the drawer element because
+ * focus is usually still in the content when the user decides to back
+ * out; requiring them to click into the drawer first would make the key
+ * unreliable.
+ */
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && drawerOpen.value) {
+    drawerOpen.value = false
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', onKeydown)
   try {
     await initHttpClient()
     console.log('[app] http client initialized')
@@ -58,113 +123,112 @@ onMounted(async () => {
     console.error('[app] failed to init http client:', err)
   }
 })
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
-  <div class="app">
-    <nav class="tab-bar">
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'practice' }"
-        @click="activeTab = 'practice'"
-      >
-        练习
-      </button>
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'problems' }"
-        @click="activeTab = 'problems'"
-      >
-        题库
-      </button>
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'mistakes' }"
-        @click="activeTab = 'mistakes'"
-      >
-        错题本
-      </button>
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'profile' }"
-        @click="activeTab = 'profile'"
-      >
-        画像
-      </button>
-      <button class="tab-btn" :class="{ active: activeTab === 'plan' }" @click="activeTab = 'plan'">
-        复习
-      </button>
-      <!-- PU-0 probe: Tailwind utilities (bg-af-*, text-af-*) must render here.
-           If this badge has no background/rounding, Tailwind is not wired up. -->
-      <span class="token-probe bg-af-accent-subtle text-af-accent rounded-full px-3 py-1">
-        Tailwind v4 ✓
-      </span>
-    </nav>
-    <main class="tab-content">
-      <ProblemListView v-if="activeTab === 'problems'" @select="openProblem" />
-      <Practice
-        v-else-if="activeTab === 'practice'"
-        :problem-id="selectedProblemId"
-        @exit="exitToFreeRun"
+  <div class="app-shell">
+    <TitleBar :drawer-open="drawerOpen" @toggle-drawer="drawerOpen = !drawerOpen" />
+
+    <div class="app-body">
+      <AppSidebar
+        :items="NAV_ITEMS"
+        :active="activeTab"
+        :drawer-open="drawerOpen"
+        @navigate="navigate"
       />
-      <MistakesView v-else-if="activeTab === 'mistakes'" />
-      <ProfileView v-else-if="activeTab === 'profile'" />
-      <PlanView v-else-if="activeTab === 'plan'" />
-    </main>
+
+      <!--
+        Scrim behind the drawer. Present in the DOM at every width but
+        only painted below 1024px, so it cannot swallow clicks on a wide
+        screen where the sidebar is docked rather than floating.
+      -->
+      <div
+        class="drawer-scrim"
+        :class="{ visible: drawerOpen }"
+        aria-hidden="true"
+        @click="drawerOpen = false"
+      />
+
+      <main class="app-content">
+        <ProblemListView v-if="activeTab === 'problems'" @select="openProblem" />
+        <Practice
+          v-else-if="activeTab === 'practice'"
+          :problem-id="selectedProblemId"
+          @exit="exitToFreeRun"
+        />
+        <MistakesView v-else-if="activeTab === 'mistakes'" />
+        <ProfileView v-else-if="activeTab === 'profile'" />
+        <PlanView v-else-if="activeTab === 'plan'" />
+      </main>
+    </div>
   </div>
 </template>
 
-<style>
-/* PU-0 note: these styles are intentionally still plain CSS — the visual
- * rewrite happens in PU-7 (app shell). What PU-0 proves is that Tailwind
- * utilities and the --af-* tokens are both live; see the `token-probe`
- * markup in the template. */
-.app {
+<style scoped>
+.app-shell {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  /* PU-6: the shell owns the viewport now, so it must not scroll itself
+   * — each page keeps its own scroll container. */
+  overflow: hidden;
+  background: var(--af-canvas);
 }
 
-.tab-bar {
+.app-body {
   display: flex;
-  background: var(--af-surface);
-  padding: 0 16px;
-  border-bottom: 1px solid var(--af-border);
-  flex-shrink: 0;
-  align-items: center;
-}
-
-.token-probe {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--af-text-muted);
-}
-
-.tab-btn {
-  padding: 12px 24px;
-  font-size: 14px;
-  color: var(--af-text-secondary);
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition:
-    color var(--af-duration-fast) var(--af-ease),
-    border-color var(--af-duration-fast) var(--af-ease);
-}
-
-.tab-btn:hover {
-  color: var(--af-text-primary);
-}
-
-.tab-btn.active {
-  color: var(--af-text-primary);
-  border-bottom-color: var(--af-accent);
-}
-
-.tab-content {
   flex: 1;
   min-height: 0;
+}
+
+/* A flex column so a page can fill it with `height: 100%`. Before PU-6
+ * the pages were direct children of a full-height wrapper and sized
+ * themselves with `100vh`, which no longer works now that the title bar
+ * occupies part of the viewport in the web shell. */
+.app-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
+}
+
+.drawer-scrim {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .drawer-scrim {
+    display: block;
+    position: fixed;
+    /* Below the title bar, matching the drawer (see AppSidebar). Covering
+     * the title bar would put the scrim over the hamburger and make the
+     * drawer impossible to close with the control that opened it. */
+    top: var(--spacing-topbar);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    background: rgb(0 0 0 / 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--af-duration-base) var(--af-ease);
+  }
+
+  .drawer-scrim.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-scrim {
+    transition: none;
+  }
 }
 </style>

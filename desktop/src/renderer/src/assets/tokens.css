@@ -53,6 +53,9 @@
   --spacing-sidebar: 220px;
   --spacing-sidebar-collapsed: 60px;
   --spacing-topbar: 48px;
+  /* PU-6: the practice page's problem statement column. Below 900px the
+   * page stacks vertically and this width stops applying. */
+  --spacing-problem-panel: 360px;
 }
 
 /* ============================================================

@@ -545,7 +545,9 @@ async function runJudge(): Promise<void> {
 .practice {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* PU-6: was 100vh. The app shell owns the viewport now and stacks a title
+   * bar above this view, so the page must fill its container instead. */
+  height: 100%;
   padding: 16px;
   box-sizing: border-box;
   color: #e5e7eb;
@@ -612,12 +614,36 @@ async function runJudge(): Promise<void> {
 }
 
 .problem-panel {
-  width: 360px;
+  width: var(--spacing-problem-panel);
   flex-shrink: 0;
   overflow-y: auto;
   padding: 12px;
   background: #16213e;
   border-radius: 8px;
+}
+
+/* PU-6: below 900px the side-by-side editor + statement no longer fits, so
+ * the two columns stack. The statement keeps a bounded height and scrolls
+ * on its own — letting it size to content would push the editor off-screen.
+ *
+ * Stacked, the page can still be taller than the viewport (the editor has a
+ * 300px floor and a short window is easy to reach), so the page itself
+ * becomes the scroll container. Side by side it must not: there the panels
+ * scroll internally and the editor is meant to fill the leftover height. */
+@media (max-width: 899px) {
+  .practice {
+    overflow-y: auto;
+  }
+
+  .practice-body {
+    flex-direction: column;
+  }
+
+  .problem-panel {
+    width: auto;
+    max-height: 40vh;
+    flex-shrink: 0;
+  }
 }
 
 .problem-panel h2 {
