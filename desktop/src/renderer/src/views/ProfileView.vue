@@ -39,7 +39,7 @@ const overallAccuracy = computed<number>(() => {
   return passed / total
 })
 
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   errorMsg.value = ''
   try {

@@ -47,7 +47,7 @@ const filteredEntries = computed<MistakeEntry[]>(() => {
   return entries.value.filter((e) => e.knowledge_tags.includes(selectedTag.value!))
 })
 
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   errorMsg.value = ''
   try {
@@ -59,7 +59,7 @@ async function load() {
   }
 }
 
-async function markReviewed(entry: MistakeEntry) {
+async function markReviewed(entry: MistakeEntry): Promise<void> {
   try {
     const updated = await updateMistake(entry.id, { reviewed: true })
     const idx = entries.value.findIndex((e) => e.id === entry.id)
@@ -69,7 +69,7 @@ async function markReviewed(entry: MistakeEntry) {
   }
 }
 
-async function remove(entry: MistakeEntry) {
+async function remove(entry: MistakeEntry): Promise<void> {
   try {
     await deleteMistake(entry.id)
     entries.value = entries.value.filter((e) => e.id !== entry.id)
@@ -78,7 +78,7 @@ async function remove(entry: MistakeEntry) {
   }
 }
 
-function selectTag(tag: string | null) {
+function selectTag(tag: string | null): void {
   selectedTag.value = tag
 }
 

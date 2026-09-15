@@ -48,7 +48,7 @@ const QUALITY_OPTIONS: { value: number; label: string; color: string }[] = [
 
 const dueCount = computed<number>(() => dueReviews.value.length)
 
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   errorMsg.value = ''
   try {
@@ -74,7 +74,7 @@ async function load() {
   }
 }
 
-async function markQuality(entryId: number, quality: number) {
+async function markQuality(entryId: number, quality: number): Promise<void> {
   try {
     const updated = await recordReview(entryId, quality)
     // Remove the item from the today list (its due_at moved forward).
