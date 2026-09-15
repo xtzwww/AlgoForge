@@ -2,6 +2,8 @@ import './assets/main.css'
 
 import { createApp } from 'vue'
 import App from './App.vue'
+import { router } from './router'
+import { bootstrapSidecarStatus } from './composables/useSidecarStatus'
 import { runtime } from './runtime'
 
 // PU-2: entrance animation, driven by the shell rather than by load.
@@ -14,4 +16,10 @@ runtime.onReveal(() => {
   document.documentElement.classList.add('af-revealed')
 })
 
-createApp(App).mount('#app')
+// PU-7: the first sidecar probe, for the same reason. Under Electron the
+// renderer is loaded *before* the main process publishes the sidecar's
+// port and token, so probing at mount would always fail and leave the
+// app stuck on the error screen. See useSidecarStatus.ts.
+bootstrapSidecarStatus()
+
+createApp(App).use(router).mount('#app')

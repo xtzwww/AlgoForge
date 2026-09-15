@@ -33,17 +33,25 @@
  *   code that has no problem row yet.
  *
  * The mode is re-resolved whenever the prop changes, because the shell
- * keeps this component alive across problem switches only by accident
- * of tab switching — `App.vue` remounts it, but the `watch` also
- * covers a future shell that does not.
+ * keeps this component alive across problem switches only by accident of
+ * routing — `/practice` and `/problems/:id` are different route records,
+ * so the router remounts the page, but the `watch` also covers a shell
+ * that reuses the instance instead.
+ *
+ * PU-7: this page still does not know the router exists. It takes
+ * `problemId` and emits `exit`; `views/ProblemPracticeView.vue` is the
+ * route-level adapter that turns `exit` into a navigation. It also
+ * publishes its title for the topbar's breadcrumb — see the `watch` on
+ * `problemTitle` below.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import OutputPanel from '../components/OutputPanel.vue'
 import { streamJudge, type JudgeEvent, type WsJudgeRequest } from '../api/ws'
 import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
 import { getProblem, getProblemTestCases, type ProblemDetail } from '../api/problems'
 import { getLanguageOptions, pickDefaultLanguage, type LanguageOption } from '../api/languages'
+import { publishPageCrumb } from '../composables/usePageCrumb'
 
 const props = withDefaults(
   defineProps<{
@@ -208,6 +216,27 @@ watch(
     void loadProblem()
   }
 )
+
+/**
+ * PU-7: publish this page's breadcrumb label for the topbar.
+ *
+ * `/problems/:id` carries an id, not a name, and this page is what
+ * fetched the name — so it hands the label to the shell rather than
+ * letting the topbar fetch the same problem a second time. Free-run mode
+ * publishes `null`, which tells the topbar to use the route's own title
+ * (练习). See `composables/usePageCrumb.ts`.
+ *
+ * `immediate` because the first load happens in `onMounted`, and without
+ * it the crumb would stay on the route's generic 题目 until the problem
+ * changed.
+ */
+watch(problemTitle, (title) => publishPageCrumb(isProblemMode.value ? title : null), {
+  immediate: true
+})
+
+// Leaving the page must clear the label, or the next route would inherit
+// a crumb naming a problem it is not showing.
+onUnmounted(() => publishPageCrumb(null))
 
 /**
  * Fetch the language catalogue and pick a default.

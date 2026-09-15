@@ -28,7 +28,8 @@
     "axios": "^1.20.0",
     "echarts": "^6.1.0",
     "monaco-editor": "^0.56.0",
-    "vue-echarts": "^8.3.0"
+    "vue-echarts": "^8.3.0",
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "3.0.0",

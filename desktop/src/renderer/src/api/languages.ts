@@ -1,5 +1,5 @@
 /**
- * Language catalogue client (PU-17).
+ * Language catalogue client (PU-17, extended in PU-7).
  *
  * The list of languages the editor may offer — and which of them this
  * machine can actually build and run — comes from the sidecar's
@@ -18,6 +18,16 @@
  * fetched once and cached for the session: a toolchain cannot appear or
  * disappear while the window is open, and re-fetching on every render
  * would be pure latency.
+ *
+ * PU-7 note — why this module now exposes the whole report and not just
+ * the language array. The shell's status indicator needs `core_ready`,
+ * and the tempting shortcut is to compute it here as
+ * `languages.some(l => l.available)`. That happens to be exactly what
+ * `probe_all()` does today, which is precisely the problem: it is a
+ * second copy of a server-side predicate, free to drift the moment the
+ * sidecar widens its definition of "core" (to include the database, or
+ * the sandbox temp directory). Passing the server's own answer through
+ * is the only version of this that stays true.
  */
 
 import { http } from './http'
@@ -39,34 +49,48 @@ export interface LanguageOption {
   detail: string | null
 }
 
-interface EnvCheckResponse {
+/**
+ * The sidecar's full environment report.
+ *
+ * `core_ready` is the server's verdict on whether the edit → judge loop
+ * can work at all; the shell's status indicator renders it directly.
+ * `database` and `sandbox_tmp` are also present but not consumed yet —
+ * the shell only needs the one flag, and typing the rest invites code
+ * that reads fields nobody has decided the meaning of.
+ */
+export interface EnvReport {
   languages: LanguageOption[]
   core_ready: boolean
 }
 
-let cached: LanguageOption[] | null = null
-let inFlight: Promise<LanguageOption[]> | null = null
+let cached: EnvReport | null = null
+let inFlight: Promise<EnvReport> | null = null
 
 /**
- * Fetch the language catalogue, reusing the previous result if there is
+ * Fetch the environment report, reusing the previous result if there is
  * one.
  *
  * Concurrent callers share a single request, so a component that mounts
  * while the app is still starting up does not trigger a second probe run.
  *
- * @returns Every registered language, in the registry's display order.
+ * A **failed** call caches nothing, which is what makes retrying work
+ * without a cache-busting API: the caller simply calls again. The one
+ * case that would need an explicit reset — re-probing after a *successful*
+ * report — cannot arise, because a toolchain cannot change while the
+ * window is open.
+ *
  * @throws When the sidecar is unreachable. Callers are expected to render
  *   an error state rather than guess a language list — offering languages
  *   we cannot verify would just move the failure to judge time.
  */
-export async function getLanguageOptions(): Promise<LanguageOption[]> {
+export async function getEnvReport(): Promise<EnvReport> {
   if (cached) return cached
   if (inFlight) return inFlight
 
   inFlight = http
-    .get<EnvCheckResponse>('/api/v1/env-check')
+    .get<EnvReport>('/api/v1/env-check')
     .then((res) => {
-      cached = res.data.languages
+      cached = res.data
       return cached
     })
     .finally(() => {
@@ -74,6 +98,17 @@ export async function getLanguageOptions(): Promise<LanguageOption[]> {
     })
 
   return inFlight
+}
+
+/**
+ * The language catalogue alone, for callers that only need to render
+ * pickers. Thin wrapper over {@link getEnvReport} so both share one
+ * request and one cache.
+ *
+ * @returns Every registered language, in the registry's display order.
+ */
+export async function getLanguageOptions(): Promise<LanguageOption[]> {
+  return (await getEnvReport()).languages
 }
 
 /**

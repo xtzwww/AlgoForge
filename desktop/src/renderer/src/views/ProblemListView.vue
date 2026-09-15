@@ -30,15 +30,27 @@
  *   it: the problems are still worth listing without the badge, so the
  *   failure is reported alongside them instead of replacing them.
  *
- * Navigation is an event, not a route: this app has no vue-router (see
- * App.vue). Selecting a problem emits `select`, and the shell switches
- * to the practice tab with that id.
+ * Navigation is a route push (PU-7): selecting a problem goes to
+ * `/problems/:id`, which is what puts the choice in the URL. It stays a
+ * `<button>` rather than becoming a `<RouterLink>` because this view is
+ * not part of the C-group visual rewrite — turning it into an anchor
+ * would mean restyling `.practice-btn` here, which is PU-9's territory.
  */
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { listProblems, type ProblemSummary } from '../api/problems'
 import { fetchVerdictsByProblem, type ProblemVerdict } from '../api/submissions'
 
-const emit = defineEmits<{ (e: 'select', problemId: number): void }>()
+const router = useRouter()
+
+/**
+ * Practise a problem: the id becomes a route param, and the route's
+ * `props` function hands it to the practice page as a number. Free-run
+ * mode is the absence of that param, so there is nothing to clear here.
+ */
+function practice(problemId: number): void {
+  void router.push({ name: 'problem', params: { id: problemId } })
+}
 
 const problems = ref<ProblemSummary[]>([])
 const verdicts = ref<Map<number, ProblemVerdict>>(new Map())
@@ -280,7 +292,7 @@ onMounted(load)
         </div>
 
         <div class="card-actions">
-          <button class="practice-btn" @click="emit('select', p.id)">开始练习</button>
+          <button class="practice-btn" @click="practice(p.id)">开始练习</button>
         </div>
       </article>
     </div>
