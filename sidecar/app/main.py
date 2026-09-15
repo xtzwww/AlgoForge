@@ -32,10 +32,25 @@ app = FastAPI(
 # renderer from file:// / a custom scheme, which sends no Origin header
 # and therefore needs no CORS entry.
 #
+# The web target (PU-5, `npm run dev:web`) reuses the 5173 entry: unlike
+# Electron it is a real page on a real origin, so its requests do carry
+# an Origin header. A LAN deployment must add that origin explicitly —
+# CORS does not support wildcard hosts.
+#
 # Previously this was allow_origins=["*"] with allow_credentials=True,
 # which browsers reject and which exposed the sidecar to any web page
 # the user happened to visit. Origins are now configurable via
 # CORS_ALLOW_ORIGINS.
+#
+# NOTE (known gap, PU-5): CORS is a *browser* rule and is therefore the
+# only thing standing between a network peer and this process — the
+# sidecar does not verify `SIDECAR_TOKEN`. No auth middleware is
+# installed here, and app/api/ws.py ignores the `?token=` parameter the
+# client sends, so a request with no credential at all is served. Since
+# the sidecar compiles and runs submitted code, that makes an exposed
+# sidecar an arbitrary-code-execution service. It is safe today only
+# because it binds to 127.0.0.1. Adding token verification is its own
+# slice; until then, do not bind this to 0.0.0.0.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.resolved_cors_origins,

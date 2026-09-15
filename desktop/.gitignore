@@ -4,3 +4,13 @@ out
 .DS_Store
 .eslintcache
 *.log*
+
+# PU-5: the web target's build output and its local env file.
+# `.env.web` may hold the sidecar token, so only the `.example` is
+# versioned — same rule as `sidecar/.env`.
+dist-web
+.env.web
+
+# electron-vite transpiles electron.vite.config.ts to a timestamped
+# .mjs next to it while loading it. Interrupted builds leave one behind.
+electron.vite.config.*.mjs

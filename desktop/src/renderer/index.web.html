@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AlgoForge</title>
+    <!--
+      Deliberately no Content-Security-Policy meta tag here, unlike
+      index.html.
+
+      index.html carries one because Electron loads the app from a
+      file-like origin where there is no server to send headers. The web
+      build *is* served, so its CSP belongs in the response headers of
+      whatever serves it — and that is also the only place it can name
+      the sidecar's real origin, which this static file cannot know.
+      Reusing index.html's meta tag would pin connect-src to localhost
+      and block the LAN deployment this target exists to allow, while
+      loosening index.html's would weaken the Electron window for the
+      sake of a target it does not serve.
+
+      A deployment must therefore send at least:
+
+        Content-Security-Policy: default-src 'self'; connect-src 'self' <sidecar-origin>
+
+      where <sidecar-origin> matches VITE_SIDECAR_URL, e.g.
+      `http://127.0.0.1:8000` for a local preview.
+    -->
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
