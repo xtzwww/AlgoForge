@@ -15,10 +15,12 @@ P1-18 scope — model + CRUD API only:
   for the SM-2 spaced-repetition loop (S10). P1-18 only seeds defaults;
   the actual schedule is computed in S10.
 
-Fields left to Phase 2 (S2 Agent):
-- ``agent_error_type``: structured label from the LLM (e.g. "边界遗漏")
-- ``agent_suggestion``: the agent's fix hint
-- ``agent_generated_variants``: optional variant problems
+Fields left to later phases:
+- ``agent_generated_variants``: optional variant problems (S7).
+
+P2-4 added ``agent_error_type`` and ``agent_suggestion``. The docstring
+above used to list them as pending; they are now real columns, and the
+migration ``pu_14_agent_analysis_fields`` creates them.
 """
 
 from __future__ import annotations
@@ -55,6 +57,10 @@ class MistakeBookEntry(Base):
             latest reset. S10's SM-2 loop reads this.
         review_count: Number of times the entry has been reviewed.
         last_reviewed_at: Timestamp of the most recent review.
+        agent_error_type: P2-4's structured root-cause label, or None
+            when the entry has not been analysed. See the column comment.
+        agent_suggestion: P2-4's prose analysis (detail + hint + fix), or
+            "" when the entry has not been analysed.
         created_at: When this entry was added to the mistake book.
     """
 
@@ -68,6 +74,26 @@ class MistakeBookEntry(Base):
         Integer, ForeignKey("problems.id"), nullable=False
     )
     error_cause: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: P2-4: the agent's structured root-cause label, from the closed
+    #: taxonomy in ``app/eval_cases.py``. Indexed because P2-21 filters
+    #: the mistake book by it (``GET /mistakes?error_type=overflow``), and
+    #: a LIKE scan over ``error_cause`` would be both slower and unable to
+    #: distinguish "labelled overflow" from "the user wrote the word".
+    #:
+    #: NULL means *not analysed yet* — distinct from an empty string,
+    #: which is what ``error_cause`` uses for "not yet written". The label
+    #: is either a real member of the taxonomy or absent; there is no
+    #: meaningful empty label, so NULL is the honest encoding.
+    agent_error_type: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    #: P2-4: the agent's prose — ``error_detail`` + ``hint`` +
+    #: ``suggested_fix``, joined for display. Stored as one text column
+    #: rather than three because they are always read together (the entry
+    #: is shown as a unit) and never queried individually; splitting them
+    #: would add two columns and a migration each time the prompt gains a
+    #: field.
+    agent_suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
     #: PU-13: digest of (problem_id, language, code) for the submission
     #: that produced this entry. Written only for auto-archived entries,
     #: where it lets a resubmission of the same wrong code be recognised
@@ -102,6 +128,8 @@ class MistakeBookEntry(Base):
             "submission_id": self.submission_id,
             "problem_id": self.problem_id,
             "error_cause": self.error_cause,
+            "agent_error_type": self.agent_error_type,
+            "agent_suggestion": self.agent_suggestion,
             "knowledge_tags": list(self.knowledge_tags or []),
             "reviewed": self.reviewed,
             "review_count": self.review_count,

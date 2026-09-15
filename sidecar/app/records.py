@@ -44,9 +44,29 @@ Archiving is **idempotent per problem and code**. Resubmitting the same
 wrong code would otherwise pile up identical entries, which is noise the
 user has to clean by hand. The dedupe key is (problem, language, code)
 among entries with no ``error_cause`` yet — see
-:func:`_has_open_duplicate`. Once the agent has annotated an entry it is
+:func:`_find_open_duplicate`. Once the agent has annotated an entry it is
 no longer "open" and a fresh identical mistake gets its own row, because
 then the entries differ in what they say.
+
+P2-4: automatic error analysis
+------------------------------
+A filed entry is immediately handed to ``app.agent.analyzer.analyze_error``
+and the result is written back to ``agent_error_type`` /
+``agent_suggestion``. Three points about how that is scheduled:
+
+* Analysis runs **after** the entry is flushed and committed, so a slow
+  provider never holds a database lock for the duration of an HTTP
+  request. The commit after annotation is a second, separate transaction.
+* Failure to analyse is **absorbed**. The entry is still filed with
+  ``agent_error_type = None``, which is the honest "not yet analysed"
+  state and something a later phase can retry. An outage costs the
+  student the analysis, never the record of their mistake.
+* ``error_cause`` is **not** what the agent writes. It stays the user's
+  field, and its emptiness remains the dedupe marker. A consequence
+  worth knowing: an annotated entry therefore stays "open" forever and
+  keeps absorbing resubmissions of the same code. That is the behaviour
+  P2-4 ships, and ``tests/test_agent_analysis_recording.py`` pins it so a
+  future change to the marker has to confront the interaction.
 """
 
 from __future__ import annotations
@@ -164,22 +184,159 @@ def _code_fingerprint(*parts: str) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
-def _has_open_duplicate(session: Session, problem_id: int, fingerprint: str) -> bool:
-    """Is there already an un-annotated mistake for this code?
+def _find_open_duplicate(
+    session: Session, problem_id: int, fingerprint: str
+) -> Optional[MistakeBookEntry]:
+    """Return the existing un-annotated entry for this code, if any.
 
     "Open" means ``error_cause`` is still empty — the state PU-13 leaves
-    an auto-archived entry in. Once the agent fills that in, the entry
-    carries a specific analysis and a later identical failure deserves
-    its own row.
+    an auto-archived entry in. Once the agent annotates an entry it is no
+    longer open, and a later identical failure gets its own row.
+
+    Returns the entry itself rather than a bool because P2-4 annotates
+    whichever entry it ends up with; re-querying it afterwards would be a
+    second round trip for a value already in hand.
     """
     stmt = (
-        select(MistakeBookEntry.id)
+        select(MistakeBookEntry)
         .where(MistakeBookEntry.problem_id == problem_id)
         .where(MistakeBookEntry.error_cause == "")
         .where(MistakeBookEntry.error_cause_fingerprint == fingerprint)
         .limit(1)
     )
-    return session.execute(stmt).first() is not None
+    return session.execute(stmt).scalars().first()
+
+
+def _has_open_duplicate(session: Session, problem_id: int, fingerprint: str) -> bool:
+    """Boolean form of :func:`_find_open_duplicate`.
+
+    Kept as its own function because the question "is this a duplicate?"
+    is asked on its own in tests and reads better than ``is not None``
+    at a call site.
+    """
+    return _find_open_duplicate(session, problem_id, fingerprint) is not None
+
+
+def _assemble_statement(problem: Problem) -> str:
+    """Flatten a :class:`Problem`'s statement fields into one string.
+
+    PU-11 stores a statement as three columns (``description``,
+    ``input_format``, ``output_format``) plus a samples list, because that
+    is how the UI renders it. The agent wants one text block, and it
+    wants the input/output format rules specifically: a large share of
+    the ``io_format_error`` label depends on the model having seen them.
+
+    Empty sections are skipped rather than emitted as blank headings, and
+    the whole thing degrades to "" when the problem has no statement at
+    all — ``analyze_error`` then substitutes its own explicit "题面未提供"
+    note, which is a claim the model can act on.
+    """
+    parts = []
+
+    description = (problem.description or "").strip()
+    if description:
+        parts.append(description)
+
+    input_format = (problem.input_format or "").strip()
+    if input_format:
+        parts.append(f"输入格式：\n{input_format}")
+
+    output_format = (problem.output_format or "").strip()
+    if output_format:
+        parts.append(f"输出格式：\n{output_format}")
+
+    return "\n\n".join(parts)
+
+
+def _analyse_and_annotate(
+    entry: MistakeBookEntry,
+    result: JudgeResult,
+    context: SubmissionContext,
+    statement: str = "",
+) -> None:
+    """Run P2-3's analysis on a failing submission and fill in the entry.
+
+    Runs **after** the entry exists, not before, for two reasons:
+
+    1. ``analyze_error`` makes a network call to a paid API while the
+       student waits. It must not sit inside the transaction that writes
+       the submission — a slow or hanging provider would hold a database
+       lock for the duration.
+    2. The entry's own existence is what the analysis annotates. Creating
+       it first also means that if annotation fails, the mistake is still
+       filed and the entry keeps ``agent_error_type = None``, which is
+       exactly the documented "not yet analysed" state a later phase can
+       retry from.
+
+    The failure case is deliberately silent at this level:
+    ``analyze_error`` never raises for provider problems, and anything
+    it does raise here is a bug that :func:`record_submission`'s outer
+    guard will log rather than let reach the user.
+
+    Args:
+        entry: The (already flushed) mistake-book entry to annotate.
+        result: The verdict, used for the failing case's I/O.
+        context: The submission, for the source and problem id.
+        statement: Problem statement, when the caller has it.
+    """
+    # Imported lazily: this module is imported by the judge routes, and
+    # app.agent pulls in app.llm.gateway which pulls in httpx. Keeping the
+    # import inside the function means a deployment that never reaches
+    # this branch does not pay for importing the LLM stack... and, more
+    # practically, keeps the import graph acyclic while P2-4 is landing.
+    from app.agent.analyzer import analyze_error
+
+    failing = next(
+        (tc for tc in result.test_cases if tc.status != JudgeStatus.AC), None
+    )
+    if failing is None:
+        return
+
+    outcome = analyze_error(
+        code=context.code,
+        stdin=failing.input,
+        expected=failing.expected_output,
+        actual=failing.actual_output,
+        statement=statement,
+        verdict=result.status.value,
+    )
+
+    if not outcome.ok or outcome.result is None:
+        logger.info(
+            "error analysis unavailable for problem %s (%s); "
+            "mistake book entry %s stays unanalysed",
+            context.problem_id,
+            outcome.error,
+            entry.id,
+        )
+        return
+
+    analysis = outcome.result
+    entry.agent_error_type = str(analysis.error_type)
+    entry.agent_suggestion = _format_suggestion(analysis)
+
+
+def _format_suggestion(analysis: object) -> str:
+    """Join the analysis prose into the single text column.
+
+    The three prose fields are always displayed together and never
+    queried individually, so they share one column (see the column
+    comment in ``app/models/mistake_book.py``). Labelled with their
+    Chinese headings so the stored string is still readable when dumped
+    straight into a terminal or a bug report.
+    """
+    detail = getattr(analysis, "error_detail", "") or ""
+    hint = getattr(analysis, "hint", "") or ""
+    fix = getattr(analysis, "suggested_fix", "") or ""
+
+    parts = []
+    if detail:
+        parts.append(f"【错在哪】{detail}")
+    if hint:
+        parts.append(f"【提示】{hint}")
+    if fix:
+        parts.append(f"【怎么改】{fix}")
+    return "\n".join(parts)
 
 
 def _archive_mistake(
@@ -187,25 +344,37 @@ def _archive_mistake(
 ) -> Optional[MistakeBookEntry]:
     """File a mistake-book entry for a wrong submission, if it is new.
 
-    Returns the entry (existing or created), or None when the submission
-    should not be archived.
+    Returns the entry to annotate, or None when the submission should not
+    be archived.
+
+    On a duplicate hit this returns the **existing** open entry rather
+    than None, so P2-4's analysis still runs. That is deliberate: the
+    user resubmitted the same wrong code, which means the earlier
+    analysis either does not exist yet or did not help. Re-analysing
+    costs one API call and may succeed where the previous attempt failed
+    (the entry is still "open" precisely because no analysis landed).
+    Annotating an entry that already carries an analysis is impossible
+    here: such an entry is no longer matched by :func:`_has_open_duplicate`.
     """
     assert submission.problem_id is not None  # caller checks
     fingerprint = _code_fingerprint(
         str(submission.problem_id), submission.language, submission.code
     )
 
-    if _has_open_duplicate(session, submission.problem_id, fingerprint):
+    existing = _find_open_duplicate(session, submission.problem_id, fingerprint)
+    if existing is not None:
         logger.debug(
-            "skipping duplicate mistake for problem %s", submission.problem_id
+            "reusing open mistake entry %s for problem %s",
+            existing.id,
+            submission.problem_id,
         )
-        return None
+        return existing
 
     entry = MistakeBookEntry(
         submission_id=submission.id,
         problem_id=submission.problem_id,
-        # Left empty on purpose: the agent fills this in during S2, and an
-        # empty value is exactly what marks the entry as not yet analysed.
+        # Left empty on purpose: P2-4's agent fills this in, and an empty
+        # value is exactly what marks the entry as not yet analysed.
         error_cause="",
         # Snapshot the tags now, so re-tagging the problem later does not
         # retroactively rewrite this entry's history.
@@ -301,7 +470,19 @@ def _write(
     ):
         problem = session.get(Problem, context.problem_id)
         if problem is not None:
-            _archive_mistake(session, submission, problem)
+            entry = _archive_mistake(session, submission, problem)
+            if entry is not None:
+                # Commit the submission and the entry *before* the
+                # analysis call. P2-4's analysis is a network round trip
+                # to a paid API; holding this transaction open for its
+                # duration would keep a database lock for as long as the
+                # provider takes to answer.
+                session.commit()
+                _analyse_and_annotate(
+                    entry, result, context, _assemble_statement(problem)
+                )
+                session.commit()
+                return submission.id
 
     session.commit()
     return submission.id
