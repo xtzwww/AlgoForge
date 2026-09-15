@@ -8,14 +8,10 @@
  */
 
 import type { TestCaseIn } from './judge'
+import { runtime } from '../runtime'
 
 export type JudgeEventType =
-  | 'compile_start'
-  | 'compile_done'
-  | 'case_start'
-  | 'case_done'
-  | 'judge_done'
-  | 'judge_error'
+  'compile_start' | 'compile_done' | 'case_start' | 'case_done' | 'judge_done' | 'judge_error'
 
 export interface JudgeEvent {
   type: JudgeEventType
@@ -79,7 +75,7 @@ export function streamJudgeProblem(
   code: string,
   problemId: number,
   onEvent: (event: JudgeEvent) => void,
-  opts?: { language?: string; timeLimit?: number; memLimitMb?: number },
+  opts?: { language?: string; timeLimit?: number; memLimitMb?: number }
 ): Promise<JudgeEvent> {
   const req: WsJudgeRequest = { code, problem_id: problemId }
   if (opts?.language !== undefined) req.language = opts.language
@@ -95,7 +91,7 @@ export function streamJudgeCases(
   code: string,
   testCases: TestCaseIn[],
   onEvent: (event: JudgeEvent) => void,
-  opts?: { language?: string; timeLimit?: number; memLimitMb?: number },
+  opts?: { language?: string; timeLimit?: number; memLimitMb?: number }
 ): Promise<JudgeEvent> {
   const req: WsJudgeRequest = { code, test_cases: testCases }
   if (opts?.language !== undefined) req.language = opts.language
@@ -110,15 +106,15 @@ export function streamJudgeCases(
  * `judge_done` or `judge_error` event arrives.
  *
  * The WS URL is derived from the sidecar base URL (http→ws / https→wss)
- * fetched via `window.algoforge.sidecar.getInfo()`. The auth token is
- * passed as a query param since WebSocket cannot set Authorization
- * headers from the renderer.
+ * obtained from the active {@link runtime}. The auth token is passed as
+ * a query param since WebSocket cannot set Authorization headers from
+ * the renderer.
  */
 export async function streamJudge(
   req: WsJudgeRequest,
-  onEvent: (event: JudgeEvent) => void,
+  onEvent: (event: JudgeEvent) => void
 ): Promise<JudgeEvent> {
-  const info = await window.algoforge.sidecar.getInfo()
+  const info = await runtime.getSidecarInfo()
   if (!info) {
     throw new Error('Sidecar info not available. Is the sidecar running?')
   }

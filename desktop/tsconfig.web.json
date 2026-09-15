@@ -12,6 +12,9 @@
     "paths": {
       "@renderer/*": [
         "src/renderer/src/*"
+      ],
+      "@runtime-impl": [
+        "src/renderer/src/runtime/electron.ts"
       ]
     }
   }

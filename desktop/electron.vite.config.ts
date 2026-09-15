@@ -20,7 +20,13 @@ export default defineConfig({
   renderer: {
     resolve: {
       alias: {
-        '@renderer': resolve('src/renderer/src')
+        '@renderer': resolve('src/renderer/src'),
+        // PU-4: the runtime implementation is picked here, at build time.
+        // The web build (`vite.config.web.ts`) aliases the same specifier
+        // to `./web`, which is what keeps `window.algoforge` out of the
+        // browser bundle. See `runtime/index.ts` for why this is an alias
+        // rather than a run-time check.
+        '@runtime-impl': resolve('src/renderer/src/runtime/electron.ts')
       }
     },
     // PU-0: Tailwind v4 (CSS-first config — tokens live in assets/tokens.css,
