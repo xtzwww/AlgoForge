@@ -1,0 +1,66 @@
+id: p006-gcd
+title: 最大公约数
+knowledge_tags:
+  - 循环
+  - 数论
+  - 辗转相除
+difficulty: easy
+source: 经典练习题
+description: |
+  给定两个正整数 $a$ 和 $b$，求它们的最大公约数（GCD）。
+
+  **输入格式**
+
+  一行，两个整数 $a$ 和 $b$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示 $a$ 和 $b$ 的最大公约数。
+
+  **数据范围**
+
+  $1 \le a, b \le 10^9$
+input_format: 一行两个整数 a、b。
+output_format: 一行一个整数，a 与 b 的最大公约数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "12 18\n"
+    expected_output: "6\n"
+    is_sample: true
+  - input: "7 13\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "1 1\n"
+    expected_output: "1\n"
+  - input: "100 100\n"
+    expected_output: "100\n"
+  - input: "1 1000000000\n"
+    expected_output: "1\n"
+  - input: "1000000000 999999999\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  long long gcd(long long a, long long b) {
+      while (b != 0) {
+          long long t = a % b;
+          a = b;
+          b = t;
+      }
+      return a;
+  }
+  int main() {
+      long long a, b;
+      cin >> a >> b;
+      cout << gcd(a, b) << endl;
+      return 0;
+  }
+eval_notes: |
+  常见错误是用枚举法从 1 到 min(a, b) 找公约数，
+  在 a、b 达到 1e9 时超时。错因标签：complexity / TLE。
+  另一类错误是辗转相除循环条件写成 `b > 1`，
+  在 b 恰好为 1 时提前退出，`7 13` 输出 7 而非 1。
+  错因标签：boundary_condition。

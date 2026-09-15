@@ -1,0 +1,82 @@
+id: p017-zero-one-knapsack
+title: 01 背包
+knowledge_tags:
+  - 动态规划
+  - 背包问题
+difficulty: hard
+source: 经典算法题
+description: |
+  有 $n$ 件物品和一个容量为 $W$ 的背包。第 $i$ 件物品的重量为
+  $w_i$，价值为 $v_i$，每件物品**最多只能取一次**。
+
+  求在总重量不超过 $W$ 的前提下，能装入背包的物品的最大总价值。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $W$，以空格分隔。
+  接下来 $n$ 行，每行两个整数 $w_i$ 和 $v_i$。
+
+  **输出格式**
+
+  一行，一个整数，表示最大总价值。
+
+  **数据范围**
+
+  $1 \le n \le 1000$，$0 \le W \le 1000$，
+  $1 \le w_i \le 1000$，$0 \le v_i \le 10^6$
+input_format: 第一行 n 和 W，接下来 n 行每行 w 和 v。
+output_format: 一行一个整数，最大总价值。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 10\n5 10\n4 40\n6 30\n"
+    expected_output: "70\n"
+    is_sample: true
+  - input: "1 5\n6 100\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "1 5\n5 7\n"
+    expected_output: "7\n"
+  - input: "4 4\n1 1\n2 2\n3 3\n4 4\n"
+    expected_output: "4\n"
+  - input: "2 3\n2 5\n2 4\n"
+    expected_output: "5\n"
+  - input: "2 6\n3 7\n4 9\n"
+    expected_output: "9\n"
+  - input: "3 5\n3 30\n4 50\n5 60\n"
+    expected_output: "60\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int n, W;
+      cin >> n >> W;
+      vector<long long> dp(W + 1, 0);
+      for (int i = 0; i < n; ++i) {
+          int w;
+          long long v;
+          cin >> w >> v;
+          // Walk the capacity downwards so each item is used at most
+          // once: dp[c - w] must not already include this item.
+          for (int c = W; c >= w; --c) {
+              dp[c] = max(dp[c], dp[c - w] + v);
+          }
+      }
+      cout << dp[W] << endl;
+      return 0;
+  }
+eval_notes: |
+  本题最重要的错误是**背包容量的遍历方向**：写成从小到大的
+  升序遍历会让同一件物品被重复使用，等价于完全背包。
+  容器容量必须容得下两件物品才会暴露：`2 3 / 2 5 / 2 4`
+  容量只有 3，装不下两件，两种写法都得 5，看不出差异；
+  而 `2 6 / 3 7 / 4 9` 容量为 6，升序写法会重复取 (3,7)
+  得到 14，正确结果是 9。错因标签：wrong_traversal / loop_direction。
+  另一类错误是二维 dp 忘记从上一行转移。
+  第三类是价值用 `int` 存储，n = 1000 且 v = 1e6 时总和到 1e9
+  仍在 int 内，但若数据规模放大则溢出，属于潜在风险。
+  错因标签：overflow。

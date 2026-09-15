@@ -54,3 +54,16 @@ ignore = [
 
 [lint.isort]
 known-first-party = ["app"]
+
+# The standalone scripts under tools/ must put sidecar/ on sys.path before
+# they can import `app`, so their `app` imports necessarily follow an
+# executable statement. isort reads that as an unsorted block (I001) and
+# its suggested "fix" would hoist the imports above the sys.path insert,
+# breaking the script. E402 is suppressed on those lines individually; I001
+# cannot be, so it is suppressed per-file here.
+#
+# Only the two rules the pattern requires are waived — everything else
+# still applies, so a genuinely unsorted import inside one of these
+# scripts is still reported.
+[lint.per-file-ignores]
+"tools/*.py" = ["E402", "I001"]

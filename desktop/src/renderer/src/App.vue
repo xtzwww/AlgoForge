@@ -1,20 +1,54 @@
 <script setup lang="ts">
 /**
- * App shell — holds a simple tab switcher between the four main
- * pages. P1-21 added mistakes, P1-22 added profile, P1-23 adds plan.
+ * App shell — holds a simple tab switcher between the five main
+ * pages. P1-21 added mistakes, P1-22 added profile, P1-23 adds plan,
+ * PU-14 adds the problem catalogue.
  *
  * vue-router is intentionally avoided (single-user desktop app, few
  * pages) — a `ref<Tab>` is enough.
+ *
+ * PU-14 note: the catalogue's "which problem am I practising" is what
+ * a router would carry as a `problemId` route param. Without one, this
+ * shell owns it as `selectedProblemId` and hands it to Practice as a
+ * prop, so picking a problem switches tabs *and* loads the problem in
+ * one interaction.
  */
 import { onMounted, ref } from 'vue'
 import Practice from './views/Practice.vue'
 import MistakesView from './views/MistakesView.vue'
 import ProfileView from './views/ProfileView.vue'
 import PlanView from './views/PlanView.vue'
+import ProblemListView from './views/ProblemListView.vue'
 import { initHttpClient } from './api/http'
 
-type Tab = 'practice' | 'mistakes' | 'profile' | 'plan'
+type Tab = 'practice' | 'problems' | 'mistakes' | 'profile' | 'plan'
 const activeTab = ref<Tab>('practice')
+
+/**
+ * The problem Practice is pointed at, or null for free-run mode.
+ *
+ * Owned here rather than in Practice so that returning to the practice
+ * tab by clicking its button shows the same problem the user was on
+ * (the tab is a `v-if`, so Practice is unmounted and remounted on every
+ * switch — local state would not survive).
+ */
+const selectedProblemId = ref<number | null>(null)
+
+/**
+ * Practise a problem: remember it and move to the practice tab.
+ *
+ * The catalogue's `select` event carries the id; App is what knows
+ * both halves of "go to the editor for this problem".
+ */
+function openProblem(problemId: number): void {
+  selectedProblemId.value = problemId
+  activeTab.value = 'practice'
+}
+
+/** Clear the picked problem, dropping Practice back to free-run mode. */
+function exitToFreeRun(): void {
+  selectedProblemId.value = null
+}
 
 onMounted(async () => {
   try {
@@ -38,6 +72,13 @@ onMounted(async () => {
       </button>
       <button
         class="tab-btn"
+        :class="{ active: activeTab === 'problems' }"
+        @click="activeTab = 'problems'"
+      >
+        题库
+      </button>
+      <button
+        class="tab-btn"
         :class="{ active: activeTab === 'mistakes' }"
         @click="activeTab = 'mistakes'"
       >
@@ -50,11 +91,7 @@ onMounted(async () => {
       >
         画像
       </button>
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'plan' }"
-        @click="activeTab = 'plan'"
-      >
+      <button class="tab-btn" :class="{ active: activeTab === 'plan' }" @click="activeTab = 'plan'">
         复习
       </button>
       <!-- PU-0 probe: Tailwind utilities (bg-af-*, text-af-*) must render here.
@@ -64,7 +101,12 @@ onMounted(async () => {
       </span>
     </nav>
     <main class="tab-content">
-      <Practice v-if="activeTab === 'practice'" />
+      <ProblemListView v-if="activeTab === 'problems'" @select="openProblem" />
+      <Practice
+        v-else-if="activeTab === 'practice'"
+        :problem-id="selectedProblemId"
+        @exit="exitToFreeRun"
+      />
       <MistakesView v-else-if="activeTab === 'mistakes'" />
       <ProfileView v-else-if="activeTab === 'profile'" />
       <PlanView v-else-if="activeTab === 'plan'" />

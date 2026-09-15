@@ -1,0 +1,75 @@
+id: p020-hanoi
+title: 汉诺塔移动步骤
+knowledge_tags:
+  - 递归
+  - 分治
+difficulty: medium
+source: 经典算法题
+description: |
+  有三个柱子，编号为 A、B、C。柱子 A 上从下到上叠放着 $n$ 个大小
+  递减的圆盘。要求把全部圆盘从 A 柱移动到 C 柱。
+
+  移动规则：
+  1. 每次只能移动一个圆盘；
+  2. 大盘不能压在小盘之上。
+
+  请输出移动的完整步骤。
+
+  **输入格式**
+
+  一行，一个正整数 $n$。
+
+  **输出格式**
+
+  第一行输出最少移动次数。
+  接下来输出每一步，格式为 `X->Y`，表示把柱子 X 最上面的圆盘
+  移到柱子 Y（X、Y 取自 A、B、C）。
+
+  **数据范围**
+
+  $1 \le n \le 20$
+input_format: 一行一个正整数 n。
+output_format: 第一行最少移动次数，接下来每行一步，格式 X->Y。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "2\n"
+    expected_output: "3\nA->B\nA->C\nB->C\n"
+    is_sample: true
+  - input: "1\n"
+    expected_output: "1\nA->C\n"
+    is_sample: true
+  - input: "3\n"
+    expected_output: "7\nA->C\nA->B\nC->B\nA->C\nB->A\nB->C\nA->C\n"
+  - input: "4\n"
+    expected_output: "15\nA->B\nA->C\nB->C\nA->B\nC->A\nC->B\nA->B\nA->C\nB->C\nB->A\nC->A\nB->C\nA->B\nA->C\nB->C\n"
+  - input: "5\n"
+    expected_output: "31\nA->C\nA->B\nC->B\nA->C\nB->A\nB->C\nA->C\nA->B\nC->B\nC->A\nB->A\nC->B\nA->C\nA->B\nC->B\nA->C\nB->A\nB->C\nA->C\nB->A\nC->B\nC->A\nB->A\nB->C\nA->C\nA->B\nC->B\nA->C\nB->A\nB->C\nA->C\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  void hanoi(int n, char from, char to, char via) {
+      if (n == 0) return;
+      hanoi(n - 1, from, via, to);
+      cout << from << "->" << to << "\n";
+      hanoi(n - 1, via, to, from);
+  }
+  int main() {
+      int n;
+      cin >> n;
+      cout << ((1 << n) - 1) << "\n";
+      hanoi(n, 'A', 'C', 'B');
+      return 0;
+  }
+eval_notes: |
+  三类典型错误。
+  一是递归参数顺序写错：把基准情形与递归情形的
+  from / to / via 传反，输出步骤顺序错乱。
+  错因标签：recursion_parameter_order。
+  二是最少移动次数用 `1 << n` 而非 `(1 << n) - 1`。
+  错因标签：off_by_one。
+  三是 n = 20 时用 `int` 存 2^20 - 1 = 1048575 尚未溢出，
+  但若改为 n = 31 则溢出，属于潜在风险。错因标签：overflow。
+  四是输出格式忘了换行或用了空格分隔。错因标签：output_format。

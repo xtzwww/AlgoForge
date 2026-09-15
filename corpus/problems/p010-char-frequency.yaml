@@ -1,0 +1,67 @@
+id: p010-char-frequency
+title: 统计字符出现次数
+knowledge_tags:
+  - 字符串
+  - 哈希表
+  - 计数
+difficulty: medium
+source: 经典练习题
+description: |
+  给定一个只包含小写字母的字符串 $s$ 和一个目标字符 $c$，
+  统计 $c$ 在 $s$ 中出现的次数。
+
+  **输入格式**
+
+  第一行一个字符串 $s$。
+  第二行一个字符 $c$。
+
+  **输出格式**
+
+  一行，一个整数，表示 $c$ 在 $s$ 中出现的次数。
+
+  **数据范围**
+
+  $1 \le |s| \le 10^5$，$s$ 仅由小写字母组成
+input_format: 第一行字符串 s，第二行目标字符 c。
+output_format: 一行一个整数，c 在 s 中的出现次数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "hello\na\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "banana\na\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "a\na\n"
+    expected_output: "1\n"
+  - input: "abc\nz\n"
+    expected_output: "0\n"
+  - input: "aaaaa\nb\n"
+    expected_output: "0\n"
+  - input: "mississippi\ns\n"
+    expected_output: "4\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  using namespace std;
+  int main() {
+      string s;
+      char c;
+      cin >> s >> c;
+      int count = 0;
+      for (char ch : s) {
+          if (ch == c) count++;
+      }
+      cout << count << endl;
+      return 0;
+  }
+eval_notes: |
+  一类常见错误是用 `cin >> c` 读字符，但输入第二行形如 `a\n`，
+  用 `>>` 读单个 char 时前导空白会被跳过，本身没问题；
+  若改用 `getline(cin, s)` 读第二行则会拿到空串或残留换行，
+  导致结果恒为 0。错因标签：input_handling / mixed_io。
+  另一类错误是循环里用 `int` 下标与 `char` 比较却做了隐式转换，
+  例如把字符先转成 int 再比较。错因标签：type_mismatch。

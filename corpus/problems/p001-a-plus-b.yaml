@@ -1,0 +1,55 @@
+id: p001-a-plus-b
+title: A + B 问题
+knowledge_tags:
+  - 基础语法
+  - 输入输出
+difficulty: easy
+source: 经典入门题
+description: |
+  输入两个整数 $a$ 和 $b$，输出它们的和。
+
+  **输入格式**
+
+  一行，两个整数 $a$ 和 $b$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示 $a + b$。
+
+  **数据范围**
+
+  $-10^9 \le a, b \le 10^9$
+input_format: 一行两个整数 a 和 b。
+output_format: 一行一个整数，a + b。
+time_limit: 2.0
+memory_limit: 256
+
+# 展示用例（is_sample: true）会同步写入 Problem.samples，
+# 隐藏用例只参与判题，见 docs/PHASE-UX.md 的隐藏用例机制。
+test_cases:
+  - input: "1 2\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "-5 7\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "0 0\n"
+    expected_output: "0\n"
+  - input: "1000000000 1000000000\n"
+    expected_output: "2000000000\n"
+  - input: "1000000000 -1000000000\n"
+    expected_output: "0\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      long long a, b;
+      cin >> a >> b;
+      cout << a + b << endl;
+      return 0;
+  }
+eval_notes: |
+  典型错误是把 a、b 声明为 int。两数各为 1e9 时和达到 2e9，
+  超出 32 位有符号 int 的最大值 2147483647，会溢出为负数。
+  错因标签：data_range / overflow。

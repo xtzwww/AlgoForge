@@ -1,0 +1,91 @@
+id: p019-connected-components
+title: 连通块计数
+knowledge_tags:
+  - 图论
+  - 深度优先搜索
+  - 并查集
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个 $n \times m$ 的网格，每个格子是陆地（`1`）或水域（`0`）。
+  上下左右相邻的陆地属于同一个连通块（斜对角不算相邻）。
+
+  求网格中连通块的个数。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$。
+  接下来 $n$ 行，每行 $m$ 个字符，由 `0` 和 `1` 组成。
+
+  **输出格式**
+
+  一行，一个整数，表示连通块的个数。
+
+  **数据范围**
+
+  $1 \le n, m \le 100$
+input_format: 第一行 n 和 m，接下来 n 行每行 m 个 0/1 字符。
+output_format: 一行一个整数，连通块个数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 3\n110\n010\n001\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "1 1\n0\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "2 2\n11\n11\n"
+    expected_output: "1\n"
+  - input: "3 3\n101\n010\n101\n"
+    expected_output: "5\n"
+  - input: "2 3\n101\n101\n"
+    expected_output: "2\n"
+  - input: "1 5\n11111\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <string>
+  using namespace std;
+  int n, m;
+  vector<string> g;
+  vector<vector<bool>> seen;
+  void dfs(int x, int y) {
+      if (x < 0 || x >= n || y < 0 || y >= m) return;
+      if (seen[x][y] || g[x][y] != '1') return;
+      seen[x][y] = true;
+      dfs(x + 1, y);
+      dfs(x - 1, y);
+      dfs(x, y + 1);
+      dfs(x, y - 1);
+  }
+  int main() {
+      cin >> n >> m;
+      g.resize(n);
+      for (int i = 0; i < n; ++i) cin >> g[i];
+      seen.assign(n, vector<bool>(m, false));
+      int count = 0;
+      for (int i = 0; i < n; ++i) {
+          for (int j = 0; j < m; ++j) {
+              if (g[i][j] == '1' && !seen[i][j]) {
+                  count++;
+                  dfs(i, j);
+              }
+          }
+      }
+      cout << count << endl;
+      return 0;
+  }
+eval_notes: |
+  两类典型错误。
+  一是把斜对角也算作相邻（搜索时用了 8 个方向），
+  在 `3 3 / 101 / 010 / 101` 上会得到 1 而非 5。
+  错因标签：condition_too_broad。
+  二是忘了标记已访问，同一格被反复入栈导致超时或栈溢出。
+  错因标签：infinite_recursion / missing_visited。
+  三是递归深度在 100x100 全 1 网格下达到 1 万层，
+  在某些环境下爆栈，稳健写法应改用显式栈或并查集。
+  错因标签：stack_overflow。

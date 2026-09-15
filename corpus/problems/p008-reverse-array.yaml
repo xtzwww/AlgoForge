@@ -1,0 +1,64 @@
+id: p008-reverse-array
+title: 数组逆序输出
+knowledge_tags:
+  - 数组
+  - 循环
+difficulty: easy
+source: 经典练习题
+description: |
+  给定一个长度为 $n$ 的整数数组，将它逆序后输出。
+
+  **输入格式**
+
+  第一行一个整数 $n$，表示数组长度。
+  第二行 $n$ 个整数，以空格分隔。
+
+  **输出格式**
+
+  一行 $n$ 个整数，为原数组的逆序，以空格分隔。
+
+  **数据范围**
+
+  $1 \le n \le 1000$，数组元素绝对值不超过 $10^9$
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行 n 个整数，逆序排列。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5\n1 2 3 4 5\n"
+    expected_output: "5 4 3 2 1\n"
+    is_sample: true
+  - input: "1\n42\n"
+    expected_output: "42\n"
+    is_sample: true
+  - input: "3\n-1 0 1\n"
+    expected_output: "1 0 -1\n"
+  - input: "4\n7 7 7 7\n"
+    expected_output: "7 7 7 7\n"
+  - input: "6\n1000000000 -1000000000 0 0 5 -5\n"
+    expected_output: "-5 5 0 0 -1000000000 1000000000\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      for (int i = n - 1; i >= 0; --i) {
+          cout << a[i];
+          if (i > 0) cout << " ";
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  最常见的是输出多余空格或缺少空格。
+  写成循环里每次都输出空格会得到行尾空格，多数判题器容忍，
+  但写成 `cout << a[i] << " "` 后在 n = 1 时输出 `42 `，
+  若判题器严格比较则会 WA。错因标签：output_format。
+  另一类错误是循环写成 `i >= 0` 却用 `int` 且在 i = 0 后继续，
+  或用 `i > 0` 导致漏掉下标 0 的元素。错因标签：off_by_one。

@@ -1,0 +1,69 @@
+id: p009-palindrome-string
+title: 回文串判断
+knowledge_tags:
+  - 字符串
+  - 双指针
+difficulty: easy
+source: 经典练习题
+description: |
+  给定一个只包含小写字母的字符串 $s$，判断它是否为回文串。
+
+  回文串是指正着读和倒着读都一样的字符串。
+
+  **输入格式**
+
+  一行，一个字符串 $s$（不含空格）。
+
+  **输出格式**
+
+  如果 $s$ 是回文串，输出 `YES`；否则输出 `NO`。
+
+  **数据范围**
+
+  $1 \le |s| \le 1000$，$s$ 仅由小写字母组成
+input_format: 一行一个不含空格的小写字母字符串。
+output_format: 回文输出 YES，否则输出 NO。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "aba\n"
+    expected_output: "YES\n"
+    is_sample: true
+  - input: "abc\n"
+    expected_output: "NO\n"
+    is_sample: true
+  - input: "a\n"
+    expected_output: "YES\n"
+  - input: "aa\n"
+    expected_output: "YES\n"
+  - input: "abccba\n"
+    expected_output: "YES\n"
+  - input: "abca\n"
+    expected_output: "NO\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  using namespace std;
+  int main() {
+      string s;
+      cin >> s;
+      int n = s.size();
+      bool ok = true;
+      for (int i = 0; i < n / 2; ++i) {
+          if (s[i] != s[n - 1 - i]) {
+              ok = false;
+              break;
+          }
+      }
+      cout << (ok ? "YES" : "NO") << endl;
+      return 0;
+  }
+eval_notes: |
+  常见错误是循环边界写成 `i <= n / 2`。当 n 为奇数时，
+  中间那个字符与自己比较其实不影响结果，所以这类错误
+  在 `aba` 上碰巧正确；但在 n 为偶数时会把 s[n/2] 与
+  s[n/2 - 1] 比较，可能误判。错因标签：off_by_one / boundary_condition。
+  另一类错误是直接反转字符串后比较却忘了处理末尾换行，
+  读出带 `\n` 的字符串。错因标签：input_handling。

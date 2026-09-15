@@ -1,0 +1,76 @@
+id: p015-climbing-stairs
+title: 爬楼梯
+knowledge_tags:
+  - 动态规划
+  - 递推
+difficulty: easy
+source: 经典算法题
+description: |
+  楼梯共有 $n$ 级台阶。每次可以爬 1 级或 2 级。
+
+  求爬到第 $n$ 级共有多少种不同的方法。
+
+  **输入格式**
+
+  一行，一个正整数 $n$。
+
+  **输出格式**
+
+  一行，一个整数，表示爬到第 $n$ 级的方法数。
+
+  **数据范围**
+
+  $1 \le n \le 90$
+
+  **提示**
+
+  结果可能超出 32 位整数范围，请使用 `long long`。
+input_format: 一行一个正整数 n。
+output_format: 一行一个整数，方法数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "2\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "3\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "1\n"
+    expected_output: "1\n"
+  - input: "4\n"
+    expected_output: "5\n"
+  - input: "5\n"
+    expected_output: "8\n"
+  - input: "90\n"
+    expected_output: "4660046610375530309\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      if (n == 1) {
+          cout << 1 << endl;
+          return 0;
+      }
+      long long prev2 = 1;  // ways to reach step 1
+      long long prev1 = 2;  // ways to reach step 2
+      for (int i = 3; i <= n; ++i) {
+          long long cur = prev1 + prev2;
+          prev2 = prev1;
+          prev1 = cur;
+      }
+      cout << prev1 << endl;
+      return 0;
+  }
+eval_notes: |
+  三类典型错误。
+  一是递推边界写错：把 dp[0] 设为 1 之外还额外设了 dp[1] = 0，
+  于是 n = 1 时输出 0。错因标签：boundary_condition。
+  二是用 `int` 存结果，n = 46 起溢出为负数。
+  错因标签：overflow。用例 n = 90 是暴露点。
+  三是用朴素递归实现，n = 90 时指数级超时。
+  错因标签：complexity / TLE。

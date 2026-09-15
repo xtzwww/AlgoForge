@@ -1,0 +1,61 @@
+id: p002-leap-year
+title: 闰年判断
+knowledge_tags:
+  - 基础语法
+  - 条件分支
+difficulty: easy
+source: 经典入门题
+description: |
+  给定一个年份 $y$，判断它是否为闰年。
+
+  闰年的判定规则是：能被 4 整除且不能被 100 整除，**或者**能被 400
+  整除。
+
+  **输入格式**
+
+  一行，一个整数 $y$，表示年份。
+
+  **输出格式**
+
+  如果 $y$ 是闰年，输出 `YES`；否则输出 `NO`。
+
+  **数据范围**
+
+  $1 \le y \le 9999$
+input_format: 一行一个整数 y。
+output_format: 闰年输出 YES，否则输出 NO。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "2024\n"
+    expected_output: "YES\n"
+    is_sample: true
+  - input: "2023\n"
+    expected_output: "NO\n"
+    is_sample: true
+  - input: "1900\n"
+    expected_output: "NO\n"
+  - input: "2000\n"
+    expected_output: "YES\n"
+  - input: "4\n"
+    expected_output: "YES\n"
+  - input: "1\n"
+    expected_output: "NO\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int y;
+      cin >> y;
+      bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+      cout << (leap ? "YES" : "NO") << endl;
+      return 0;
+  }
+eval_notes: |
+  最常见的错误是只写了 `y % 4 == 0`，漏掉整百年份的特殊规则，
+  于是 1900 被判为闰年。这类错误用 1900 这个隐藏用例暴露，
+  而 2024 这类普通年份碰巧正确。
+  错因标签：boundary_condition / missing_case。
+  第二类错误是把 `% 100 != 0` 写成 `% 100 == 0`，条件方向写反。

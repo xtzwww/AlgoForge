@@ -1,0 +1,69 @@
+id: p007-chicken-rabbit
+title: 鸡兔同笼
+knowledge_tags:
+  - 循环
+  - 枚举
+  - 数学建模
+difficulty: easy
+source: 经典数学题
+description: |
+  笼子里有若干只鸡和兔。从上面数有 $h$ 个头，从下面数有 $f$ 只脚。
+  已知每只鸡有 2 只脚，每只兔有 4 只脚。
+
+  求笼中各有多少只鸡和兔。
+
+  **输入格式**
+
+  一行，两个整数 $h$ 和 $f$，分别表示头和脚的数目。
+
+  **输出格式**
+
+  一行两个整数，鸡的只数与兔的只数，以空格分隔。
+  如果无解，输出 `No solution`。
+
+  **数据范围**
+
+  $0 \le h \le 1000$，$0 \le f \le 4000$
+input_format: 一行两个整数 h、f。
+output_format: 有解输出鸡数 兔数，无解输出 No solution。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "10 28\n"
+    expected_output: "6 4\n"
+    is_sample: true
+  - input: "5 14\n"
+    expected_output: "3 2\n"
+    is_sample: true
+  - input: "1 4\n"
+    expected_output: "0 1\n"
+  - input: "1 3\n"
+    expected_output: "No solution\n"
+  - input: "0 0\n"
+    expected_output: "0 0\n"
+  - input: "10 40\n"
+    expected_output: "0 10\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int h, f;
+      cin >> h >> f;
+      for (int rabbits = 0; rabbits <= h; ++rabbits) {
+          int chickens = h - rabbits;
+          if (chickens * 2 + rabbits * 4 == f) {
+              cout << chickens << " " << rabbits << endl;
+              return 0;
+          }
+      }
+      cout << "No solution" << endl;
+      return 0;
+  }
+eval_notes: |
+  常见错误是解方程时把鸡兔的脚数写反，
+  即用 `chickens * 4 + rabbits * 2`，得到的结果正好互换。
+  错因标签：modeling / formula。
+  另一类错误是无解时不输出 `No solution` 而是输出 0 或什么都不输出。
+  错因标签：missing_case。`1 3` 是暴露这类错误的边界用例。

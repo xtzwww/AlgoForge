@@ -1,0 +1,91 @@
+id: p018-bfs-shortest-path
+title: 网格最短路（BFS）
+knowledge_tags:
+  - 图论
+  - 广度优先搜索
+  - 最短路
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个 $n \times m$ 的网格，每个格子是空地（`.`）或障碍（`#`）。
+  从左上角 $(1, 1)$ 出发，每次可以向上、下、左、右四个方向移动一格，
+  且只能走进空地。
+
+  求到达右下角 $(n, m)$ 的**最少步数**。如果无法到达，输出 `-1`。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$。
+  接下来 $n$ 行，每行一个长度为 $m$ 的字符串，由 `.` 和 `#` 组成。
+
+  **输出格式**
+
+  一行，一个整数，表示最少步数；无法到达输出 `-1`。
+
+  **数据范围**
+
+  $1 \le n, m \le 100$，保证起点与终点均为空地
+input_format: 第一行 n 和 m，接下来 n 行每行一个 . 和 # 组成的字符串。
+output_format: 一行一个整数，最少步数，无法到达输出 -1。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 3\n...\n...\n...\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "1 1\n.\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "2 2\n.#\n#.\n"
+    expected_output: "-1\n"
+  - input: "1 5\n.....\n"
+    expected_output: "4\n"
+  - input: "3 4\n..#.\n..#.\n....\n"
+    expected_output: "5\n"
+  - input: "2 3\n...\n...\n"
+    expected_output: "3\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <queue>
+  #include <string>
+  using namespace std;
+  int main() {
+      int n, m;
+      cin >> n >> m;
+      vector<string> g(n);
+      for (int i = 0; i < n; ++i) cin >> g[i];
+      vector<vector<int>> dist(n, vector<int>(m, -1));
+      // Start at (0, 0): the number of moves to reach the start is 0.
+      dist[0][0] = 0;
+      queue<pair<int, int>> q;
+      q.push({0, 0});
+      const int dx[4] = {1, -1, 0, 0};
+      const int dy[4] = {0, 0, 1, -1};
+      while (!q.empty()) {
+          auto [x, y] = q.front();
+          q.pop();
+          for (int d = 0; d < 4; ++d) {
+              int nx = x + dx[d];
+              int ny = y + dy[d];
+              if (nx < 0 || nx >= n || ny < 0 || ny >= m) continue;
+              if (g[nx][ny] == '#') continue;
+              if (dist[nx][ny] != -1) continue;
+              dist[nx][ny] = dist[x][y] + 1;
+              q.push({nx, ny});
+          }
+      }
+      cout << dist[n-1][m-1] << endl;
+      return 0;
+  }
+eval_notes: |
+  三类典型错误。
+  一是把起点的 dist 初始化成 1，于是所有答案都多 1，
+  在 `1 1` 这个单格网格上输出 1 而非 0。错因标签：off_by_one。
+  二是用 DFS 求最短路：DFS 只能求一条可行路径，
+  在 `3 4 / ..#. / ..#. / ....` 上会绕远路返回 7 而非 5。
+  错因标签：algorithm_choice / wrong_algorithm。
+  三是起点与终点重合时忘了返回 0（`1 1` 用例）。
+  第四类是用递归 DFS 在 100x100 网格上爆栈。错因标签：stack_overflow。

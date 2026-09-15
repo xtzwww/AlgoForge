@@ -1,0 +1,77 @@
+id: p016-lis
+title: 最长上升子序列
+knowledge_tags:
+  - 动态规划
+  - 序列
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数序列 $a$，求它的**最长严格上升子序列**的长度。
+
+  子序列是从原序列中删除若干（可以为 0 个）元素后，
+  保持剩余元素相对顺序不变所得到的序列。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最长严格上升子序列的长度。
+
+  **数据范围**
+
+  $1 \le n \le 1000$，序列元素绝对值不超过 $10^9$
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，最长严格上升子序列的长度。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "6\n1 7 3 5 9 4\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "1\n5\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "5\n5 4 3 2 1\n"
+    expected_output: "1\n"
+  - input: "4\n1 1 1 1\n"
+    expected_output: "1\n"
+  - input: "5\n1 2 3 4 5\n"
+    expected_output: "5\n"
+  - input: "8\n10 9 2 5 3 7 101 18\n"
+    expected_output: "4\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      vector<int> dp(n, 1);
+      int best = 1;
+      for (int i = 0; i < n; ++i) {
+          for (int j = 0; j < i; ++j) {
+              if (a[j] < a[i] && dp[j] + 1 > dp[i]) {
+                  dp[i] = dp[j] + 1;
+              }
+          }
+          best = max(best, dp[i]);
+      }
+      cout << best << endl;
+      return 0;
+  }
+eval_notes: |
+  最常见的错误是把「严格上升」写成「非递减」，
+  即判断条件用 `a[j] <= a[i]`。在 `1 1 1 1` 上会得到 4 而非 1，
+  在 `1 7 3 5 9 4` 上碰巧也正确，属于典型的边界误判。
+  错因标签：boundary_condition / off_by_one。
+  另一类错误是把 dp 数组初始化为 0，忘了单个元素本身就是
+  长度 1 的子序列，导致全递减序列输出 0。
+  错因标签：initialization。

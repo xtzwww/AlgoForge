@@ -1,0 +1,71 @@
+id: p012-sqrt-integer
+title: 整数平方根
+knowledge_tags:
+  - 二分
+  - 数值计算
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个非负整数 $n$，求 $\lfloor \sqrt{n} \rfloor$，
+  即 $n$ 的整数平方根（向下取整）。
+
+  **输入格式**
+
+  一行，一个整数 $n$。
+
+  **输出格式**
+
+  一行，一个整数，表示 $\lfloor \sqrt{n} \rfloor$。
+
+  **数据范围**
+
+  $0 \le n \le 2^{31} - 1$
+input_format: 一行一个整数 n。
+output_format: 一行一个整数，n 的整数平方根。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "8\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "0\n"
+    expected_output: "0\n"
+  - input: "1\n"
+    expected_output: "1\n"
+  - input: "2147395599\n"
+    expected_output: "46339\n"
+  - input: "2147483647\n"
+    expected_output: "46340\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      long long n;
+      cin >> n;
+      long long lo = 0, hi = 1;
+      while (hi * hi <= n) hi *= 2;
+      while (lo < hi) {
+          long long mid = lo + (hi - lo + 1) / 2;
+          if (mid * mid <= n) {
+              lo = mid;
+          } else {
+              hi = mid - 1;
+          }
+      }
+      cout << lo << endl;
+      return 0;
+  }
+eval_notes: |
+  典型错误是迭代式二分写成 `hi = mid` 而非 `hi = mid - 1`
+  或 `lo = mid + 1` 而非 `lo = mid`，导致死循环或答案偏大。
+  本题在 n = 0 时最容易暴露：若上界从 1 开始且不单独判断，
+  会返回 1。错因标签：boundary_condition / infinite_loop。
+  另一类错误是用 `int` 计算 mid * mid：n 接近 2^31 时
+  mid 约 46340，平方约 2.1e9 仍在 int 范围内，但若 mid 取到
+  46341 则平方溢出为负数，判断 `<= n` 成立，答案偏大。
+  错因标签：overflow。

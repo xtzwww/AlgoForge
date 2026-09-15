@@ -1,0 +1,79 @@
+id: p005-prime-sieve
+title: 区间内素数个数
+knowledge_tags:
+  - 循环
+  - 枚举
+  - 素数筛
+difficulty: medium
+source: 经典练习题
+description: |
+  给定两个整数 $l$ 和 $r$，统计闭区间 $[l, r]$ 内素数的个数。
+
+  素数是大于 1 且只能被 1 和自身整除的整数。
+
+  **输入格式**
+
+  一行，两个整数 $l$ 和 $r$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示区间内素数的个数。
+
+  **数据范围**
+
+  $1 \le l \le r \le 10^5$
+input_format: 一行两个整数 l、r。
+output_format: 一行一个整数，区间内素数个数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "1 10\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "10 20\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "1 1\n"
+    expected_output: "0\n"
+  - input: "2 2\n"
+    expected_output: "1\n"
+  - input: "99990 100000\n"
+    expected_output: "1\n"
+  - input: "1 2\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  int main() {
+      int l, r;
+      cin >> l >> r;
+      if (r < 2) {
+          cout << 0 << endl;
+          return 0;
+      }
+      vector<bool> composite(r + 1, false);
+      composite[0] = composite[1] = true;
+      for (int i = 2; (long long)i * i <= r; ++i) {
+          if (!composite[i]) {
+              for (long long j = (long long)i * i; j <= r; j += i) {
+                  composite[j] = true;
+              }
+          }
+      }
+      int count = 0;
+      for (int i = l; i <= r; ++i) {
+          if (!composite[i]) count++;
+      }
+      cout << count << endl;
+      return 0;
+  }
+eval_notes: |
+  两类典型错误。
+  一是把 1 当作素数：`isPrime(1)` 返回 true，使 `1 10` 输出 5 而非 4。
+  错因标签：boundary_condition。
+  二是试除法写成 `i <= n` 而不是 `i * i <= n`，在 r = 1e5 规模下
+  超时。错因标签：complexity / TLE。
+  另有筛法开数组只开到 r 却用 i*i 做起点导致越界的写法。
