@@ -34,6 +34,7 @@ import math
 import os
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -265,20 +266,40 @@ def run_executable(
             exit_code=-1,
         )
 
-    # Feed stdin up front, then close so the program sees EOF. We do
-    # not use communicate() here because we need to poll memory while
-    # the process runs. For the small outputs a learning-project OJ
-    # produces, pipe-buffer deadlock is not a practical concern.
-    try:
-        if stdin is not None:
-            proc.stdin.write(stdin)
-    except (BrokenPipeError, OSError):
-        # Program may have exited or closed stdin before we finished
-        # writing — not necessarily an error.
-        pass
-    finally:
-        if proc.stdin is not None:
-            proc.stdin.close()
+    # Feed stdin and drain both pipes on a helper thread, while this
+    # thread keeps sampling RSS and enforcing the wall-clock limit.
+    #
+    # This is a deadlock fix, not a convenience. stdout/stderr are OS
+    # pipes, and a pipe holds only about 4 KiB before it is full (4096
+    # bytes on Windows). Waiting for the child to exit without reading
+    # those pipes means a program that prints more than the buffer holds
+    # blocks inside write() and never exits — so the poll loop below runs
+    # until time_limit and kills it, reporting TLE for a program that
+    # finished in milliseconds, with its output truncated at the buffer
+    # boundary. `judge` then compares that fragment and returns the wrong
+    # verdict. Measured 2026-09-16: a program printing 20,000 characters
+    # was judged TLE with 4096 characters of output.
+    #
+    # ``communicate`` is what drains the pipes and feeds stdin, so it is
+    # the right primitive; the earlier code avoided it only because it
+    # blocks, and a thread removes exactly that objection. Note
+    # ``compile_and_run`` (P1-8) was never affected: ``subprocess.run``
+    # with ``capture_output=True`` already drains concurrently.
+    comm: dict[str, object] = {}
+
+    def _drain_pipes() -> None:
+        try:
+            comm["stdout"], comm["stderr"] = proc.communicate(stdin)
+        except (OSError, ValueError) as exc:  # pragma: no cover - defensive
+            # The process is gone and the pipes are unusable. Recording it
+            # rather than letting it vanish on a daemon thread keeps the
+            # caller from seeing silent empty output.
+            comm["error"] = exc
+
+    drainer = threading.Thread(
+        target=_drain_pipes, name="sandbox-pipe-drain", daemon=True
+    )
+    drainer.start()
 
     timed_out = False
     mem_exceeded = False
@@ -345,16 +366,22 @@ def run_executable(
                 mem_exceeded = True
                 break
 
-    # Drain pipes. After kill/wait the process is gone, so this returns
-    # immediately with whatever was buffered.
-    try:
-        stdout, stderr = proc.communicate(timeout=_DRAIN_TIMEOUT)
-    except subprocess.TimeoutExpired:
+    # Wait for the drainer. After kill/wait the process is gone, so its
+    # communicate() returns immediately with whatever was buffered; the
+    # timeout only covers a pipe the OS will not release.
+    drainer.join(_DRAIN_TIMEOUT)
+    if drainer.is_alive():
+        # Belt and braces: the child is already dead, so this cannot
+        # change the verdict, and the thread is a daemon that dies with
+        # the interpreter rather than holding the caller up.
         proc.kill()
-        stdout, stderr = proc.communicate()
+        drainer.join(_DRAIN_TIMEOUT)
 
-    stdout = stdout or ""
-    stderr = stderr or ""
+    stdout = comm.get("stdout") or ""
+    stderr = comm.get("stderr") or ""
+    if not stdout and not stderr and "error" in comm:
+        # Surface a pipe failure instead of returning a silent empty run.
+        stderr = f"Failed to read the process's output: {comm['error']}"
 
     # Measured here, after the loop, so it covers the whole run including
     # the drain. For a killed run this is the limit rather than the kill

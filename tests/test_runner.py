@@ -92,6 +92,31 @@ def memory_hog_binary(ascii_tmp_path: Path) -> Path:
     return Path(result.executable_path)
 
 
+# Prints far more than an OS pipe buffer holds (~4 KiB). Regression
+# fixture for the deadlock described on
+# ``test_large_output_is_not_a_timeout``.
+_VERBOSE_OUTPUT_BYTES = 20000
+_VERBOSE_CODE = """\
+#include <iostream>
+int main() {
+    for (int i = 0; i < 2000; ++i) {
+        std::cout << "abcdefghij";
+    }
+    return 0;
+}
+"""
+
+
+@pytest.fixture
+def verbose_binary(ascii_tmp_path: Path) -> Path:
+    src = ascii_tmp_path / "verbose.cpp"
+    src.write_text(_VERBOSE_CODE, encoding="utf-8")
+    result = compile_cpp(src)
+    assert result.success, f"Failed to compile verbose fixture: {result.output}"
+    assert result.executable_path is not None
+    return Path(result.executable_path)
+
+
 # --- Tests -------------------------------------------------------------
 
 def test_normal_run(echo_binary: Path) -> None:
@@ -138,6 +163,42 @@ def test_timeout(infinite_loop_binary: Path) -> None:
     assert result.memory_exceeded is False
     assert result.exit_code == -1
     assert "Time Limit Exceeded" in result.stderr
+
+
+def test_large_output_is_not_a_timeout(verbose_binary: Path) -> None:
+    """A program that prints more than a pipe buffer must not be killed.
+
+    Regression test for a deadlock found 2026-09-16. ``stdout`` is an OS
+    pipe, and a pipe holds only about 4 KiB before it is full (4096 bytes
+    on Windows). The poll loop used to wait for the child to exit without
+    reading that pipe, so a program printing more than the buffer holds
+    blocked inside ``write()`` and never exited — the loop then ran to
+    ``time_limit`` and killed it.
+
+    The consequence was not a cosmetic one: the program was reported as
+    ``timed_out`` with its output truncated at the buffer boundary, and
+    ``judge`` therefore returned **TLE for code that was correct**. This
+    test pins both halves — the flag and the full output — because the
+    flag alone would still pass if the output were silently clipped.
+
+    The generous ``time_limit`` is deliberate. A short one would make the
+    test pass for the wrong reason: the assertion is that the program is
+    *not* killed, so the limit must be long enough that reaching it could
+    only mean the deadlock came back.
+    """
+    result = run_executable(
+        verbose_binary,
+        stdin=None,
+        time_limit=10.0,
+        mem_limit_mb=256,
+    )
+
+    assert result.timed_out is False
+    assert result.memory_exceeded is False
+    assert result.success is True
+    assert result.exit_code == 0
+    assert len(result.stdout) == _VERBOSE_OUTPUT_BYTES
+    assert result.stdout == "abcdefghij" * 2000
 
 
 def test_memory_exceeded(memory_hog_binary: Path) -> None:
