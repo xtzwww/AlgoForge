@@ -1,10 +1,18 @@
-"""LLM Gateway — one function, three providers, one wire protocol (P2-0).
+"""LLM Gateway — three providers, one wire protocol (P2-0).
 
-``chat_completion`` is the only entry point the rest of the app should
-use to talk to a model. It selects a provider from ``settings`` and
-speaks the OpenAI-compatible ``POST /chat/completions`` dialect, which
-DeepSeek, Ollama and any third-party gateway implement. That is what
-AGENTS.md §二.2 means by "换模型只改配置，不改代码".
+:func:`complete` is the general entry point the rest of the app should use
+to talk to a model; :func:`chat_completion` is the text-only wrapper over
+it. Both select a provider from ``settings`` and speak the
+OpenAI-compatible ``POST /chat/completions`` dialect, which DeepSeek,
+Ollama and any third-party gateway implement. That is what AGENTS.md §二.2
+means by "换模型只改配置，不改代码".
+
+Two entry points rather than one because the reply has two shapes. A plain
+answer is a string; a tool-calling reply has empty content and a
+``tool_calls`` array instead, which is a complete answer and not a
+failure. Keeping ``chat_completion`` returning ``str`` lets P2-3's
+analysis keep its "never empty" guarantee without knowing that tool calls
+exist, while P2-7 goes through :func:`complete` and handles both.
 
 There are three provider names, and the third is the general case:
 ``openai_compatible`` takes its base URL, key and model from
@@ -248,13 +256,102 @@ def _build_payload(
     return payload
 
 
-def _extract_content(body: Any) -> str:
-    """Pull the assistant text out of an OpenAI-compatible response body.
+@dataclass(frozen=True)
+class ToolCall:
+    """One function call the model asked for.
+
+    ``arguments`` is kept as the raw JSON *text* the provider sent rather
+    than a parsed dict. That is the wire format, and keeping it means a
+    malformed payload is reported by whoever parses it — quoting the
+    original text — instead of being quietly coerced to ``{}`` here and
+    turning a broken call into a call with no arguments.
+    """
+
+    id: str
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True)
+class Completion:
+    """A parsed chat-completion reply.
+
+    ``content`` is empty exactly when the model is asking for tools, which
+    is an ordinary reply rather than a failure — hence ``wants_tools``.
+    Callers that only want text should use :func:`chat_completion`, which
+    keeps the "never empty" guarantee; callers that pass ``tools`` must
+    use :func:`complete` and handle both shapes.
+    """
+
+    content: str
+    tool_calls: tuple[ToolCall, ...] = ()
+    finish_reason: str = ""
+
+    @property
+    def wants_tools(self) -> bool:
+        return bool(self.tool_calls)
+
+
+def _parse_tool_calls(message: dict) -> tuple[ToolCall, ...]:
+    """Read ``tool_calls`` out of an assistant message.
+
+    Raises:
+        LLMRequestError: The field is present but not the expected shape.
+            Skipping a malformed entry instead would make the loop answer
+            from a partial set of tool results without saying so.
+    """
+    raw = message.get("tool_calls")
+    if raw is None:
+        # Absent and null both mean "no tools wanted"; providers differ on
+        # whether they send the key at all for a plain text reply.
+        return ()
+    if not isinstance(raw, list):
+        raise LLMRequestError("'tool_calls' was not an array")
+
+    calls: list[ToolCall] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise LLMRequestError(f"tool_calls[{index}] was not an object")
+
+        function = entry.get("function")
+        if not isinstance(function, dict):
+            raise LLMRequestError(f"tool_calls[{index}] had no 'function' object")
+
+        name = function.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise LLMRequestError(f"tool_calls[{index}] had no function name")
+
+        # The spec allows the key to be omitted for a call with no
+        # arguments, which is not the same as an empty string.
+        arguments = function.get("arguments")
+        if arguments is None:
+            arguments = "{}"
+        if not isinstance(arguments, str):
+            raise LLMRequestError(
+                f"tool_calls[{index}] 'arguments' was "
+                f"{type(arguments).__name__}, not a JSON string"
+            )
+
+        # An id is required to match the result back to the call. OpenAI
+        # always sends one; a compatible server that omits it would make
+        # the follow-up turn unaddressable, so a positional stand-in is
+        # used rather than sending null and being rejected later.
+        call_id = entry.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            call_id = f"call_{index}"
+
+        calls.append(ToolCall(id=call_id, name=name, arguments=arguments))
+
+    return tuple(calls)
+
+
+def _parse_completion(body: Any) -> Completion:
+    """Turn an OpenAI-compatible response body into a :class:`Completion`.
 
     Raises:
         LLMRequestError: The body is not the expected shape.
         TruncatedCompletionError: The provider hit ``max_tokens``.
-        EmptyCompletionError: The shape is right but the text is blank.
+        EmptyCompletionError: No text and no tool call — nothing usable.
     """
     if not isinstance(body, dict):
         raise LLMRequestError(f"Unexpected response type: {type(body).__name__}")
@@ -271,8 +368,10 @@ def _extract_content(body: Any) -> str:
     # off, whatever it did manage to emit is not a usable answer, and
     # saying so is more useful than describing the shape of the fragment.
     # Providers disagree on whether this is "length" or "max_tokens", so
-    # both are accepted.
-    if first.get("finish_reason") in ("length", "max_tokens"):
+    # both are accepted. Note "tool_calls" is a *complete* reply, not a
+    # truncation, and must not be caught here.
+    finish_reason = first.get("finish_reason")
+    if finish_reason in ("length", "max_tokens"):
         raise TruncatedCompletionError(
             "Provider hit the max_tokens limit before finishing. The reply "
             "is incomplete; raise settings.llm_max_tokens (reasoning models "
@@ -283,56 +382,85 @@ def _extract_content(body: Any) -> str:
     if not isinstance(message, dict):
         raise LLMRequestError("First choice had no 'message' object")
 
+    tool_calls = _parse_tool_calls(message)
+
     content = message.get("content")
+    if content is None:
+        # Legal only alongside a tool call: the spec has the assistant
+        # message carry null content when it is asking for tools instead of
+        # answering. On its own it is still a broken reply.
+        if not tool_calls:
+            raise LLMRequestError("Message had no string 'content'")
+        content = ""
     if not isinstance(content, str):
         raise LLMRequestError("Message had no string 'content'")
 
-    if not content.strip():
+    if not content.strip() and not tool_calls:
         raise EmptyCompletionError("Provider returned empty content")
 
-    return content
+    return Completion(
+        content=content,
+        tool_calls=tool_calls,
+        finish_reason=finish_reason if isinstance(finish_reason, str) else "",
+    )
 
 
-def chat_completion(
-    messages: list[dict[str, str]],
+def complete(
+    messages: list[dict[str, Any]],
     *,
     provider: Optional[str] = None,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     timeout: float = 60.0,
+    tools: Optional[list[dict[str, Any]]] = None,
+    tool_choice: Optional[Any] = None,
     **extra: Any,
-) -> str:
-    """Send ``messages`` to the configured LLM and return the reply text.
+) -> Completion:
+    """Send ``messages`` and return the whole reply, tool calls included.
+
+    This is the general entry point; :func:`chat_completion` is the
+    text-only convenience wrapper over it.
 
     Args:
-        messages: OpenAI-style message dicts, e.g.
-            ``[{"role": "user", "content": "..."}]``.
-        provider: Override ``settings.llm_provider``. Used by tests and
-            by any future "try the fallback model" logic.
+        messages: OpenAI-style message dicts. A tool-calling conversation
+            also carries ``{"role": "assistant", ..., "tool_calls": [...]}``
+            and ``{"role": "tool", "tool_call_id": ..., "content": ...}``
+            entries; the gateway forwards them untouched.
+        provider: Override ``settings.llm_provider``.
         temperature: Sampling temperature. ``None`` omits the key.
         max_tokens: Response length cap. ``None`` omits the key.
         timeout: Total request timeout in seconds.
+        tools: OpenAI function definitions (see
+            :func:`app.agent.tools.tool_schemas`). ``None`` omits the key,
+            so a text-only call is byte-for-byte what it was before this
+            parameter existed.
+        tool_choice: ``"auto"`` / ``"none"`` / ``"required"`` or an object
+            naming one function. Forwarded verbatim.
         **extra: Extra top-level request fields, forwarded verbatim.
-            This is the escape hatch for provider-specific options
-            (e.g. ``response_format`` for JSON mode) without teaching
-            the gateway about them.
 
     Returns:
-        The assistant's reply, guaranteed non-empty after ``.strip()``.
+        A :class:`Completion`. ``content`` may be empty when
+        ``completion.wants_tools`` is true.
 
     Raises:
         LLMConfigError: Misconfiguration detected before the request.
         LLMConnectionError: The provider could not be reached.
         LLMRequestError: The provider rejected or failed the request.
         TruncatedCompletionError: The provider hit ``max_tokens``.
-        EmptyCompletionError: The provider returned no usable content.
+        EmptyCompletionError: Neither text nor a tool call came back.
     """
     if not messages:
         # Cheaper to catch here than to let the provider 400 on it.
-        raise LLMConfigError("chat_completion called with no messages")
+        raise LLMConfigError("complete called with no messages")
 
     spec = _resolve_provider(provider)
     payload = _build_payload(spec, messages, temperature, max_tokens, extra)
+    # Added after _build_payload rather than inside it so that a call
+    # without tools produces exactly the same request body as before.
+    if tools is not None:
+        payload["tools"] = tools
+    if tool_choice is not None:
+        payload["tool_choice"] = tool_choice
 
     headers = {"Content-Type": "application/json"}
     if spec.send_auth:
@@ -370,7 +498,65 @@ def chat_completion(
             f"{spec.name} returned non-JSON body: {response.text.strip()[:200]!r}"
         ) from exc
 
-    return _extract_content(body)
+    return _parse_completion(body)
+
+
+def chat_completion(
+    messages: list[dict[str, Any]],
+    *,
+    provider: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout: float = 60.0,
+    **extra: Any,
+) -> str:
+    """Send ``messages`` to the configured LLM and return the reply text.
+
+    The text-only view of :func:`complete`. It exists so that callers whose
+    reply really is a string — P2-3's analysis — cannot accidentally
+    receive a tool call and treat its empty content as an answer.
+
+    Args:
+        messages: OpenAI-style message dicts, e.g.
+            ``[{"role": "user", "content": "..."}]``.
+        provider: Override ``settings.llm_provider``. Used by tests and
+            by any future "try the fallback model" logic.
+        temperature: Sampling temperature. ``None`` omits the key.
+        max_tokens: Response length cap. ``None`` omits the key.
+        timeout: Total request timeout in seconds.
+        **extra: Extra top-level request fields, forwarded verbatim.
+            This is the escape hatch for provider-specific options
+            (e.g. ``response_format`` for JSON mode) without teaching
+            the gateway about them.
+
+    Returns:
+        The assistant's reply, guaranteed non-empty after ``.strip()``.
+
+    Raises:
+        LLMConfigError: Misconfiguration detected before the request, or
+            ``tools`` was passed (use :func:`complete` for tool calls).
+        LLMConnectionError: The provider could not be reached.
+        LLMRequestError: The provider rejected or failed the request.
+        TruncatedCompletionError: The provider hit ``max_tokens``.
+        EmptyCompletionError: The provider returned no usable content.
+    """
+    if "tools" in extra or "tool_choice" in extra:
+        # Silently ignoring them would leave the caller waiting for text
+        # that is never coming; silently honouring them would return an
+        # empty string from a function that promises text.
+        raise LLMConfigError(
+            "chat_completion() returns text only. Use complete() when "
+            "passing 'tools' or 'tool_choice'."
+        )
+
+    return complete(
+        messages,
+        provider=provider,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        **extra,
+    ).content
 
 
 def available_providers() -> list[str]:
