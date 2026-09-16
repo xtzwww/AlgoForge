@@ -4,16 +4,24 @@ Verifies default values, environment-variable overrides, and the
 auto-generated sidecar token.
 """
 
-import pytest
-
 from pathlib import Path
 
-from app.config import Settings
+import pytest
+
+from app.config import _ENV_FILE, Settings
 
 # A path that is guaranteed not to exist, used to opt a Settings() instance
 # out of reading the developer's local .env file. Tests that assert on
 # *field defaults* must use this, otherwise a legitimate local .env wins
 # and the defaults become untestable.
+#
+# Every ``Settings()`` in this module passes it. They did not all used to,
+# and the gap was invisible: ``env_file`` was a path relative to the
+# process's working directory, so running pytest from the repository root
+# never found ``sidecar/.env`` and the un-isolated tests passed by
+# accident. Anchoring ``env_file`` to the config module (2026-09-16) made
+# the local file load for real, and the tests that had been relying on its
+# absence started failing — which is what this constant was for all along.
 _NO_ENV_FILE = "nonexistent-test-isolation.env"
 
 # All environment variables recognised by Settings. Used to clear the
@@ -26,6 +34,11 @@ _ENV_VARS = [
     "DEEPSEEK_MODEL",
     "OLLAMA_BASE_URL",
     "OLLAMA_MODEL",
+    "OPENAI_COMPATIBLE_BASE_URL",
+    "OPENAI_COMPATIBLE_API_KEY",
+    "OPENAI_COMPATIBLE_MODEL",
+    "LLM_MAX_TOKENS",
+    "LLM_TIMEOUT",
     "LANGSMITH_API_KEY",
     "LANGSMITH_PROJECT",
     "SIDECAR_PORT",
@@ -48,13 +61,24 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_default_values(monkeypatch: pytest.MonkeyPatch) -> None:
     """Settings should expose the documented defaults when no env vars set."""
     _clear_env(monkeypatch)
-    s = Settings()
+    s = Settings(_env_file=_NO_ENV_FILE)
 
     assert s.llm_provider == "deepseek"
     assert s.deepseek_base_url == "https://api.deepseek.com"
     assert s.deepseek_model == "deepseek-coder"
     assert s.ollama_base_url == "http://localhost:11434"
     assert s.ollama_model == "qwen2.5-coder:7b"
+    # The generic provider ships empty: it has no sensible default, and a
+    # half-filled .env must fail loudly in the gateway rather than here.
+    assert s.openai_compatible_base_url == ""
+    assert s.openai_compatible_api_key == ""
+    assert s.openai_compatible_model == ""
+    # Generous enough for a ~6600-character non-reasoning answer. A cap,
+    # so this costs nothing for a model that stops earlier.
+    assert s.llm_max_tokens == 4096
+    # The gateway's own default, kept so existing local setups are
+    # unaffected. Hosted endpoints need this raised; see .env.example.
+    assert s.llm_timeout == 60.0
     assert s.langsmith_project == "algoforge"
     assert s.sidecar_port is None
     assert s.sidecar_token is None
@@ -72,7 +96,7 @@ def test_env_var_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-123")
     monkeypatch.setenv("MILVUS_URI", "http://milvus:19530")
 
-    s = Settings()
+    s = Settings(_env_file=_NO_ENV_FILE)
 
     assert s.llm_provider == "ollama"
     assert s.sidecar_port == 9100
@@ -86,7 +110,7 @@ def test_resolved_sidecar_token_generates_when_unset(
 ) -> None:
     """resolved_sidecar_token should generate a random token when unset."""
     _clear_env(monkeypatch)
-    s = Settings()
+    s = Settings(_env_file=_NO_ENV_FILE)
     token = s.resolved_sidecar_token
     assert isinstance(token, str)
     assert len(token) > 16
@@ -98,7 +122,7 @@ def test_resolved_sidecar_token_returns_set_value(
     """resolved_sidecar_token should return the explicitly set token."""
     _clear_env(monkeypatch)
     monkeypatch.setenv("SIDECAR_TOKEN", "explicit-token-abc")
-    s = Settings()
+    s = Settings(_env_file=_NO_ENV_FILE)
     assert s.resolved_sidecar_token == "explicit-token-abc"
 
 
@@ -115,7 +139,7 @@ def test_blank_env_values_mean_unset(
     _clear_env(monkeypatch)
     monkeypatch.setenv("SIDECAR_PORT", "")
     monkeypatch.setenv("SIDECAR_TOKEN", "   ")
-    s = Settings()
+    s = Settings(_env_file=_NO_ENV_FILE)
     assert s.sidecar_port is None
     assert s.sidecar_token is None
     # A generated token is still available.
@@ -158,4 +182,21 @@ def test_explicit_bin_dir_wins_over_derived(
     monkeypatch.setenv("CPP_COMPILER_BIN_DIR", "D:/runtime/dlls")
     s = Settings(_env_file=_NO_ENV_FILE)
     assert Path(s.resolved_compiler_bin_dir) == Path("D:/runtime/dlls")
+
+
+def test_env_file_is_absolute_and_points_at_the_sidecar_directory() -> None:
+    """``env_file`` must not depend on the process's working directory.
+
+    This is a regression test for a silent bug found 2026-09-16: with
+    ``env_file=".env"`` pydantic-settings resolved the path against cwd,
+    so ``sidecar/.env`` was read only when the process happened to be
+    started from ``sidecar/``. From the repository root — where pytest
+    and most ad-hoc scripts run — every setting silently fell back to
+    its default, and the symptom was a misleading error about the
+    *DeepSeek* key while ``.env`` said ``openai_compatible``.
+    """
+    assert _ENV_FILE.is_absolute()
+    # sidecar/.env, i.e. the parent of the app package.
+    assert _ENV_FILE.name == ".env"
+    assert _ENV_FILE.parent.name == "sidecar"
 

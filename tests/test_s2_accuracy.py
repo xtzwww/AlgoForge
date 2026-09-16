@@ -256,13 +256,23 @@ def _provider_status() -> tuple[bool, str]:
     """Whether an analysis can be attempted, plus the reason either way.
 
     Mirrors the gateway's own resolution rules (P2-0): an unknown
-    provider name, or DeepSeek with a blank key, means no call can be
-    made. The message is built here rather than at the skip site because
-    a skip that does not say *what to set* is a skip nobody acts on.
+    provider name, or a named provider whose credential is blank, means
+    no call can be made. The message is built here rather than at the
+    skip site because a skip that does not say *what to set* is a skip
+    nobody acts on.
+
+    The list of valid names is read from the gateway rather than
+    restated here. It was hardcoded once and went stale the moment a
+    third provider was added — and the failure mode of a stale copy is
+    the worst kind: the gate reports "skipped", which reads as "not
+    measured yet" when the truth was "measured, and the harness was
+    wrong about what the gateway supports".
     """
     from app.config import settings
+    from app.llm import gateway
 
     provider = (settings.llm_provider or "").strip().lower()
+    known = gateway.available_providers()
 
     if provider == "deepseek":
         if settings.deepseek_api_key.strip():
@@ -280,9 +290,25 @@ def _provider_status() -> tuple[bool, str]:
             return True, ""
         return False, "LLM_PROVIDER=ollama but OLLAMA_BASE_URL is empty."
 
+    if provider in ("openai_compatible", "openai-compatible"):
+        # The two settings the gateway itself requires (P2-0). The key is
+        # optional there and so it is optional here.
+        if not settings.openai_compatible_base_url.strip():
+            return False, (
+                "LLM_PROVIDER=openai_compatible but "
+                "OPENAI_COMPATIBLE_BASE_URL is empty. Set it in sidecar/.env."
+            )
+        if not settings.openai_compatible_model.strip():
+            return False, (
+                "LLM_PROVIDER=openai_compatible but "
+                "OPENAI_COMPATIBLE_MODEL is empty. Set it in sidecar/.env."
+            )
+        return True, ""
+
     return False, (
         f"LLM_PROVIDER={provider!r} is not a provider the gateway accepts "
-        f"(expected deepseek or ollama), so no accuracy can be measured."
+        f"(expected one of: {', '.join(known)}), so no accuracy can be "
+        f"measured."
     )
 
 
@@ -550,6 +576,65 @@ def test_an_invalid_provider_name_is_a_skip_not_a_crash() -> None:
 
     assert ready is False
     assert "nonexistent-provider" in reason
+
+
+def test_a_configured_compatible_endpoint_counts_as_ready() -> None:
+    """The generic provider must not be mistaken for an unknown one.
+
+    Regression guard for 2026-09-16: ``_provider_status`` hardcoded the
+    two original names, so a correctly configured ``openai_compatible``
+    endpoint produced a *skip* whose reason claimed the gateway would
+    reject it. A skip reads as "not measured", which would have hidden
+    the very measurement the endpoint was configured for.
+    """
+    from unittest.mock import patch
+
+    from app.config import settings
+
+    with (
+        patch.object(settings, "llm_provider", "openai_compatible"),
+        patch.object(settings, "openai_compatible_base_url", "https://host/v1"),
+        patch.object(settings, "openai_compatible_model", "some-model"),
+    ):
+        ready, reason = _provider_status()
+
+    assert ready is True
+    assert reason == ""
+
+
+def test_a_compatible_endpoint_missing_its_base_url_is_a_skip() -> None:
+    """An incomplete generic provider says which setting is missing."""
+    from unittest.mock import patch
+
+    from app.config import settings
+
+    with (
+        patch.object(settings, "llm_provider", "openai_compatible"),
+        patch.object(settings, "openai_compatible_base_url", ""),
+        patch.object(settings, "openai_compatible_model", "some-model"),
+    ):
+        ready, reason = _provider_status()
+
+    assert ready is False
+    assert "OPENAI_COMPATIBLE_BASE_URL" in reason
+
+
+def test_the_unknown_provider_message_lists_the_gateways_own_names() -> None:
+    """The "expected ..." list is read from the gateway, not restated.
+
+    This is what keeps the message honest as providers are added: a
+    hardcoded copy is what went stale when the third one arrived.
+    """
+    from unittest.mock import patch
+
+    from app.config import settings
+    from app.llm import gateway
+
+    with patch.object(settings, "llm_provider", "nonexistent-provider"):
+        _, reason = _provider_status()
+
+    for name in gateway.available_providers():
+        assert name in reason
 
 
 def test_the_gate_constant_is_the_one_the_eval_set_owns() -> None:

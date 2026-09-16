@@ -89,6 +89,23 @@ def ollama_configured(monkeypatch):
     monkeypatch.setattr(settings, "ollama_model", "qwen2.5-coder:7b")
 
 
+@pytest.fixture
+def compatible_configured(monkeypatch):
+    """Point the gateway at a generic OpenAI-compatible endpoint.
+
+    The values mirror the Agnes AI endpoint this project was configured
+    against, because that is the deployment this provider exists for: a
+    hosted gateway whose base URL already carries ``/v1`` and which
+    needs a bearer token.
+    """
+    monkeypatch.setattr(settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(
+        settings, "openai_compatible_base_url", "https://apihub.agnes-ai.cn/v1"
+    )
+    monkeypatch.setattr(settings, "openai_compatible_api_key", "sk-unit-test")
+    monkeypatch.setattr(settings, "openai_compatible_model", "agnes-2.5-flash")
+
+
 # --------------------------------------------------------------- routing
 
 
@@ -135,6 +152,96 @@ def test_ollama_sends_no_authorization_header(captured, ollama_configured):
     gateway.chat_completion([{"role": "user", "content": "hi"}])
 
     assert "Authorization" not in captured["calls"][0]["headers"]
+
+
+def test_openai_compatible_routes_to_its_configured_base_url(
+    captured, compatible_configured
+):
+    """The generic provider honours whatever base URL .env supplies.
+
+    This is the provider that makes AGENTS.md §二.2 ("换模型只改配置")
+    literally true for a hosted endpoint the project has never heard of:
+    no branch was added for Agnes, only three settings.
+    """
+    result = gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+    assert result == "ok"
+    assert len(captured["calls"]) == 1
+    assert (
+        captured["calls"][0]["url"]
+        == "https://apihub.agnes-ai.cn/v1/chat/completions"
+    )
+    assert captured["calls"][0]["json"]["model"] == "agnes-2.5-flash"
+
+
+def test_openai_compatible_sends_bearer_authorization(captured, compatible_configured):
+    """A configured key is sent as a bearer token."""
+    gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+    headers = captured["calls"][0]["headers"]
+    assert headers["Authorization"] == "Bearer sk-unit-test"
+    assert headers["Content-Type"] == "application/json"
+
+
+def test_openai_compatible_without_key_sends_no_authorization(
+    captured, compatible_configured, monkeypatch
+):
+    """An empty key is omitted rather than sent as ``Bearer ``.
+
+    ``send_auth`` is derived from the key's presence instead of being
+    hardcoded true: a self-hosted compatible server with no auth rejects
+    a request carrying an empty bearer token, and a half-configured
+    .env should reach the server rather than fail on our own header.
+    """
+    monkeypatch.setattr(settings, "openai_compatible_api_key", "")
+
+    gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+    assert "Authorization" not in captured["calls"][0]["headers"]
+
+
+def test_openai_compatible_accepts_the_hyphenated_spelling(
+    captured, compatible_configured, monkeypatch
+):
+    """``openai-compatible`` resolves too.
+
+    Both spellings are in the wild for this provider name (the project's
+    own AGENTS.md writes the concept hyphenated), and a config value
+    that is almost-right should not be a runtime mystery.
+    """
+    monkeypatch.setattr(settings, "llm_provider", "openai-compatible")
+
+    gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+    assert captured["calls"][0]["json"]["model"] == "agnes-2.5-flash"
+
+
+def test_openai_compatible_without_base_url_raises_before_any_request(
+    captured, compatible_configured, monkeypatch
+):
+    """The two values with no sensible default are required, and named.
+
+    A base URL cannot be guessed, so the error must say which setting is
+    empty rather than letting httpx fail on a relative URL.
+    """
+    monkeypatch.setattr(settings, "openai_compatible_base_url", "   ")
+
+    with pytest.raises(gateway.LLMConfigError, match="OPENAI_COMPATIBLE_BASE_URL"):
+        gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+    assert captured["calls"] == []
+
+
+def test_openai_compatible_without_model_raises_before_any_request(
+    captured, compatible_configured, monkeypatch
+):
+    """A model name cannot be guessed either, so it is required as well."""
+    monkeypatch.setattr(settings, "openai_compatible_model", "")
+
+    with pytest.raises(gateway.LLMConfigError, match="OPENAI_COMPATIBLE_MODEL"):
+        gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+    assert captured["calls"] == []
 
 
 def test_explicit_provider_overrides_configured_one(
@@ -344,6 +451,92 @@ def test_content_is_returned_verbatim(captured, ollama_configured):
     assert gateway.chat_completion([{"role": "user", "content": "hi"}]) == "  hello  "
 
 
+def test_hitting_max_tokens_raises_a_distinct_error(captured, ollama_configured):
+    """A cut-off reply is reported as truncation, not as bad formatting.
+
+    Regression guard for 2026-09-16: a reasoning model spent its whole
+    budget on hidden reasoning and returned a half-written JSON object.
+    The gateway passed that fragment through, the parser rejected it, and
+    the resulting message ("model output is not valid JSON") pointed at
+    the prompt when the real remedy was to raise the token budget.
+    """
+    captured["response"] = _FakeResponse(
+        json_body={
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": '{"error_type": "ov'},
+                    "finish_reason": "length",
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(gateway.TruncatedCompletionError, match="max_tokens"):
+        gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+
+def test_a_truncated_reply_is_not_reported_as_empty(captured, ollama_configured):
+    """The empty-content check must not win the race against truncation.
+
+    An empty reply caused by an exhausted budget is a *budget* finding.
+    Letting ``EmptyCompletionError`` fire first would send the reader
+    looking at the model's behaviour instead of at ``LLM_MAX_TOKENS``.
+    """
+    captured["response"] = _FakeResponse(
+        json_body={
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": ""},
+                    "finish_reason": "length",
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(gateway.TruncatedCompletionError):
+        gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+
+def test_the_alternative_max_tokens_spelling_is_recognised(
+    captured, ollama_configured
+):
+    """Providers disagree on the finish_reason string for this.
+
+    OpenAI-compatible servers emit either ``length`` or ``max_tokens``
+    for the same condition; accepting only one would let a truncated
+    reply through on the other.
+    """
+    captured["response"] = _FakeResponse(
+        json_body={
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "{"},
+                    "finish_reason": "max_tokens",
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(gateway.TruncatedCompletionError):
+        gateway.chat_completion([{"role": "user", "content": "hi"}])
+
+
+def test_a_normal_stop_is_not_mistaken_for_truncation(captured, ollama_configured):
+    """``finish_reason: stop`` is the ordinary, successful case."""
+    captured["response"] = _FakeResponse(
+        json_body={
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "done"},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+    )
+
+    assert gateway.chat_completion([{"role": "user", "content": "hi"}]) == "done"
+
+
 @pytest.mark.parametrize(
     "body",
     [
@@ -372,9 +565,20 @@ def test_malformed_bodies_raise_request_error(captured, ollama_configured, body)
 # ------------------------------------------------------------- interface
 
 
-def test_available_providers_lists_both():
-    """The introspection helper agrees with the resolver."""
-    assert gateway.available_providers() == ["deepseek", "ollama"]
+def test_available_providers_lists_every_routable_name():
+    """The introspection helper agrees with the resolver.
+
+    Asserting the exact list rather than ``len(...)`` or a subset: the
+    helper's whole purpose is to be the one place a caller (or an error
+    message) can read the valid names from, so a name added to
+    ``_PROVIDER_NAMES`` without a matching resolver branch — or vice
+    versa — should fail here.
+    """
+    assert gateway.available_providers() == [
+        "deepseek",
+        "ollama",
+        "openai_compatible",
+    ]
 
 
 # --------------------------------------------------------- live API (P2-0)
@@ -384,8 +588,11 @@ def test_available_providers_lists_both():
     reason=(
         "P2-0's second acceptance criterion ('真实调一次 DeepSeek API 返回非空') "
         "needs a real DEEPSEEK_API_KEY, which sidecar/.env leaves blank on this "
-        "machine, and there is no Ollama at localhost:11434 either. Tracked as "
-        "an unclosed verification item; set the key and remove this skip to run it."
+        "machine. Tracked as an unclosed verification item; set the key and "
+        "remove this skip to run it. (An earlier version of this reason also "
+        "claimed 'no Ollama at localhost:11434' — that was wrong: Ollama is "
+        "running with qwen2.5:3b, and tests/test_s2_accuracy.py measures the "
+        "S2 gate against it.)"
     )
 )
 def test_live_deepseek_call():

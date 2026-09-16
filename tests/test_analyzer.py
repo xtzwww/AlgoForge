@@ -19,7 +19,11 @@ import pytest
 
 from app.agent import analyzer
 from app.agent.analyzer import AnalysisOutcome, analyze_error
-from app.llm.gateway import LLMConnectionError, LLMRequestError
+from app.llm.gateway import (
+    LLMConnectionError,
+    LLMRequestError,
+    TruncatedCompletionError,
+)
 
 VALID = (
     '{"error_type":"overflow","error_detail":"第 4 行的 a * b 在 int 内先溢出",'
@@ -157,6 +161,46 @@ def test_temperature_is_zero_for_reproducibility():
     assert mock.call_args.kwargs["temperature"] == 0.0
 
 
+def test_the_token_budget_comes_from_settings():
+    """The cap is configuration, not a constant in this module.
+
+    A reasoning model bills its hidden reasoning against the same budget,
+    so the value that works is a property of the model. Hardcoding it
+    here would make "换模型只改配置" (AGENTS.md §二.2) false, and the
+    failure it produces is a truncated reply that looks like a formatting
+    bug rather than a budget one.
+    """
+    from app.config import settings
+
+    with (
+        patch.object(settings, "llm_max_tokens", 12345),
+        patch.object(analyzer, "chat_completion", return_value=VALID) as mock,
+    ):
+        _call()
+
+    assert mock.call_args.kwargs["max_tokens"] == 12345
+
+
+def test_the_timeout_comes_from_settings():
+    """The timeout is configurable for the same reason as the cap.
+
+    The gateway's 60s default is fine for a local 3B model and far too
+    short for a hosted endpoint writing thousands of tokens. Getting this
+    wrong does not raise a config error — it produces a timeout that the
+    accuracy harness scores as the *model* answering incorrectly, which
+    is exactly the kind of misattribution worth pinning down.
+    """
+    from app.config import settings
+
+    with (
+        patch.object(settings, "llm_timeout", 123.5),
+        patch.object(analyzer, "chat_completion", return_value=VALID) as mock,
+    ):
+        _call()
+
+    assert mock.call_args.kwargs["timeout"] == 123.5
+
+
 # ---------------------------------------------------------------- retry
 
 
@@ -282,6 +326,28 @@ def test_request_failure_does_not_retry():
 
     assert not outcome.ok
     assert mock.call_count == 1
+
+
+def test_truncation_does_not_retry():
+    """A reply cut off by the token budget is not retried.
+
+    The retry exists to let the model *correct its formatting*, and it
+    re-sends the same request with the same budget. When the budget is
+    what ran out, a second identical call cannot help — it will be cut
+    off in the same place. The remedy is configuration, and the error
+    the caller receives names it.
+    """
+    with patch.object(
+        analyzer,
+        "chat_completion",
+        side_effect=TruncatedCompletionError("hit the max_tokens limit"),
+    ) as mock:
+        outcome = _call()
+
+    assert not outcome.ok
+    assert mock.call_count == 1
+    assert "TruncatedCompletionError" in outcome.error
+    assert "max_tokens" in outcome.error
 
 
 def test_gateway_error_is_reported_with_its_type():

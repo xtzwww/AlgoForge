@@ -18,12 +18,24 @@ from typing import Any, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Absolute path to ``sidecar/.env``, anchored to this file rather than to
+# the process's working directory.
+#
+# ``env_file=".env"`` is resolved against the cwd, so a bare relative path
+# silently stops being read the moment anything runs from the repository
+# root instead of ``sidecar/`` — which is exactly what the test suite and
+# ad-hoc scripts do. The failure is silent in the worst way: settings
+# fall back to their defaults, so a provider configured in ``.env`` looks
+# unconfigured and the error message blames the wrong thing. Anchoring it
+# here makes the setting independent of where the process was started.
+_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables / .env file."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -59,7 +71,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ LLM
     llm_provider: str = Field(
         default="deepseek",
-        description="LLM provider: deepseek | ollama",
+        description="LLM provider: deepseek | ollama | openai_compatible",
     )
     deepseek_api_key: str = Field(default="", description="DeepSeek API key")
     deepseek_base_url: str = Field(default="https://api.deepseek.com")
@@ -67,6 +79,55 @@ class Settings(BaseSettings):
 
     ollama_base_url: str = Field(default="http://localhost:11434")
     ollama_model: str = Field(default="qwen2.5-coder:7b")
+
+    # Generic OpenAI-compatible endpoint. Any provider that speaks the
+    # OpenAI chat-completions protocol can be pointed at by setting
+    # ``LLM_PROVIDER=openai_compatible`` and the three values below,
+    # without touching code — which is what AGENTS.md's "换模型只改配置"
+    # actually requires once the provider is not DeepSeek or Ollama.
+    #
+    # The API key is deliberately *not* required: self-hosted endpoints
+    # (vLLM, LM Studio, a gateway with no auth) legitimately have none,
+    # and a 401 from the server names the problem well enough. When a key
+    # is present it is sent.
+    openai_compatible_base_url: str = Field(default="")
+    openai_compatible_api_key: str = Field(default="")
+    openai_compatible_model: str = Field(default="")
+
+    # Response cap for analysis calls, in tokens. Applies to every
+    # provider, because how many tokens an answer needs is a property of
+    # the *model*, not of the caller.
+    #
+    # This is a cap and not a target: a model that finishes on its own
+    # emits ``finish_reason: stop`` and is billed only for what it wrote,
+    # so raising it costs nothing for a terse model. Lowering it too far,
+    # on the other hand, is a hard failure — the reply is cut off
+    # mid-string and the JSON parser reports "not valid JSON", which
+    # blames the model's formatting for what is really a budget mistake.
+    #
+    # Two calibration facts, measured 2026-09-16:
+    #   * A *non-reasoning* model answering the four-field error analysis
+    #     produced ~6600 characters (~3k tokens). The original 800 was
+    #     already too low for it; it only ever worked because
+    #     qwen2.5:3b happens to be terse.
+    #   * A *reasoning* model (agnes-2.5-flash) bills its hidden
+    #     ``reasoning_content`` against this same budget. It spent 8000
+    #     tokens reasoning and emitted an empty answer, then converged at
+    #     16000 with 4142 reasoning + 322 answer tokens. Reasoning models
+    #     therefore need this raised by roughly an order of magnitude.
+    llm_max_tokens: int = Field(default=4096)
+
+    # Per-request timeout for analysis calls, in seconds. Also model
+    # dependent, and for the same reason as ``llm_max_tokens``: a hosted
+    # endpoint generating thousands of tokens takes far longer than a
+    # local 3B model writing a sentence.
+    #
+    # Measured 2026-09-16: with the gateway's 60s default, 2 of the 20
+    # eval cases died as ``LLMConnectionError: timed out after 60.0s``
+    # and were scored as misses. Those are infrastructure failures
+    # masquerading as model errors, and they depress the accuracy figure
+    # that the whole go/no-go decision rests on.
+    llm_timeout: float = Field(default=60.0)
 
     # ----------------------------------------------------------- LangSmith
     langsmith_api_key: str = Field(default="")

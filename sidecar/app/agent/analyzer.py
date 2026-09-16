@@ -42,6 +42,7 @@ from app.agent.schemas import (
     ErrorAnalysisResult,
     parse_error_analysis,
 )
+from app.config import settings
 from app.llm.gateway import LLMGatewayError, chat_completion
 from app.prompts import loader
 
@@ -55,9 +56,18 @@ PROMPT_NAME = "error_analysis"
 # is reproducible.
 DEFAULT_TEMPERATURE = 0.0
 
-# Analyses are short (four fields, a few sentences each). A cap keeps a
-# runaway model from burning the request budget on a student-facing call.
-DEFAULT_MAX_TOKENS = 800
+# Analyses are short (four fields, a few sentences each), but how many
+# tokens one actually takes is a property of the *model*: a reasoning
+# model bills its hidden reasoning against the same budget, and a
+# non-reasoning one still wrote ~6600 characters here. So the cap lives
+# in configuration rather than as a constant in this module, which is
+# what AGENTS.md §二.2 ("换模型只改配置，不改代码") requires. See
+# ``settings.llm_max_tokens`` for the calibration measurements and the
+# reasoning-model caveat.
+#
+# The timeout is the same story and is therefore configured alongside it:
+# a hosted endpoint producing thousands of tokens outlasts the gateway's
+# 60s default, and the resulting timeout is scored as a *model* miss.
 
 
 @dataclass
@@ -162,7 +172,8 @@ def _analyse_once(messages: list[dict[str, str]]) -> tuple[str, Optional[str]]:
             chat_completion(
                 messages,
                 temperature=DEFAULT_TEMPERATURE,
-                max_tokens=DEFAULT_MAX_TOKENS,
+                max_tokens=settings.llm_max_tokens,
+                timeout=settings.llm_timeout,
             ),
             None,
         )

@@ -1,11 +1,17 @@
-"""LLM Gateway — one function, two providers, one wire protocol (P2-0).
+"""LLM Gateway — one function, three providers, one wire protocol (P2-0).
 
 ``chat_completion`` is the only entry point the rest of the app should
 use to talk to a model. It selects a provider from ``settings`` and
 speaks the OpenAI-compatible ``POST /chat/completions`` dialect, which
-both DeepSeek and Ollama implement. That is what AGENTS.md §二.2 means
-by "换模型只改配置，不改代码": adding a third provider means adding one
-:class:`ProviderSpec` to :data:`_PROVIDERS`, not editing callers.
+DeepSeek, Ollama and any third-party gateway implement. That is what
+AGENTS.md §二.2 means by "换模型只改配置，不改代码".
+
+There are three provider names, and the third is the general case:
+``openai_compatible`` takes its base URL, key and model from
+``OPENAI_COMPATIBLE_*`` settings, so a new hosted endpoint is a ``.env``
+edit rather than a code change. ``deepseek`` and ``ollama`` stay as named
+providers only because they are the two the project documents, and each
+has a default base URL worth shipping.
 
 Why httpx rather than the ``openai`` SDK or LangChain
 -----------------------------------------------------
@@ -81,14 +87,32 @@ class EmptyCompletionError(LLMGatewayError):
     """
 
 
+class TruncatedCompletionError(LLMGatewayError):
+    """The provider stopped because it hit ``max_tokens``.
+
+    Distinct from :class:`EmptyCompletionError` and from a plain parse
+    failure because the remedy is different from both: the prompt, the
+    model and the wire protocol are all fine, and the only thing to
+    change is the budget.
+
+    This exists because of a real misdiagnosis (2026-09-16). A reasoning
+    model spent an entire 800-token budget on its hidden reasoning and
+    returned empty content, or a cut-off half-object; downstream that
+    surfaced as "model output is not valid JSON", which reads as a
+    *formatting* problem and sends the reader to the prompt. It was a
+    budget problem. Reporting the truncation at the point where
+    ``finish_reason`` is still visible keeps that distinction.
+    """
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     """Everything that differs between providers.
 
-    Kept as data rather than a subclass per provider: the two differ
-    only in base URL, model name, credential and whether an
-    ``Authorization`` header is sent. Encoding that as behaviour would
-    be two classes and a factory for no gain.
+    Kept as data rather than a subclass per provider: they differ only in
+    base URL, model name, credential and whether an ``Authorization``
+    header is sent. Encoding that as behaviour would be one class per
+    provider and a factory for no gain.
     """
 
     name: str
@@ -104,7 +128,9 @@ class ProviderSpec:
 # Names accepted by ``provider=``. Declared next to the resolver that
 # reads it so the two cannot drift, and before any function body that
 # formats it into an error message.
-_PROVIDER_NAMES: frozenset[str] = frozenset({"deepseek", "ollama"})
+_PROVIDER_NAMES: frozenset[str] = frozenset(
+    {"deepseek", "ollama", "openai_compatible"}
+)
 
 
 def _resolve_provider(provider: Optional[str] = None) -> ProviderSpec:
@@ -144,6 +170,35 @@ def _resolve_provider(provider: Optional[str] = None) -> ProviderSpec:
             model=settings.ollama_model,
             api_key="",
             send_auth=False,
+        )
+
+    if name in ("openai_compatible", "openai-compatible"):
+        # The escape hatch for everything that is not DeepSeek or Ollama:
+        # set the three ``OPENAI_COMPATIBLE_*`` values and this provider
+        # reaches it. Required here are only the two values with no
+        # sensible default — a base URL and a model name. The key is
+        # optional; see the field comment in ``config.py``.
+        if not settings.openai_compatible_base_url.strip():
+            raise LLMConfigError(
+                "LLM_PROVIDER=openai_compatible but "
+                "OPENAI_COMPATIBLE_BASE_URL is empty. Set it in "
+                "sidecar/.env (e.g. https://host/v1)."
+            )
+        if not settings.openai_compatible_model.strip():
+            raise LLMConfigError(
+                "LLM_PROVIDER=openai_compatible but "
+                "OPENAI_COMPATIBLE_MODEL is empty. Set it in sidecar/.env."
+            )
+        api_key = settings.openai_compatible_api_key.strip()
+        return ProviderSpec(
+            name="openai_compatible",
+            base_url=settings.openai_compatible_base_url,
+            model=settings.openai_compatible_model,
+            api_key=api_key,
+            # Sent only when there is one: a self-hosted endpoint with no
+            # auth rejects a request carrying a bogus header, the same
+            # reason Ollama's is off.
+            send_auth=bool(api_key),
         )
 
     known = ", ".join(sorted(_PROVIDER_NAMES))
@@ -198,6 +253,7 @@ def _extract_content(body: Any) -> str:
 
     Raises:
         LLMRequestError: The body is not the expected shape.
+        TruncatedCompletionError: The provider hit ``max_tokens``.
         EmptyCompletionError: The shape is right but the text is blank.
     """
     if not isinstance(body, dict):
@@ -210,6 +266,18 @@ def _extract_content(body: Any) -> str:
     first = choices[0]
     if not isinstance(first, dict):
         raise LLMRequestError("First choice was not an object")
+
+    # Checked before the content is even inspected: when the model was cut
+    # off, whatever it did manage to emit is not a usable answer, and
+    # saying so is more useful than describing the shape of the fragment.
+    # Providers disagree on whether this is "length" or "max_tokens", so
+    # both are accepted.
+    if first.get("finish_reason") in ("length", "max_tokens"):
+        raise TruncatedCompletionError(
+            "Provider hit the max_tokens limit before finishing. The reply "
+            "is incomplete; raise settings.llm_max_tokens (reasoning models "
+            "bill their hidden reasoning against the same budget)."
+        )
 
     message = first.get("message")
     if not isinstance(message, dict):
@@ -256,6 +324,7 @@ def chat_completion(
         LLMConfigError: Misconfiguration detected before the request.
         LLMConnectionError: The provider could not be reached.
         LLMRequestError: The provider rejected or failed the request.
+        TruncatedCompletionError: The provider hit ``max_tokens``.
         EmptyCompletionError: The provider returned no usable content.
     """
     if not messages:

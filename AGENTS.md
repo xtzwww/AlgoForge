@@ -168,7 +168,7 @@
 
 ```env
 # LLM
-LLM_PROVIDER=deepseek          # deepseek | ollama
+LLM_PROVIDER=deepseek          # deepseek | ollama | openai_compatible
 DEEPSEEK_API_KEY=sk-xxx
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-coder
@@ -176,6 +176,28 @@ DEEPSEEK_MODEL=deepseek-coder
 # Ollama（可选）
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5-coder:7b
+
+# 其他 OpenAI 兼容端点（Agnes AI / vLLM / LM Studio …）
+# 设 LLM_PROVIDER=openai_compatible 并填这三个值即可接入，不改代码。
+# 若服务需要版本段，请把它写进 BASE_URL——网关只在 URL 不带版本段时
+# 才补 `/v1`。KEY 可留空（自建无鉴权服务是合法的），留空时不发该头。
+# 两种拼写 openai_compatible / openai-compatible 都接受。
+OPENAI_COMPATIBLE_BASE_URL=
+OPENAI_COMPATIBLE_API_KEY=
+OPENAI_COMPATIBLE_MODEL=
+
+# 分析调用的回复 token 上限。是上限不是目标：模型自己写完就停，只按实际
+# 用量计费，调高对简洁模型零成本；调太低则是硬失败——回复被截断，JSON
+# 解析器只会报「不是合法 JSON」，把预算问题误报成格式问题。
+# 推理模型（如 agnes-2.5-flash）的隐藏推理同样计入该预算，需调高约一个
+# 数量级（实测 16000 才收敛，8000 时返回空内容）。
+LLM_MAX_TOKENS=4096
+
+# 分析调用的单次请求超时（秒）。同样取决于模型：托管端点生成数千 token 比
+# 本地 3B 模型写一句话慢得多。设太短不会报配置错误，而是以
+# `LLMConnectionError: timed out` 出现，并被 P2-5 计为「模型答错」——
+# 实测 60s 默认值下 20 道用例里丢了 2 道。
+LLM_TIMEOUT=60
 
 # LangSmith（可选）
 LANGSMITH_API_KEY=lsvt_xxx
