@@ -7,11 +7,16 @@ knowledge_tags:
   - 基础语法
   - 条件分支
 difficulty: easy
-expected_root_cause: boundary_condition
+expected_root_cause: inverted_condition
 observable_verdict: WA
 notes: |
   最小值表达式写成了 `a < b ? b : a`，在 a != b 时返回的是较大者。
   a == b 时结果碰巧正确，所以只有不等输入才暴露。典型"比较方向写反"。
+
+  2026-09-16 修正标签：原先标为 `boundary_condition`，但那条描述是
+  「空/单个/0/极值等边界取值下逻辑不成立」——本用例的错因与取值是否处于
+  边界无关（任意 a != b 都错），notes 自己也写的是「比较方向写反」。
+  标签与理由互相矛盾，故改为 `inverted_condition`。
 wrong_code: |
   #include <iostream>
   using namespace std;

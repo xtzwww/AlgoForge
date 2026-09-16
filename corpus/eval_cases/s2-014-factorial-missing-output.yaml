@@ -7,11 +7,17 @@ knowledge_tags:
   - 数学
   - 边界条件
 difficulty: medium
-expected_root_cause: no_output_on_edge
+expected_root_cause: boundary_condition
 observable_verdict: WA
 notes: |
   用 `while (n > 0)` 累加 n/5，但输入 n == 0 时循环一次都不执行，
   同时也没有兜底输出，程序不打印任何内容。对 n=0 应当输出 0。
+
+  2026-09-16 修正标签：原先标为 `no_output_on_edge`。该标签已从 taxonomy
+  移除——「什么都没输出」是**表象**，不是根因，而 taxonomy 收的是根因；
+  且它与 `boundary_condition` 在本用例上重叠（n==0 正是一个边界取值，
+  而分支是齐的，只是循环条件在 n==0 时不成立）。
+  保留表象标签会让本用例按定义就存在两个正确答案。
 wrong_code: |
   #include <iostream>
   using namespace std;

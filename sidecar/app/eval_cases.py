@@ -31,40 +31,70 @@ from typing import Any
 #
 # Grouped by the phase of the solution they affect, which is also a
 # useful hint ordering for prompts.
+#
+# Every label names a *cause*, not an observable. `no_output_on_edge`
+# used to sit in the I/O group and was removed on 2026-09-16: "prints
+# nothing" describes a symptom, and on its only eval case the cause was
+# an unhandled boundary input. Keeping a symptom label competing with a
+# cause label made that case ambiguous by construction. `inverted_condition`
+# took the slot — the case whose notes called it "比较方向写反" had no
+# honest home, since `off_by_one` covers index arithmetic, not operators.
 ROOT_CAUSE_LABELS: tuple[str, ...] = (
     # --- Understanding / modelling ---
     "misread_problem",      # solved a different problem than asked
     "wrong_complexity",     # correct logic, but too slow / too much memory
     # --- Algorithm choice ---
     "wrong_algorithm",      # chose an approach that cannot solve the problem
-    "missing_case",         # algorithm ignores a required situation
+    "missing_case",         # a required branch was never written
     # --- Boundaries ---
     "off_by_one",           # loop bounds / array indices wrong at the edge
-    "boundary_condition",   # empty / single / min / max input not handled
+    "boundary_condition",   # edge *values* break otherwise-correct logic
+    "inverted_condition",   # comparison / condition written the wrong way round
     "overflow",             # result exceeds the integer type used
     # --- Data handling ---
     "wrong_data_type",      # float where int needed, signed vs unsigned, etc.
     "uninitialized_state",  # accumulator / DP table / visited array not reset
     "wrong_traversal",      # wrong order: BFS vs DFS, reversed, skipping
     # --- I/O ---
-    "io_format_error",      # missing/misplaced newline, spacing, delimiter
-    "no_output_on_edge",    # prints nothing for a valid input case
+    "io_format_error",      # correct content, wrong spelling of it
 )
 
 # Human-readable Chinese descriptions, useful for prompts and reports.
+#
+# These are rendered verbatim into the prompt (see
+# ``prompts/loader.py::render_taxonomy``), so each one has to be
+# *single-line* — ``test_taxonomy_has_one_line_per_label`` counts lines —
+# and each one has to be discriminating, because this is the only place
+# the model learns where the labels' boundaries are.
+#
+# The wording was tightened on 2026-09-16 after measuring 35% on the eval
+# set. Several descriptions were narrower than the label they described
+# (``wrong_data_type`` omitted signed/unsigned even though the code
+# comment above has it; ``io_format_error`` never mentioned case, which is
+# the whole point of one of its two cases). Others did not say where the
+# boundary with a neighbouring label lies, so the model had to guess:
+# `wrong_traversal` and `wrong_algorithm` both claimed BFS-vs-DFS, and
+# `boundary_condition` / `missing_case` overlapped on "the input was 0".
 ROOT_CAUSE_DESCRIPTIONS: dict[str, str] = {
     "misread_problem": "理解错题意，求解了与题目要求不同的问题",
     "wrong_complexity": "思路正确但复杂度过高，导致超时或超内存",
-    "wrong_algorithm": "选择了无法正确求解该问题的算法",
-    "missing_case": "算法遗漏了必须处理的分支或情况",
-    "off_by_one": "循环边界或下标偏移差一",
-    "boundary_condition": "未处理空/单元素/极值等边界输入",
-    "overflow": "中间或最终结果超出所用整数类型范围",
-    "wrong_data_type": "数据类型选择错误（如该用整数却用浮点）",
+    "wrong_algorithm": "算法选错，换一种遍历或搜索方式也救不了（如该用 DP 却用了贪心）",
+    "missing_case": "漏写了必须处理的一个分支（如 if/else 少一支、漏了重复元素）",
+    "off_by_one": "循环边界或下标偏移差一，中间尺度的输入也会错",
+    "boundary_condition": "分支齐全，但空/单个/0/极值等边界取值下逻辑不成立",
+    "inverted_condition": "比较方向或条件写反（如求最小值却返回较大者、< 写成 <=）",
+    "overflow": "结果超出所用整数类型的表示范围（中间表达式里溢出也算）",
+    "wrong_data_type": "类型选错：该用浮点却用整数、该用有符号却用无符号",
     "uninitialized_state": "累加器/DP 表/访问标记未初始化或未重置",
-    "wrong_traversal": "遍历顺序错误（BFS 与 DFS 混用、方向颠倒等）",
-    "io_format_error": "输出格式错误（换行、空格、分隔符不符）",
-    "no_output_on_edge": "对合法输入未输出任何内容",
+    # Wrapped in parentheses for the line-length limit only: the value is
+    # still one line at runtime, which ``render_taxonomy`` and
+    # ``test_taxonomy_has_one_line_per_label`` both require.
+    "wrong_traversal": (
+        "遍历或搜索的顺序/方向错误，换一种遍历方式就能对（如该用 BFS 却用了 DFS）"
+    ),
+    "io_format_error": (
+        "内容算对了，只是输出形式不符（分隔符、大小写、多余或缺失的空格换行）"
+    ),
 }
 
 
