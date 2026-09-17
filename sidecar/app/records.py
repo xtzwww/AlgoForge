@@ -74,7 +74,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -253,6 +253,7 @@ def _analyse_and_annotate(
     result: JudgeResult,
     context: SubmissionContext,
     statement: str = "",
+    on_event: Optional[Callable[[Any], None]] = None,
 ) -> None:
     """Run P2-3's analysis on a failing submission and fill in the entry.
 
@@ -278,6 +279,9 @@ def _analyse_and_annotate(
         result: The verdict, used for the failing case's I/O.
         context: The submission, for the source and problem id.
         statement: Problem statement, when the caller has it.
+        on_event: Sink for tool-call notifications, so a WebSocket client
+            can watch the Agent work (P2-8). ``None`` for the REST route,
+            which has no stream to put them on.
     """
     # Imported lazily: this module is imported by the judge routes, and
     # app.agent pulls in app.llm.gateway which pulls in httpx. Keeping the
@@ -292,6 +296,27 @@ def _analyse_and_annotate(
     if failing is None:
         return
 
+    # P2-8's event vocabulary for the analysis phase. Emitted from here
+    # rather than from the transport because this function is the only
+    # place that knows whether an analysis is happening at all: a
+    # submission that passes, or one with no problem row, never reaches
+    # the code below, and a client that showed "Agent 分析中…" for those
+    # would be watching a spinner for work that was never scheduled.
+    def _tool_event(record: Any) -> None:
+        if on_event is None:
+            return
+        on_event(
+            {
+                "type": "agent_tool",
+                "name": record.name,
+                "ok": record.ok,
+                "result": record.result,
+            }
+        )
+
+    if on_event is not None:
+        on_event({"type": "agent_start", "verdict": result.status.value})
+
     outcome = analyze_error(
         code=context.code,
         stdin=failing.input,
@@ -299,7 +324,25 @@ def _analyse_and_annotate(
         actual=failing.actual_output,
         statement=statement,
         verdict=result.status.value,
+        # P2-8: the Agent gets to run the code before deciding. The
+        # text-only path stays available and is what P2-5's accuracy gate
+        # measures, but the product should use the better-informed one.
+        use_tools=True,
+        on_event=_tool_event,
     )
+
+    if on_event is not None:
+        on_event(
+            {
+                "type": "agent_done",
+                "ok": outcome.ok,
+                "error": outcome.error,
+                "error_type": (
+                    str(outcome.result.error_type) if outcome.result else None
+                ),
+                "tools": outcome.tool_names,
+            }
+        )
 
     if not outcome.ok or outcome.result is None:
         logger.info(
@@ -390,6 +433,7 @@ def record_submission(
     context: SubmissionContext,
     *,
     session: Optional[Session] = None,
+    on_event: Optional[Callable[[Any], None]] = None,
 ) -> Optional[int]:
     """Store a finished judge run and return the new submission's id.
 
@@ -402,6 +446,10 @@ def record_submission(
         session: Session to write through. Defaults to a fresh synchronous
             session from :func:`app.db.get_session`. Tests pass an
             in-memory session; production leaves it out.
+        on_event: Sink for the Agent's tool-call notifications (P2-8).
+            The WS route passes one so the client can watch the analysis;
+            the REST route passes nothing and the notifications are simply
+            not made.
 
     Returns:
         The id of the stored submission, or ``None`` if nothing could be
@@ -420,11 +468,25 @@ def record_submission(
     try:
         if session is not None:
             return _write(
-                session, result, context, stdout, stderr, exec_time, memory_used
+                session,
+                result,
+                context,
+                stdout,
+                stderr,
+                exec_time,
+                memory_used,
+                on_event=on_event,
             )
         with get_session() as owned:
             return _write(
-                owned, result, context, stdout, stderr, exec_time, memory_used
+                owned,
+                result,
+                context,
+                stdout,
+                stderr,
+                exec_time,
+                memory_used,
+                on_event=on_event,
             )
     except Exception:
         logger.exception(
@@ -444,6 +506,7 @@ def _write(
     stderr: str,
     exec_time: Optional[float],
     memory_used: Optional[int],
+    on_event: Optional[Callable[[Any], None]] = None,
 ) -> int:
     """Insert the submission and, for a wrong answer, archive the mistake."""
     submission = Submission(
@@ -479,7 +542,7 @@ def _write(
                 # provider takes to answer.
                 session.commit()
                 _analyse_and_annotate(
-                    entry, result, context, _assemble_statement(problem)
+                    entry, result, context, _assemble_statement(problem), on_event
                 )
                 session.commit()
                 return submission.id

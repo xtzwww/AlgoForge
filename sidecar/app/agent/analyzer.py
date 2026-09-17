@@ -35,7 +35,7 @@ returned :class:`AnalysisOutcome`'s error.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from app.agent.schemas import (
     ErrorAnalysisParseError,
@@ -45,6 +45,11 @@ from app.agent.schemas import (
 from app.config import settings
 from app.llm.gateway import LLMGatewayError, chat_completion
 from app.prompts import loader
+
+if TYPE_CHECKING:
+    # Annotation-only: the tool stack (P2-6/P2-7) pulls in the sandbox, and
+    # a text-only analysis has no reason to import it. See _analyse_once.
+    from app.agent.tool_caller import ToolCallRecord
 
 # Prompt template this module drives. Named here so the template and the
 # call site stay in one place.
@@ -69,6 +74,18 @@ DEFAULT_TEMPERATURE = 0.0
 # a hosted endpoint producing thousands of tokens outlasts the gateway's
 # 60s default, and the resulting timeout is scored as a *model* miss.
 
+# Model round trips allowed per attempt when the tools are enabled. Two
+# would be the bare minimum — one to ask for the code to be run, one to
+# read the result and answer — so three leaves room for a second look
+# without letting a confused model run up a bill.
+#
+# Note the worst case is ``max_attempts * DEFAULT_TOOL_STEPS`` round
+# trips, because the parse-failure retry re-enters the loop. That matters
+# more than it looks: this runs while the student is waiting for
+# ``judge_done`` (the analysis happens before the terminal event), so the
+# budget is a latency decision as much as a cost one.
+DEFAULT_TOOL_STEPS = 3
+
 
 @dataclass
 class AnalysisOutcome:
@@ -85,15 +102,51 @@ class AnalysisOutcome:
     result: Optional[ErrorAnalysisResult] = None
     error: Optional[str] = None
     # How many gateway calls were made. 2 means the retry fired, which is
-    # worth being able to count across the eval set.
+    # worth being able to count across the eval set. With ``use_tools``
+    # this counts *attempts*, each of which may itself be several model
+    # round trips (see ``tool_calls``).
     attempts: int = 0
     # Labels the model produced that failed validation, in order. Useful
     # for diagnosing a systematic prompt problem.
     rejected: list[str] = field(default_factory=list)
+    # Every tool the model called, across all attempts, in order. Empty on
+    # the text-only path. P2-8 streams these to the frontend as they
+    # happen; keeping them on the outcome as well means a caller can show
+    # what the Agent did after the fact without having captured a stream.
+    tool_calls: list[ToolCallRecord] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return self.result is not None
+
+    @property
+    def tool_names(self) -> list[str]:
+        """Names of the tools called, in order, with repeats kept."""
+        return [call.name for call in self.tool_calls]
+
+
+# The prompt's tool section, which has to differ by mode. Telling a model
+# about tools it has not been given invites it to write out a call as text
+# and then wonder why nothing happened; telling it there are no tools when
+# there are makes it guess instead of looking.
+_TOOL_GUIDANCE_WITH_TOOLS = """\
+## 可用工具
+
+你可以先调用工具取得证据，再下结论：
+
+- `run_code`：编译并运行这段代码，看到它**真实的**输出。当你不确定某段表达式
+  到底会算出什么、或想确认某个分支是否被走到时，用它。
+- `judge`：把代码对着测试用例判题，返回每个用例的实际输出。
+
+**当现有信息不足以确定错因时，先用工具取得证据再下结论**；如果工具返回的
+结果与你的推测冲突，以工具的结果为准。证据够了就直接作答，不必为了用工具而用。
+调用完工具后，仍然按下面的格式只输出一个 JSON 对象。"""
+
+_TOOL_GUIDANCE_WITHOUT_TOOLS = """\
+## 可用工具
+
+本次你没有可用工具，只能根据上面给出的代码、输入和输出推断。不要描述你
+「将会」运行什么——直接给出结论。"""
 
 
 def _render_prompt(
@@ -105,6 +158,7 @@ def _render_prompt(
     statement: str,
     verdict: str,
     extra_context: Optional[str] = None,
+    use_tools: bool = False,
 ) -> str:
     """Assemble the analysis prompt for one submission."""
     taxonomy = loader.render_taxonomy()
@@ -117,6 +171,11 @@ def _render_prompt(
         "statement": statement,
         "code": code,
         "root_cause_taxonomy": taxonomy,
+        "tool_guidance": (
+            _TOOL_GUIDANCE_WITH_TOOLS
+            if use_tools
+            else _TOOL_GUIDANCE_WITHOUT_TOOLS
+        ),
     }
 
     # ``statement`` is optional metadata (a judge call from the
@@ -161,12 +220,48 @@ def _correction_prompt(previous: str, problem: str) -> str:
     )
 
 
-def _analyse_once(messages: list[dict[str, str]]) -> tuple[str, Optional[str]]:
-    """Make one gateway call.
+def _analyse_once(
+    messages: list[dict[str, str]],
+    *,
+    use_tools: bool = False,
+    on_event: Optional[Callable[[ToolCallRecord], None]] = None,
+    max_steps: int = DEFAULT_TOOL_STEPS,
+) -> tuple[str, Optional[str], list[ToolCallRecord]]:
+    """Make one attempt at an analysis.
+
+    Args:
+        messages: The conversation so far.
+        use_tools: Offer the P2-6 tools and let the model run the code
+            before answering. This is the P2-8 production path; the
+            text-only path is what P2-5's accuracy gate measures.
+        on_event: Called with each tool call as it completes, for
+            streaming (P2-8).
+        max_steps: Model round trips allowed per attempt on the tool path.
 
     Returns:
-        ``(raw_text, error)`` — exactly one of the two is meaningful.
+        ``(raw_text, error, tool_calls)`` — ``error`` is ``None`` on
+        success, and the tool calls are returned either way so a caller
+        can see what the Agent did even when it then failed.
     """
+    if use_tools:
+        # Imported lazily so a text-only analysis does not drag the
+        # sandbox (and the compiler it shells out to) into the import
+        # graph. records.py relies on that to keep the judge routes light.
+        from app.agent.tool_caller import run_with_tools
+
+        loop = run_with_tools(
+            messages,
+            max_steps=max_steps,
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=settings.llm_max_tokens,
+            timeout=settings.llm_timeout,
+            on_tool_call=on_event,
+        )
+        if not loop.ok:
+            reason = loop.error or f"the tool loop stopped: {loop.stop_reason}"
+            return "", reason, loop.calls
+        return loop.content, None, loop.calls
+
     try:
         return (
             chat_completion(
@@ -176,9 +271,10 @@ def _analyse_once(messages: list[dict[str, str]]) -> tuple[str, Optional[str]]:
                 timeout=settings.llm_timeout,
             ),
             None,
+            [],
         )
     except LLMGatewayError as exc:
-        return "", f"{type(exc).__name__}: {exc}"
+        return "", f"{type(exc).__name__}: {exc}", []
 
 
 def analyze_error(
@@ -191,6 +287,9 @@ def analyze_error(
     verdict: str = "WA",
     extra_context: Optional[str] = None,
     max_attempts: int = 2,
+    use_tools: bool = False,
+    on_event: Optional[Callable[[ToolCallRecord], None]] = None,
+    max_steps: int = DEFAULT_TOOL_STEPS,
 ) -> AnalysisOutcome:
     """Analyse why ``code`` produced ``actual`` instead of ``expected``.
 
@@ -205,13 +304,26 @@ def analyze_error(
             model can tell "wrong answer" from "too slow".
         extra_context: Retrieved knowledge to append to the code block
             (P2-17). ``None`` until RAG exists.
-        max_attempts: Total gateway calls allowed, including the first.
+        max_attempts: Total attempts allowed, including the first.
             Defaults to 2 — the spec's "重试一次".
+        use_tools: Let the model run the code (P2-6/P2-7) before
+            answering. Off by default so the text-only path P2-5's
+            accuracy gate measures stays reachable and unchanged; P2-4's
+            recording path turns it on.
+        on_event: Called with each tool call as it completes, for
+            streaming to a client (P2-8).
+        max_steps: Model round trips per attempt when ``use_tools``.
 
     Returns:
         An :class:`AnalysisOutcome`. ``outcome.ok`` is False when the
         analysis could not be produced; the caller decides what to do
         about that, and P2-4's answer is "leave the entry unanalysed".
+
+    Note:
+        With ``use_tools`` the worst case is ``max_attempts * max_steps``
+        model round trips plus one compile-and-run per ``run_code`` call.
+        That cost is paid while the student waits for ``judge_done``, so
+        both budgets are latency decisions, not just cost ones.
 
     Never raises for an LLM-side failure: see the module docstring.
     """
@@ -231,14 +343,24 @@ def analyze_error(
         statement=statement,
         verdict=verdict,
         extra_context=extra_context,
+        use_tools=use_tools,
     )
     messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
 
     outcome = AnalysisOutcome()
 
     for attempt in range(1, max_attempts + 1):
-        raw, gateway_error = _analyse_once(messages)
+        raw, gateway_error, tool_calls = _analyse_once(
+            messages,
+            use_tools=use_tools,
+            on_event=on_event,
+            max_steps=max_steps,
+        )
         outcome.attempts = attempt
+        # Accumulated across attempts, not replaced: a retry that also
+        # used a tool should not erase the first attempt's calls from the
+        # record of what the Agent did.
+        outcome.tool_calls.extend(tool_calls)
 
         if gateway_error is not None:
             outcome.error = gateway_error

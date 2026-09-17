@@ -18,13 +18,17 @@ sys.path.insert(0, str(ROOT / "sidecar"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 from app.config import settings  # noqa: E402
-from test_s2_accuracy import AccuracyReport, _score  # noqa: E402
+from test_s2_accuracy import MEASURED_PATH, AccuracyReport, _score  # noqa: E402
 from app.eval_cases import load_eval_cases  # noqa: E402
 
 print("provider :", settings.llm_provider)
 print("model    :", settings.openai_compatible_model)
 print("max_tok  :", settings.llm_max_tokens)
 print("timeout  :", settings.llm_timeout)
+# Which analysis path produced the number below. P2-8 made the product use
+# the tool loop, so "text-only" here means the figure describes a path the
+# product no longer runs. Set S2_USE_TOOLS=1 to measure the shipped one.
+print("path     :", MEASURED_PATH)
 print("=" * 72)
 
 # Scored one at a time with a line printed as each finishes. The whole

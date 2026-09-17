@@ -50,6 +50,7 @@ labels claim, which is a defect in the set rather than in the model.
 
 from __future__ import annotations
 
+import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Optional
@@ -66,6 +67,36 @@ from app.eval_cases import EvalCase, load_eval_cases
 from app.llm.gateway import LLMConfigError
 from app.sandbox.judge import JudgeStatus, judge
 from app.sandbox.judge import TestCase as JudgeTestCase
+
+
+#: Which analysis path this harness measures.
+#:
+#: P2-8 wired the *product's* recording path to P2-7's tool loop, so the
+#: analysis the user actually gets is now the tool-using one — while this
+#: harness, left alone, would keep measuring the text-only call it was
+#: written for. A gate whose number describes a path that no longer ships
+#: is worse than no gate: it reads as evidence for a decision it no longer
+#: covers.
+#:
+#: Set ``S2_USE_TOOLS=1`` to measure the shipped path. The default stays
+#: off so the P2-5 figure already recorded remains reproducible, and
+#: ``describe()`` states which path produced the number either way.
+def _tool_switch_enabled(raw: str) -> bool:
+    """Read ``S2_USE_TOOLS`` leniently but unambiguously.
+
+    Anything falsy-looking means "text-only", and anything else means
+    "tools" — so ``1``, ``true``, ``yes`` and ``on`` all work. A stricter
+    reading would reject a plausible spelling, and the failure mode is
+    silent: a run meant to measure the shipped path would quietly measure
+    the old one and print a number that looks perfectly fine.
+    """
+    return raw.strip().lower() not in ("", "0", "false", "no", "off")
+
+
+_USE_TOOLS = _tool_switch_enabled(os.environ.get("S2_USE_TOOLS", ""))
+
+#: Human-readable name of the measured path, for the report.
+MEASURED_PATH = "tool-using (P2-8)" if _USE_TOOLS else "text-only (P2-5)"
 
 # Cap on how much of an input/output is pasted into the prompt.
 #
@@ -113,6 +144,11 @@ class CaseOutcome:
     # agent failure, the other is not the model's fault.
     error: Optional[str] = None
     attempts: int = 0
+    # How many tools the Agent called for this case. Non-zero is the
+    # evidence that the tool-using path really was exercised, which is the
+    # difference between "the gate passed with tools" and "the gate passed
+    # because nothing changed".
+    tools_used: int = 0
 
     @property
     def expected(self) -> str:
@@ -180,6 +216,16 @@ class AccuracyReport:
         """
         return sum(max(0, o.attempts - 1) for o in self.outcomes)
 
+    @property
+    def tools_used(self) -> int:
+        """Total tools the Agent called across the set.
+
+        Reported because it is the evidence that a ``tool-using`` run
+        really did use tools: a run where this is zero measured the
+        text-only path no matter what the mode said.
+        """
+        return sum(o.tools_used for o in self.outcomes)
+
     def by_label(self) -> Counter:
         """``label -> (hits, total)`` so a systematic miss is visible."""
         table: dict[str, list[int]] = defaultdict(lambda: [0, 0])
@@ -212,7 +258,9 @@ class AccuracyReport:
         lines = [
             f"accuracy {len(self.hits)}/{len(self.scored)} "
             f"= {self.accuracy:.0%} (gate {ACCURACY_GATE:.0%})",
+            f"measured path: {MEASURED_PATH}",
             f"gateway calls: {self.calls} ({self.retries} retries)",
+            f"tool calls: {self.tools_used}",
         ]
 
         if self.fallbacks:
@@ -374,6 +422,7 @@ def _score(case: EvalCase) -> CaseOutcome:
         # construction and its cases are lost for the wrong reason.
         statement=case.statement,
         verdict=case.observable_verdict,
+        use_tools=_USE_TOOLS,
     )
     assert isinstance(outcome, AnalysisOutcome)
 
@@ -386,6 +435,7 @@ def _score(case: EvalCase) -> CaseOutcome:
         clipped=c1 or c2 or c3,
         error=outcome.error,
         attempts=outcome.attempts,
+        tools_used=len(outcome.tool_calls),
     )
 
 
@@ -641,6 +691,19 @@ def test_the_gate_constant_is_the_one_the_eval_set_owns() -> None:
     """Guards the import: two copies of 0.60 would eventually disagree."""
     assert ACCURACY_GATE == 0.60
     assert 0.0 < ACCURACY_GATE < 1.0
+
+
+def test_the_tool_switch_accepts_the_obvious_spellings() -> None:
+    """``S2_USE_TOOLS`` must not silently mean "off" for a plausible value.
+
+    A silently-ignored switch is the dangerous case: the run reports the
+    text-only number while the operator believes it measured the shipped
+    tool-using path, and nothing in the output says otherwise.
+    """
+    for truthy in ("1", "true", "TRUE", " yes ", "on"):
+        assert _tool_switch_enabled(truthy) is True, truthy
+    for falsy in ("", "  ", "0", "false", "No", "off"):
+        assert _tool_switch_enabled(falsy) is False, falsy
 
 
 def test_clip_leaves_short_values_untouched() -> None:

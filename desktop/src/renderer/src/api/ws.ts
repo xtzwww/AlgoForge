@@ -11,7 +11,15 @@ import type { TestCaseIn } from './judge'
 import { runtime } from '../runtime'
 
 export type JudgeEventType =
-  'compile_start' | 'compile_done' | 'case_start' | 'case_done' | 'judge_done' | 'judge_error'
+  | 'compile_start'
+  | 'compile_done'
+  | 'case_start'
+  | 'case_done'
+  | 'agent_start'
+  | 'agent_tool'
+  | 'agent_done'
+  | 'judge_done'
+  | 'judge_error'
 
 export interface JudgeEvent {
   type: JudgeEventType
@@ -33,6 +41,28 @@ export interface JudgeEvent {
   compile_output?: string
   // judge_error
   error?: string
+
+  // --- Agent phase (P2-8) --------------------------------------------
+  // These arrive *before* `judge_done`, because the analysis runs inside
+  // the recording step, which the sidecar completes before announcing the
+  // terminal event. A client that treated the first agent event as the
+  // end would miss the verdict.
+  /** agent_start: the judge verdict that triggered the analysis. */
+  verdict?: string
+  /** agent_tool: which tool ran, and whether it succeeded. */
+  name?: string
+  ok?: boolean
+  /**
+   * agent_tool: what the tool returned — the same object the model was
+   * given. Shape depends on the tool (`run_code` returns `stdout` /
+   * `exit_code` / `timed_out`, `judge` returns a verdict and per-case
+   * detail), so it is rendered generically rather than typed per tool.
+   */
+  result?: Record<string, unknown>
+  /** agent_done: the label the Agent settled on, or null if it failed. */
+  error_type?: string | null
+  /** agent_done: names of the tools called, in order. */
+  tools?: string[]
 }
 
 export interface WsJudgeRequest {

@@ -157,10 +157,20 @@ def client(
     the same way — ``record_submission`` opens its own session — so
     sharing one here would test a topology the app never uses.
     """
-    def _record(result: object, context: object) -> None:
+    def _record(result: object, context: object, **kwargs: object) -> None:
+        # ``**kwargs`` carries P2-8's ``on_event`` sink from the WS route
+        # down to the real recorder. Naming only the first two arguments
+        # made the route raise ``TypeError`` mid-judge, which surfaced as a
+        # ``judge_error`` event and took out every test that goes through
+        # this hook — the recording under test never happened.
         SessionLocal = sessionmaker(engine, expire_on_commit=False)
         with SessionLocal() as write_session:
-            record_submission(result, context, session=write_session)  # type: ignore[arg-type]
+            record_submission(
+                result,  # type: ignore[arg-type]
+                context,  # type: ignore[arg-type]
+                session=write_session,
+                **kwargs,  # type: ignore[arg-type]
+            )
 
     monkeypatch.setattr(judge_module, "record_judge_outcome", _record)
     monkeypatch.setattr(ws_module, "record_judge_outcome", _record)

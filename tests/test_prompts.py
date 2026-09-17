@@ -213,6 +213,7 @@ def test_error_analysis_prompt_asks_for_the_full_variable_set():
         "statement",
         "code",
         "root_cause_taxonomy",
+        "tool_guidance",
     }
 
 
@@ -258,6 +259,7 @@ def test_rendering_the_real_prompt_leaves_no_placeholders():
         statement="输出两数之积。",
         code="int a, b; std::cin >> a >> b; std::cout << a * b;",
         root_cause_taxonomy=loader.render_taxonomy(),
+        tool_guidance="（本次测试：工具说明占位。）",
     )
 
     assert "{{" not in rendered

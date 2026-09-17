@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * OutputPanel — the judge's progress and verdict, rendered (P1-16, PU-8).
+ * OutputPanel — the judge's progress and verdict, rendered (P1-16, PU-8, P2-8).
  *
  * Layout, top to bottom:
  *
@@ -9,6 +9,8 @@
  *   ├───────────────────────────────────────────────────────┤
  *   │  Verdict summary: [AC] 通过 5 / 5                     │
  *   │  Per-case cards: [WA] 用例 2  期望/实际 diff           │
+ *   ├───────────────────────────────────────────────────────┤
+ *   │  Agent 分析: 调了哪些工具 / 工具返回什么 / 结论         │
  *   ├───────────────────────────────────────────────────────┤
  *   │  ▸ 原始事件流 (12)          ← collapsed by default     │
  *   └───────────────────────────────────────────────────────┘
@@ -28,6 +30,20 @@
  * 3. *Verdict colours come from `VerdictBadge`.* The local
  *    `statusColor()` switch is gone; see that component for why one copy
  *    of the `JudgeStatus` palette has to exist rather than four.
+ *
+ * **What P2-8 added.** The Agent now runs *after* the verdict, before the
+ * terminal event, and the sidecar streams what it did: `agent_start`,
+ * one `agent_tool` per tool call, then `agent_done`. Two consequences
+ * shape this file:
+ *
+ * * The Agent section is the only part of the panel that describes
+ *   something other than judging, so it says what the tools *returned*
+ *   rather than only that they ran. "Agent 调用了 run_code" is not
+ *   information; "run_code 输出 21" is.
+ * * The progress header has to survive past the last case. The bar is
+ *   full by then, and the old `completedCases < totalCases` guard hid the
+ *   phase line at exactly the moment the user most needs to know that
+ *   something is still happening.
  *
  * **Why the panel owns no state.** The parent streams events in and owns
  * the run; this component derives everything it shows. What it derives
@@ -123,6 +139,12 @@ const phaseLabel = computed<string>(() => {
       return `正在运行用例 ${(last.index ?? 0) + 1}`
     case 'case_done':
       return '继续下一个用例…'
+    case 'agent_start':
+      return '判题结束，Agent 正在分析错因…'
+    case 'agent_tool':
+      return 'Agent 正在分析错因…'
+    case 'agent_done':
+      return '分析完成，正在收尾…'
     default:
       return '正在收尾…'
   }
@@ -152,6 +174,97 @@ const isCompileOnly = computed<boolean>(
   () => props.result !== null && props.result.total === 0 && !!props.result.compile_output
 )
 
+// --- Agent phase (P2-8) --------------------------------------------------
+
+/**
+ * Whether the stream mentioned the Agent at all.
+ *
+ * A passing submission, a scratch run and a run with no problem row never
+ * reach the analysis, so they never emit these events. Gating the whole
+ * section on this keeps the panel from showing an empty "Agent 分析" box
+ * that would read as "the analysis was skipped for an unknown reason".
+ */
+const hasAgentPhase = computed<boolean>(() => props.events.some((e) => e.type.startsWith('agent_')))
+
+/** The Agent's tool calls, in the order the stream reported them. */
+const agentToolEvents = computed<JudgeEvent[]>(() =>
+  props.events.filter((e) => e.type === 'agent_tool')
+)
+
+/**
+ * True while the analysis is in flight — started, not yet finished.
+ *
+ * Derived from the events rather than from `isRunning`, because the judge
+ * itself has already finished by then: every case is done and the bar is
+ * full, yet the run is not over.
+ */
+const agentRunning = computed<boolean>(() => {
+  let started = false
+  let done = false
+  for (const ev of props.events) {
+    if (ev.type === 'agent_start') started = true
+    if (ev.type === 'agent_done') done = true
+  }
+  return started && !done
+})
+
+/** The finished analysis, or `null` while it is still running. */
+const agentDone = computed<JudgeEvent | null>(() => {
+  for (let i = props.events.length - 1; i >= 0; i -= 1) {
+    if (props.events[i].type === 'agent_done') return props.events[i]
+  }
+  return null
+})
+
+/** Cap a long single-line gist without cutting mid-character. */
+function truncate(text: string, limit: number): string {
+  return text.length <= limit ? text : `${text.slice(0, limit)}…`
+}
+
+/**
+ * A one-line gist of what a tool returned.
+ *
+ * `result` is the tool's own object and its shape differs per tool, so
+ * each field is read defensively. That is deliberate rather than lazy:
+ * P2-13 adds tools this build has never seen, and the panel should show
+ * something honest for those instead of `[object Object]`. The `ok: false`
+ * case is checked first because it is the one shape every tool shares.
+ */
+function toolSummary(ev: JudgeEvent): string {
+  const result = ev.result
+  if (!result) return ev.ok === false ? '失败' : '完成'
+
+  if (result.ok === false) {
+    return typeof result.error === 'string' ? result.error : '工具报告失败'
+  }
+  if (result.timed_out === true) return '运行超时'
+  if (typeof result.stdout === 'string') {
+    const printed = result.stdout.trim()
+    return printed ? `输出：${truncate(printed, 60)}` : '程序没有输出'
+  }
+  if (typeof result.status === 'string') {
+    return `判题结论 ${result.status}（${String(result.passed ?? '?')}/${String(result.total ?? '?')}）`
+  }
+  return '完成'
+}
+
+/**
+ * The tool's full result, pretty-printed for the disclosure.
+ *
+ * Serialised here rather than rendered field by field so a tool added
+ * later is still inspectable without touching this component — the point
+ * of the disclosure is to answer "what exactly came back".
+ */
+function toolResultJson(ev: JudgeEvent): string {
+  try {
+    return JSON.stringify(ev.result ?? {}, null, 2)
+  } catch {
+    // A circular or otherwise unserialisable value. Showing that beats
+    // throwing inside a template render and blanking the whole panel.
+    return '（结果无法序列化）'
+  }
+}
+
 function eventLabel(type: string): string {
   switch (type) {
     case 'compile_start':
@@ -162,6 +275,12 @@ function eventLabel(type: string): string {
       return '用例开始'
     case 'case_done':
       return '用例完成'
+    case 'agent_start':
+      return 'Agent 开始分析'
+    case 'agent_tool':
+      return 'Agent 调用工具'
+    case 'agent_done':
+      return 'Agent 分析完成'
     case 'judge_done':
       return '判题完成'
     case 'judge_error':
@@ -188,7 +307,16 @@ function eventLabel(type: string): string {
       </div>
       <div class="progress-meta">
         <span class="progress-count"> 用例 {{ completedCases }} / {{ totalCases || '?' }} </span>
-        <span v-if="currentCase !== null && completedCases < totalCases" class="progress-phase">
+        <!--
+          The phase line stays visible during the Agent phase even though
+          every case is done: the bar is full by then but the run is not
+          over, and hiding the line at that moment would make a working
+          Agent look like a finished run.
+        -->
+        <span
+          v-if="currentCase !== null && (completedCases < totalCases || agentRunning)"
+          class="progress-phase"
+        >
           · {{ phaseLabel }}
         </span>
       </div>
@@ -243,6 +371,50 @@ function eventLabel(type: string): string {
       </ul>
     </div>
 
+    <!--
+      Agent analysis (P2-8). Sits between the verdict and the raw log
+      because it is the answer to "why did this fail?", which is the
+      question the per-case diff raises but cannot answer.
+    -->
+    <section v-if="hasAgentPhase" class="agent-panel">
+      <div class="agent-header">
+        <h3>Agent 分析</h3>
+        <span v-if="agentRunning" class="agent-state">分析中…</span>
+        <span v-else-if="agentDone?.ok" class="agent-state">
+          错因：<code>{{ agentDone.error_type ?? '（未给出）' }}</code>
+        </span>
+        <span v-else class="agent-state agent-state-failed">分析未完成</span>
+      </div>
+
+      <p v-if="agentDone && !agentDone.ok && agentDone.error" class="agent-error">
+        {{ agentDone.error }}
+      </p>
+
+      <!--
+        An analysis that used no tools is a normal outcome — the model is
+        allowed to answer from the code alone — so it is stated rather
+        than left as a blank space the reader has to interpret.
+      -->
+      <p v-if="!agentToolEvents.length && !agentRunning" class="agent-note">
+        Agent 没有调用工具，直接给出了结论。
+      </p>
+
+      <ul v-if="agentToolEvents.length" class="agent-tools">
+        <li v-for="(ev, i) in agentToolEvents" :key="i" class="agent-tool">
+          <details>
+            <summary class="agent-tool-head">
+              <code class="agent-tool-name">{{ ev.name }}</code>
+              <span class="agent-tool-ok" :class="{ 'agent-tool-bad': ev.ok === false }">
+                {{ ev.ok === false ? '失败' : '成功' }}
+              </span>
+              <span class="agent-tool-gist">{{ toolSummary(ev) }}</span>
+            </summary>
+            <pre class="agent-tool-raw">{{ toolResultJson(ev) }}</pre>
+          </details>
+        </li>
+      </ul>
+    </section>
+
     <!-- Empty state: running but not yet anything to show -->
     <div v-if="props.isRunning && props.events.length === 0 && !props.errorMsg" class="placeholder">
       等待判题事件…
@@ -275,6 +447,13 @@ function eventLabel(type: string): string {
             <span class="event-detail">#{{ (ev.index ?? 0) + 1 }}</span>
             <VerdictBadge :status="ev.status ?? ''" size="sm" />
           </template>
+          <template v-if="ev.type === 'agent_tool'">
+            <code class="event-detail">{{ ev.name }}</code>
+            <span class="event-detail">{{ ev.ok === false ? '失败' : '成功' }}</span>
+          </template>
+          <span v-if="ev.type === 'agent_done'" class="event-detail">
+            {{ ev.ok ? (ev.error_type ?? '—') : '未完成' }}
+          </span>
           <template v-if="ev.type === 'judge_done'">
             <VerdictBadge :status="ev.status ?? ''" size="sm" />
             <span class="event-detail">（{{ ev.passed }}/{{ ev.total }}）</span>
@@ -456,6 +635,103 @@ function eventLabel(type: string): string {
  * that carries a hint of the failure colour. */
 .tc-actual {
   border-left: 2px solid color-mix(in srgb, var(--af-danger) 60%, transparent);
+}
+
+/* --- agent analysis (P2-8) --- */
+.agent-panel {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--af-border);
+}
+
+.agent-header {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.agent-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--af-text-muted);
+}
+
+.agent-state {
+  font-size: 12px;
+  color: var(--af-text-primary);
+}
+
+/* The failure colour is used only where the analysis genuinely failed;
+ * "no tools were called" is a normal outcome and stays neutral. */
+.agent-state-failed {
+  color: var(--af-danger);
+}
+
+.agent-error {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--af-danger);
+}
+
+.agent-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--af-text-muted);
+}
+
+.agent-tools {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-tool {
+  margin-bottom: 4px;
+}
+
+.agent-tool-head {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-tool-name {
+  padding: 1px 5px;
+  font-size: 11px;
+  color: var(--af-text-primary);
+  background: var(--af-canvas);
+  border-radius: 3px;
+}
+
+.agent-tool-ok {
+  color: var(--af-text-muted);
+}
+
+.agent-tool-bad {
+  color: var(--af-danger);
+}
+
+/* The gist is the part that answers "what came back", so it is allowed
+ * to take the remaining width and wrap rather than being clipped. */
+.agent-tool-gist {
+  flex: 1;
+  min-width: 0;
+  color: var(--af-text-muted);
+  word-break: break-all;
+}
+
+.agent-tool-raw {
+  margin: 4px 0 0;
+  padding: 6px;
+  overflow-x: auto;
+  font-size: 11px;
+  color: var(--af-text-primary);
+  background: var(--af-canvas);
+  border-radius: 3px;
 }
 
 /* --- raw event log --- */

@@ -39,11 +39,14 @@ module still propagate.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from app.agent.tools import execute, tool_schemas
 from app.llm.gateway import Completion, LLMGatewayError, ToolCall, complete
+
+logger = logging.getLogger(__name__)
 
 # Model round trips allowed before the loop gives up. Four is enough for
 # the shape this Agent actually has — look something up, then answer — and
@@ -221,6 +224,7 @@ def run_with_tools(
     max_steps: int = DEFAULT_MAX_STEPS,
     tool_choice: Optional[Any] = None,
     include_placeholders: bool = False,
+    on_tool_call: Optional[Callable[[ToolCallRecord], None]] = None,
     **llm_kwargs: Any,
 ) -> ToolLoopResult:
     """Run a conversation until the model answers or the budget is spent.
@@ -236,6 +240,14 @@ def run_with_tools(
         include_placeholders: Also offer tools that are defined but not
             implemented (P2-6's ``search_knowledge``). Off by default; see
             :func:`app.agent.tools.tool_schemas`.
+        on_tool_call: Called with each :class:`ToolCallRecord` as soon as
+            it is ready, so a caller can stream progress (P2-8's WS
+            route). Invoked synchronously on this thread and *after* the
+            tool has run, because the record is the interesting part —
+            what was asked for and what came back. A sink that raises is
+            logged and ignored rather than aborting the run: it is a
+            notification, and losing the analysis because a progress
+            display misbehaved would be a strictly worse outcome.
         **llm_kwargs: Passed through to
             :func:`app.llm.gateway.complete` (``temperature``,
             ``max_tokens``, ``timeout``, ``provider``, ...).
@@ -250,6 +262,17 @@ def run_with_tools(
     """
     if max_steps < 1:
         raise ValueError("max_steps must be at least 1")
+
+    def _notify(record: ToolCallRecord) -> None:
+        if on_tool_call is None:
+            return
+        try:
+            on_tool_call(record)
+        except Exception:
+            logger.exception(
+                "on_tool_call sink failed for tool %s; continuing the run",
+                record.name,
+            )
 
     schemas = tool_schemas(include_placeholders=include_placeholders)
     # A copy: the caller's list is theirs, and the transcript returned to
@@ -292,6 +315,7 @@ def run_with_tools(
         for call in completion.tool_calls:
             record = _run_tool_call(call)
             calls.append(record)
+            _notify(record)
             transcript.append(
                 {
                     "role": "tool",

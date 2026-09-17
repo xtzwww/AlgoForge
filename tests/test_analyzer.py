@@ -398,3 +398,125 @@ def test_outcome_ok_reflects_holding_a_result():
     """``AnalysisOutcome.ok`` is the single thing callers branch on."""
     assert AnalysisOutcome(result=object()).ok is True
     assert AnalysisOutcome(error="boom").ok is False
+
+
+# -------------------------------------------------------- the tool path
+
+
+def test_the_prompt_says_there_are_no_tools_by_default():
+    """A model must not be told about tools it was not given.
+
+    The two modes share one template, so the section that differs is
+    rendered from a variable. Leaving the tool guidance in on the
+    text-only path would invite the model to write out a call as prose and
+    then wonder why nothing happened.
+    """
+    with patch.object(analyzer, "chat_completion", return_value=VALID) as mock:
+        _call()
+
+    prompt = _prompt_sent(mock)
+    assert "本次你没有可用工具" in prompt
+    assert "run_code" not in prompt
+
+
+def test_the_tool_path_routes_through_the_loop():
+    """``use_tools`` hands the call to P2-7 rather than the gateway.
+
+    This is the switch P2-8's recording path flips. Asserted by patching
+    the loop itself, so the test says which path was taken rather than
+    only that something was called.
+    """
+    from app.agent import tool_caller
+    from app.agent.tool_caller import ToolCallRecord, ToolLoopResult
+
+    call = ToolCallRecord(
+        id="c1", name="run_code", arguments="{}", result={"ok": True}
+    )
+    with patch.object(
+        tool_caller,
+        "run_with_tools",
+        return_value=ToolLoopResult(content=VALID, calls=[call], steps=2),
+    ) as mock:
+        outcome = analyze_error(
+            "int a, b;", "3 7", "21", "0", use_tools=True
+        )
+
+    assert outcome.ok
+    assert outcome.tool_names == ["run_code"]
+    assert mock.call_count == 1
+    # The prompt it was given has to be the tool-aware one.
+    assert "run_code" in mock.call_args[0][0][0]["content"]
+
+
+def test_the_tool_path_reports_a_failed_loop_as_an_error():
+    """A loop that never answered leaves the entry unanalysed.
+
+    ``run_with_tools`` absorbs provider failures, so the analyzer has to
+    turn ``stop_reason`` into an error itself — otherwise a step-limit
+    exhaustion would look like a successful empty analysis.
+    """
+    from app.agent import tool_caller
+    from app.agent.tool_caller import STOP_STEP_LIMIT, ToolLoopResult
+
+    with patch.object(
+        tool_caller,
+        "run_with_tools",
+        return_value=ToolLoopResult(content="", steps=3, stop_reason=STOP_STEP_LIMIT),
+    ):
+        outcome = analyze_error("int a, b;", "3 7", "21", "0", use_tools=True)
+
+    assert not outcome.ok
+    assert STOP_STEP_LIMIT in outcome.error
+
+
+def test_the_tool_path_forwards_the_event_sink():
+    """P2-8's stream depends on this reaching the loop."""
+    from app.agent import tool_caller
+    from app.agent.tool_caller import ToolLoopResult
+
+    seen = []
+    with patch.object(
+        tool_caller,
+        "run_with_tools",
+        return_value=ToolLoopResult(content=VALID, steps=1),
+    ) as mock:
+        analyze_error(
+            "int a, b;",
+            "3 7",
+            "21",
+            "0",
+            use_tools=True,
+            on_event=seen.append,
+        )
+
+    # Compared with ``==`` rather than ``is``: a bound method is created
+    # afresh on every attribute access, so ``seen.append is seen.append``
+    # is False even though they are the same sink.
+    assert mock.call_args.kwargs["on_tool_call"] == seen.append
+
+
+def test_tool_calls_survive_a_retry():
+    """A retry must not erase what the first attempt did.
+
+    The calls are what the frontend shows and what a reader uses to
+    understand the Agent's behaviour; replacing rather than extending the
+    list would silently drop the first attempt's evidence.
+    """
+    from app.agent import tool_caller
+    from app.agent.tool_caller import ToolCallRecord, ToolLoopResult
+
+    first = ToolCallRecord(id="c1", name="run_code", arguments="{}", result={})
+    second = ToolCallRecord(id="c2", name="judge", arguments="{}", result={})
+    with patch.object(
+        tool_caller,
+        "run_with_tools",
+        side_effect=[
+            ToolLoopResult(content=BAD_LABEL, calls=[first], steps=2),
+            ToolLoopResult(content=VALID, calls=[second], steps=2),
+        ],
+    ):
+        outcome = analyze_error("int a, b;", "3 7", "21", "0", use_tools=True)
+
+    assert outcome.ok
+    assert outcome.attempts == 2
+    assert outcome.tool_names == ["run_code", "judge"]

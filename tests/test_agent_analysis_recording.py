@@ -22,6 +22,7 @@ not a production scenario (see the note in ``tests/test_records.py``).
 
 from __future__ import annotations
 
+import json
 from typing import Iterator
 from unittest.mock import patch
 
@@ -30,7 +31,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.llm.gateway import LLMConnectionError
+from app.llm.gateway import Completion, LLMConnectionError, ToolCall
 from app.models.base import Base
 from app.models.mistake_book import MistakeBookEntry
 from app.models.problem import Problem
@@ -44,6 +45,31 @@ VALID_ANALYSIS = (
     '{"error_type":"overflow","error_detail":"a * b 在 int 内先溢出",'
     '"hint":"看看乘法的操作数是什么类型","suggested_fix":"让运算前就是 64 位"}'
 )
+
+
+def _stub_analysis(*replies):
+    """Patch the seam the recording path actually calls.
+
+    Recording hands the analysis to P2-7's tool loop, so the gateway call
+    being stubbed is the one *inside* the loop, not
+    ``analyzer.chat_completion``. Stubbing the loop's own call rather than
+    the loop itself keeps these tests running through the real analysis
+    code — these are tests about recording, but they would otherwise stop
+    covering the path they exercise.
+
+    Each reply is either a JSON string (wrapped into a :class:`Completion`
+    with no tool calls, which is what a model answering directly produces)
+    or an exception to raise. ``side_effect`` is used uniformly so one
+    reply and several work the same way, and so the retry tests can script
+    "bad answer, then good answer" exactly as before.
+    """
+    items = [
+        reply
+        if isinstance(reply, Exception)
+        else Completion(content=reply, finish_reason="stop")
+        for reply in replies
+    ]
+    return patch("app.agent.tool_caller.complete", side_effect=items)
 
 
 @pytest.fixture
@@ -118,7 +144,7 @@ def _entries(session: Session) -> list[MistakeBookEntry]:
 
 def test_analysis_lands_on_the_mistake_entry(session, problem):
     """A WA submission comes out of recording already analysed."""
-    with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+    with _stub_analysis(VALID_ANALYSIS):
         record_submission(_wa_result(), _context(), session=session)
 
     entries = _entries(session)
@@ -134,7 +160,7 @@ def test_the_suggestion_carries_all_three_prose_fields(session, problem):
     headings are what keep the stored string readable when it is dumped
     into a terminal or a bug report.
     """
-    with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+    with _stub_analysis(VALID_ANALYSIS):
         record_submission(_wa_result(), _context(), session=session)
 
     suggestion = _entries(session)[0].agent_suggestion
@@ -153,7 +179,7 @@ def test_error_cause_is_left_untouched(session, problem):
     cause" a prefix match over free text and would destroy the empty
     string's meaning as the "not yet analysed" marker.
     """
-    with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+    with _stub_analysis(VALID_ANALYSIS):
         record_submission(_wa_result(), _context(), session=session)
 
     assert _entries(session)[0].error_cause == ""
@@ -161,7 +187,7 @@ def test_error_cause_is_left_untouched(session, problem):
 
 def test_the_submission_is_still_recorded(session, problem):
     """Analysis is additive; the submission row is written regardless."""
-    with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+    with _stub_analysis(VALID_ANALYSIS):
         submission_id = record_submission(_wa_result(), _context(), session=session)
 
     assert submission_id is not None
@@ -175,9 +201,7 @@ def test_the_prompt_receives_the_failing_case(session, problem):
     informative; sending the model a passing case's I/O would produce a
     confident analysis of something that is not wrong.
     """
-    with patch(
-        "app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS
-    ) as mock:
+    with _stub_analysis(VALID_ANALYSIS) as mock:
         record_submission(_wa_result(actual="0"), _context(), session=session)
 
     prompt = mock.call_args[0][0][0]["content"]
@@ -192,9 +216,7 @@ def test_the_prompt_receives_the_whole_statement(session, problem):
     ``input_format`` / ``output_format`` matter specifically: a large
     share of ``io_format_error`` cases is unanswerable without them.
     """
-    with patch(
-        "app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS
-    ) as mock:
+    with _stub_analysis(VALID_ANALYSIS) as mock:
         record_submission(_wa_result(), _context(), session=session)
 
     prompt = mock.call_args[0][0][0]["content"]
@@ -205,9 +227,7 @@ def test_the_prompt_receives_the_whole_statement(session, problem):
 
 def test_the_verdict_is_passed_as_wa(session, problem):
     """The judge status reaches the prompt as the verdict."""
-    with patch(
-        "app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS
-    ) as mock:
+    with _stub_analysis(VALID_ANALYSIS) as mock:
         record_submission(_wa_result(), _context(), session=session)
 
     assert "WA" in mock.call_args[0][0][0]["content"]
@@ -223,10 +243,7 @@ def test_an_unreachable_llm_still_files_the_mistake(session, problem):
     "WA 时调 LLM 输出错因" — an enrichment — so a provider outage must
     not cost the user the record of the mistake they just made.
     """
-    with patch(
-        "app.agent.analyzer.chat_completion",
-        side_effect=LLMConnectionError("refused"),
-    ):
+    with _stub_analysis(LLMConnectionError("refused")):
         submission_id = record_submission(_wa_result(), _context(), session=session)
 
     entries = _entries(session)
@@ -244,10 +261,7 @@ def test_an_analysis_failure_does_not_raise_out_of_recording(session, problem):
     middle must not change that. A raised error here would surface as a
     500 on a verdict the user already earned.
     """
-    with patch(
-        "app.agent.analyzer.chat_completion",
-        side_effect=LLMConnectionError("refused"),
-    ):
+    with _stub_analysis(LLMConnectionError("refused")):
         record_submission(_wa_result(), _context(), session=session)
 
 
@@ -257,10 +271,9 @@ def test_an_unparsable_reply_is_treated_as_no_analysis(session, problem):
     The entry must not be annotated with a half-valid value; ``None`` is
     the honest "not yet analysed" state, and a later retry can fill it.
     """
-    with patch(
-        "app.agent.analyzer.chat_completion",
-        return_value='{"error_type":"整数溢出","error_detail":"d","hint":"h",'
-        '"suggested_fix":"s"}',
+    with _stub_analysis(
+        '{"error_type":"整数溢出","error_detail":"d","hint":"h",'
+        '"suggested_fix":"s"}'
     ):
         record_submission(_wa_result(), _context(), session=session)
 
@@ -288,7 +301,7 @@ def test_an_accepted_run_is_not_analysed(session, problem):
             )
         ],
     )
-    with patch("app.agent.analyzer.chat_completion") as mock:
+    with _stub_analysis(VALID_ANALYSIS) as mock:
         record_submission(result, _context(), session=session)
 
     assert mock.call_count == 0
@@ -301,7 +314,7 @@ def test_a_free_run_without_a_problem_is_not_analysed(session):
     Analysis needs the problem's statement and has nowhere to store the
     result, so spending a call would be pure waste.
     """
-    with patch("app.agent.analyzer.chat_completion") as mock:
+    with _stub_analysis(VALID_ANALYSIS) as mock:
         record_submission(_wa_result(), _context(problem_id=None), session=session)
 
     assert mock.call_count == 0
@@ -318,7 +331,7 @@ def test_a_compile_error_is_analysed(session, problem):
     result = JudgeResult(
         status=JudgeStatus.CE, compile_output="error: expected ';'", test_cases=[]
     )
-    with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+    with _stub_analysis(VALID_ANALYSIS):
         record_submission(result, _context(), session=session)
 
     entries = _entries(session)
@@ -340,7 +353,7 @@ def test_a_duplicate_resubmission_reuses_the_open_entry(session, problem):
     one that gets annotated, which is why ``_archive_mistake`` returns the
     existing row rather than ``None`` on a duplicate hit.
     """
-    with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+    with _stub_analysis(VALID_ANALYSIS):
         record_submission(_wa_result(), _context(code="same;"), session=session)
         record_submission(_wa_result(), _context(code="same;"), session=session)
 
@@ -358,7 +371,7 @@ def test_an_annotated_entry_is_no_longer_a_dedupe_target(session, problem):
     visible; the note on ``test_analysis_does_not_close_the_dedupe_window``
     records why the marker is still ``error_cause``.
     """
-    with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+    with _stub_analysis(VALID_ANALYSIS):
         record_submission(_wa_result(), _context(code="same;"), session=session)
         first = _entries(session)[0]
         assert str(first.agent_error_type) == "overflow"
@@ -373,7 +386,7 @@ def test_an_annotated_entry_is_no_longer_a_dedupe_target(session, problem):
 
 def test_different_code_gets_its_own_entry(session, problem):
     """A genuinely different mistake is not folded into the first."""
-    with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+    with _stub_analysis(VALID_ANALYSIS):
         record_submission(_wa_result(), _context(code="first;"), session=session)
         record_submission(_wa_result(), _context(code="second;"), session=session)
 
@@ -393,7 +406,7 @@ def test_the_analysis_survives_a_fresh_session(engine, problem):
     SessionLocal = sessionmaker(engine, expire_on_commit=False)
     with (
         SessionLocal() as writer,
-        patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS),
+        _stub_analysis(VALID_ANALYSIS),
     ):
         record_submission(_wa_result(), _context(), session=writer)
 
@@ -408,7 +421,7 @@ def test_to_dict_exposes_the_new_fields(engine, problem):
     """The API serializer carries the analysis to the frontend."""
     SessionLocal = sessionmaker(engine, expire_on_commit=False)
     with SessionLocal() as s:
-        with patch("app.agent.analyzer.chat_completion", return_value=VALID_ANALYSIS):
+        with _stub_analysis(VALID_ANALYSIS):
             record_submission(_wa_result(), _context(), session=s)
         payload = _entries(s)[0].to_dict()
 
@@ -416,3 +429,120 @@ def test_to_dict_exposes_the_new_fields(engine, problem):
     assert "【错在哪】" in payload["agent_suggestion"]
     # The internal dedupe key still must not leak.
     assert "error_cause_fingerprint" not in payload
+
+
+# ------------------------------------------- the Agent, streamed (P2-8)
+
+
+def test_the_recording_path_announces_the_analysis(session, problem):
+    """A client watching the stream sees the analysis phase at all.
+
+    Without these two events the frontend cannot tell "no analysis is
+    coming" from "one is on the way", and would either show a spinner for
+    work that was never scheduled or show nothing while the student
+    waits.
+    """
+    events = []
+
+    with _stub_analysis(VALID_ANALYSIS):
+        record_submission(
+            _wa_result(), _context(), session=session, on_event=events.append
+        )
+
+    assert [event["type"] for event in events] == ["agent_start", "agent_done"]
+    assert events[0]["verdict"] == "WA"
+    assert events[1]["ok"] is True
+    assert events[1]["error_type"] == "overflow"
+
+
+def test_each_tool_call_is_streamed_with_its_result(session, problem):
+    """The Agent's tools are announced as they run, not summarised.
+
+    The stub answers the first turn with a tool call and the second with
+    the analysis, so P2-7's loop runs for real underneath — including the
+    compile and run, which is what makes the ``result`` payload here a
+    genuine sandbox report rather than a fixture.
+    """
+    tool_turn = Completion(
+        content="",
+        tool_calls=(
+            ToolCall(
+                id="c1",
+                name="run_code",
+                arguments=json.dumps({"code": "int main(){return 0;}"}),
+            ),
+        ),
+        finish_reason="tool_calls",
+    )
+    events = []
+
+    answer_turn = Completion(content=VALID_ANALYSIS, finish_reason="stop")
+
+    with patch(
+        "app.agent.tool_caller.complete",
+        side_effect=[tool_turn, answer_turn],
+    ):
+        record_submission(
+            _wa_result(), _context(), session=session, on_event=events.append
+        )
+
+    assert [event["type"] for event in events] == [
+        "agent_start",
+        "agent_tool",
+        "agent_done",
+    ]
+
+    tool_event = events[1]
+    assert tool_event["name"] == "run_code"
+    assert tool_event["ok"] is True
+    assert tool_event["result"]["compiled"] is True
+    assert tool_event["result"]["exit_code"] == 0
+
+    # The analysis still landed, so streaming did not disturb the result.
+    assert str(_entries(session)[0].agent_error_type) == "overflow"
+
+
+def test_no_events_are_emitted_when_nothing_is_analysed(session, problem):
+    """An AC run schedules no analysis, so it must announce none.
+
+    Emitting ``agent_start`` here would put a permanent "Agent 分析中…"
+    on a submission that was never going to be analysed.
+    """
+    result = JudgeResult(
+        status=JudgeStatus.AC,
+        test_cases=[
+            TestCaseResult(
+                status=JudgeStatus.AC,
+                input="3 7",
+                expected_output="21",
+                actual_output="21",
+            )
+        ],
+    )
+    events = []
+
+    with _stub_analysis(VALID_ANALYSIS):
+        record_submission(result, _context(), session=session, on_event=events.append)
+
+    assert events == []
+
+
+def test_an_analysis_outage_is_still_announced_as_finished(session, problem):
+    """``agent_done`` must arrive even when the analysis failed.
+
+    It is what tells the frontend to stop waiting. A provider outage that
+    left the spinner running would be a worse user experience than the
+    missing analysis itself.
+    """
+    events = []
+
+    with _stub_analysis(LLMConnectionError("refused")):
+        record_submission(
+            _wa_result(), _context(), session=session, on_event=events.append
+        )
+
+    assert [event["type"] for event in events] == ["agent_start", "agent_done"]
+    assert events[1]["ok"] is False
+    assert "LLMConnectionError" in events[1]["error"]
+    # And the mistake is still filed, unanalysed.
+    assert _entries(session)[0].agent_error_type is None

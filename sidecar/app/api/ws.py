@@ -227,7 +227,13 @@ async def run_log(websocket: WebSocket) -> None:
             on_event=progress_only,
         )
         if record:
-            record_judge_outcome(outcome, context)
+            # The Agent's tool calls ride the same channel as the judge's
+            # progress events (P2-8). They arrive before the terminal
+            # ``judge_done`` below, because the analysis runs inside
+            # ``record_submission``, which is still ahead of it — so a
+            # client watching the stream sees the Agent work and then the
+            # verdict, which is the order they happened in.
+            record_judge_outcome(outcome, context, on_event=on_event)
         # Terminal event last, so the client cannot observe a finished
         # run whose history has not landed yet.
         terminal = outcome.to_dict()

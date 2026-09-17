@@ -402,6 +402,56 @@ def test_to_dict_is_json_safe_and_leaves_out_the_transcript(scripted, stub_tools
     assert "messages" not in payload
 
 
+# ------------------------------------------------------- the event sink
+
+
+def test_the_sink_sees_every_call_in_order(scripted, stub_tools):
+    """P2-8 streams these, so the order and the count have to be right."""
+    scripted(
+        _asks_for_tools(_tool_call(call_id="a"), _tool_call(call_id="b")),
+        _asks_for_tools(_tool_call(call_id="c")),
+        _answers(),
+    )
+    seen = []
+
+    run_with_tools([{"role": "user", "content": "q"}], on_tool_call=seen.append)
+
+    assert [record.id for record in seen] == ["a", "b", "c"]
+
+
+def test_the_sink_receives_the_finished_record(scripted, stub_tools):
+    """The notification carries what came back, not just that it happened."""
+    scripted(_asks_for_tools(_tool_call(name="judge")), _answers())
+    seen = []
+
+    run_with_tools([{"role": "user", "content": "q"}], on_tool_call=seen.append)
+
+    assert seen[0].name == "judge"
+    assert seen[0].ok is True
+    assert seen[0].result == {"ok": True, "echo": {"code": "int main(){}"}}
+
+
+def test_a_raising_sink_does_not_abort_the_run(scripted, stub_tools):
+    """A broken progress display must not cost the analysis.
+
+    The sink is a notification; the model's answer is the point. Letting a
+    display bug propagate would abandon a run that was otherwise fine, and
+    would do it while a student waits for a verdict.
+    """
+    scripted(_asks_for_tools(_tool_call()), _answers("done"))
+
+    def broken_sink(record):
+        raise RuntimeError("display exploded")
+
+    result = run_with_tools(
+        [{"role": "user", "content": "q"}], on_tool_call=broken_sink
+    )
+
+    assert result.ok
+    assert result.content == "done"
+    assert result.tool_names == ["run_code"]
+
+
 # --------------------------------------------------- through real tools
 
 
