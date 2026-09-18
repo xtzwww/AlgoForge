@@ -9,6 +9,12 @@ database:
 - ``compute_knowledge_stats_for`` returns zero-count placeholders for
   requested tags with no submissions (radar-chart stability).
 - Empty database → empty list (no rows to aggregate).
+
+This file runs on SQLite, which is what the harness uses. The product's
+database is PostgreSQL, and the tag expansion is dialect-specific, so the
+same aggregation is also executed against a real server in
+``tests/test_postgres_aggregation.py`` — a distinction that turned out to
+matter (see ``app/models/tag_values.py``).
 """
 
 from __future__ import annotations
@@ -35,7 +41,11 @@ def session() -> Session:
     """
     engine = create_engine(
         "sqlite:///:memory:",
-        # json_each requires SQLite; SQLAlchemy's default dialect works.
+        # SQLite is this harness's database, not the product's. The tag
+        # expansion being exercised is dialect-specific — see
+        # app/models/tag_values.py for why, and
+        # tests/test_postgres_aggregation.py for the run that happens on
+        # the database the product actually uses.
         connect_args={"check_same_thread": False},
     )
     Base.metadata.create_all(engine)

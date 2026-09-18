@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.models.problem import Problem
 from app.models.submission import Submission
+from app.models.tag_values import knowledge_tag_values
 
 
 @dataclass(frozen=True)
@@ -68,19 +69,18 @@ def compute_knowledge_stats(session: Session) -> list[KnowledgeStat]:
         one submission, sorted by tag name ascending. Tags with zero
         submissions are not included (there is nothing to aggregate).
     """
-    # Use JSON_EACH to explode the tags array. SQLAlchemy 2.0 exposes
-    # this via func.json_each(...).table_valued(..., joins_implicitly=True)
-    # which renders as a LATERAL join against the problems row.
+    # One row per tag. The spelling is dialect-specific and lives in
+    # ``app.models.tag_values``.
     #
-    # SQLite supports JSON_EACH natively; PostgreSQL 16+ supports
-    # JSON_TABLE (a superset). For P1-17 we test against SQLite, and
-    # the production target (PostgreSQL 16) supports both. When the
-    # production DB is wired up (P1-10 Alembic + P1-20 API), this
-    # expression may need to switch to func.jsonb_array_elements for
-    # PostgreSQL < 16 compatibility.
-    tag_value = func.json_each(Problem.knowledge_tags).table_valued(
-        "value", joins_implicitly=True
-    )
+    # This used to call ``func.json_each`` directly, under a comment
+    # asserting that "PostgreSQL 16+ supports JSON_TABLE (a superset)".
+    # That was wrong: PostgreSQL has no ``json_each`` at all — it is
+    # SQLite's name. The profile page would therefore have failed with
+    # ``function json_each(json) does not exist`` the first time it ran
+    # against the database AGENTS.md mandates, and no test could have
+    # caught it, because the whole suite runs on SQLite. See
+    # ``app.models.tag_values`` for the account and the fix.
+    tag_value = knowledge_tag_values(session)
 
     is_ac = case((Submission.status == "AC", 1), else_=0)
 
@@ -102,9 +102,10 @@ def compute_knowledge_stats(session: Session) -> list[KnowledgeStat]:
         total = int(row.total or 0)
         passed = int(row.passed or 0)
         accuracy = (passed / total) if total > 0 else 0.0
-        # json_each returns the element value; on SQLite the type may
-        # be str or int depending on the JSON. Coerce to str for the
-        # tag label — knowledge tags are always strings in our domain.
+        # The expansion yields the element value. SQLite's json_each types
+        # it str or int depending on the JSON; PostgreSQL's
+        # json_array_elements_text is always text. Coerce either way —
+        # knowledge tags are always strings in this domain.
         results.append(
             KnowledgeStat(
                 tag=str(row.tag),

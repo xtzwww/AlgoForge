@@ -35,7 +35,7 @@ That is acceptable here because the user is the problem author and the
 server is on their own machine, and it is called out in the response
 docstring so the assumption is visible rather than implicit.
 
-Per docs/PHASE-UX.md PU-12, judging is nonetheless designed the
+Judging is nonetheless designed the
 multi-user-safe way *now*: the judge accepts a ``problem_id`` and reads
 the cases server-side (see ``app/api/judge.py`` and ``app/api/ws.py``), so
 the client never has to receive them. Turning this into a real web service
@@ -58,6 +58,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models.problem import DIFFICULTIES, Problem
+from app.models.tag_values import knowledge_tag_values
 from app.models.test_case import TestCase
 
 router = APIRouter(prefix="/api/v1/problems", tags=["problems"])
@@ -253,10 +254,11 @@ def list_problems(
     """Return one page of the problem catalogue.
 
     Filtering by knowledge tag is done in SQL rather than by the caller,
-    because ``knowledge_tags`` is a JSON array whose membership test
-    differs per dialect (``json_each`` on SQLite, ``jsonb_array_elements``
-    on PostgreSQL < 16). Keeping it here means there is one implementation
-    to fix rather than one per client.
+    because ``knowledge_tags`` is a JSON array whose membership test has
+    no portable spelling (``json_each`` on SQLite,
+    ``json_array_elements_text`` on PostgreSQL — see
+    ``app.models.tag_values``). Keeping it here means there is one
+    implementation to fix rather than one per client.
 
     Note:
         ``knowledge_tag`` matches an exact tag, not a substring. The
@@ -279,12 +281,11 @@ def list_problems(
         if difficulty is not None:
             filters.append(Problem.difficulty == difficulty)
         if knowledge_tag:
-            # JSON array membership. Rendered as a LATERAL join, which
-            # both SQLite's json_each and PostgreSQL's jsonb_array_elements
-            # support through SQLAlchemy's table_valued construct.
-            tag_value = func.json_each(Problem.knowledge_tags).table_valued(
-                "value", joins_implicitly=True
-            )
+            # JSON array membership. The expansion is dialect-specific and
+            # shared with the profile page's aggregation — see
+            # ``app.models.tag_values``. The comment here used to name both
+            # dialects and then call ``json_each`` anyway.
+            tag_value = knowledge_tag_values(session)
             filters.append(tag_value.c.value == knowledge_tag)
 
         total = session.execute(
