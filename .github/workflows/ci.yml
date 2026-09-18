@@ -1,0 +1,101 @@
+# ============================================================
+# AlgoForge CI
+#
+# 目的：把「记得跑的时候才跑」的校验变成每次推送都跑。升级改造期的安全网
+# （见 docs/升级改进建议.md §七「675 个测试：保证改造不失控（前提是补 CI）」）。
+#
+# 三条硬约束，改这个文件前先读：
+#
+#   1. **绝不跑 eval_set。** 那批会真的请求付费 LLM 端点，既计费又不可
+#      复现（README「测试」一节有说明）。所以这里的 pytest 永远带
+#      `-m "not eval_set"`。
+#   2. **不需要 PostgreSQL。** 测试通过 monkeypatch 把 `get_session` 换成
+#      内存 SQLite（`StaticPool`），所以 runner 上不用起数据库服务。
+#   3. **前端没有单元测试。** `AGENTS.md` 锁定 Vitest 作为前端测试框架但尚未
+#      接入，所以前端这边只能做类型检查 + ESLint。补上 Vitest 后在这里加一步。
+#
+# ⚠️ 本文件是**照着本机实测结果**写的，但从未在 GitHub Actions 上真跑过
+# （本机没有 CI 环境）。第一次推上去若变红，先看是哪一步，不要直接删。
+# ============================================================
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支连续推送时，取消上一次还没跑完的，省 runner 分钟数。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端（ruff + 迁移 + pytest）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 与 sidecar/.venv 一致。AGENTS.md 要求 3.11+；`StrEnum` 也是 3.11+
+          # （`app/agent/schemas.py` 与 `app/sandbox/judge.py` 都用它）。
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sidecar/requirements.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r sidecar/requirements.txt
+          # ruff 是开发工具，故意不在 requirements.txt 里（那是运行时依赖）。
+          pip install ruff
+
+      - name: 打印工具链
+        # 判题沙箱会真的编译 C++，g++ 缺失时失败信息很难懂，先打出来。
+        run: |
+          python -V
+          g++ --version | head -1
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: 迁移可执行性（空库 SQLite）
+        # 只证明「迁移能从头执行到 head」。真实 PostgreSQL 上的行为仍需人工验证
+        # （本机没有 PG，见 docs/项目欠缺清单.md §5）。
+        working-directory: sidecar
+        run: |
+          python -m alembic -x db_url=sqlite:///${{ runner.temp }}/algoforge-ci.sqlite upgrade head
+
+      - name: pytest（排除 eval_set）
+        run: python -m pytest -q -m "not eval_set"
+
+  frontend:
+    name: 前端（tsc + vue-tsc + ESLint）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: 安装依赖
+        # `--ignore-scripts` 跳过 electron-builder 的 postinstall（它要下载
+        # Electron 二进制，类型检查和 lint 都用不到）。
+        run: npm ci --ignore-scripts
+
+      - name: 类型检查（主进程 / 构建配置）
+        run: ./node_modules/.bin/tsc --noEmit -p tsconfig.node.json --composite false
+
+      - name: 类型检查（渲染进程）
+        run: ./node_modules/.bin/vue-tsc --noEmit -p tsconfig.web.json --composite false
+
+      - name: ESLint
+        run: ./node_modules/.bin/eslint src --no-cache
