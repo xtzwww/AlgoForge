@@ -50,6 +50,14 @@ import PageHeader from '../components/PageHeader.vue'
 import { masteryColorFor } from '../assets/tokens'
 import { isLoggedIn, isTeacher, login, logout, sessionReady, sessionUser } from '../api/session'
 import {
+  createAssignment,
+  deleteAssignment,
+  getAssignmentStats,
+  listAssignments,
+  type AssignmentOut,
+  type AssignmentStats
+} from '../api/assignments'
+import {
   createStudent,
   getAlerts,
   getErrorDistribution,
@@ -120,6 +128,9 @@ async function submitLogout(): Promise<void> {
   students.value = []
   flagged.value = []
   alerts.value = []
+  assignments.value = []
+  openAssignmentId.value = null
+  assignmentStats.value = null
   selected.value = null
 }
 
@@ -147,6 +158,7 @@ async function load(): Promise<void> {
     students.value = stud
     flagged.value = flag
     alerts.value = warn
+    await loadAssignments()
     // A student who has left the roster (deleted, re-roled) must not
     // leave their timeline open behind them.
     if (selected.value && !stud.some((s) => s.user_id === selected.value?.user_id)) {
@@ -182,6 +194,93 @@ async function openAlertStudent(alert: AlertOut): Promise<void> {
   }
   await openStudent(match)
   rosterSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// --- Homework (阶段 4) ------------------------------------------------
+
+const assignments = ref<AssignmentOut[]>([])
+/** Which assignment's stats are open, or `null`. */
+const openAssignmentId = ref<number | null>(null)
+const assignmentStats = ref<AssignmentStats | null>(null)
+const assignmentLoading = ref(false)
+
+const addingAssignment = ref(false)
+const newAssignmentTitle = ref('')
+const newAssignmentProblems = ref('')
+const newAssignmentDue = ref('')
+const assignmentBusy = ref(false)
+
+async function loadAssignments(): Promise<void> {
+  try {
+    assignments.value = await listAssignments()
+  } catch (err) {
+    errorMsg.value = messageOf(err, '无法加载作业列表')
+  }
+}
+
+async function toggleAssignment(assignment: AssignmentOut): Promise<void> {
+  if (openAssignmentId.value === assignment.id) {
+    openAssignmentId.value = null
+    assignmentStats.value = null
+    return
+  }
+  openAssignmentId.value = assignment.id
+  assignmentStats.value = null
+  assignmentLoading.value = true
+  try {
+    assignmentStats.value = await getAssignmentStats(assignment.id)
+  } catch (err) {
+    errorMsg.value = messageOf(err, `无法加载「${assignment.title}」的完成情况`)
+  } finally {
+    assignmentLoading.value = false
+  }
+}
+
+async function submitAssignment(): Promise<void> {
+  // "1, 2,3" → [1,2,3]. Anything that is not a number is dropped
+  // rather than sent, because the server's error for it is a 422 the
+  // teacher cannot act on from here.
+  const ids = newAssignmentProblems.value
+    .split(/[,，\s]+/)
+    .map((part) => Number.parseInt(part, 10))
+    .filter((n) => Number.isFinite(n))
+  if (ids.length === 0) {
+    errorMsg.value = '至少要选一道题'
+    return
+  }
+  assignmentBusy.value = true
+  try {
+    await createAssignment({
+      title: newAssignmentTitle.value,
+      problem_ids: ids,
+      // ``datetime-local`` gives "YYYY-MM-DDTHH:mm" with no zone, which
+      // is exactly what ``datetime.fromisoformat`` accepts. Empty means
+      // "no deadline", and sending '' would be parsed as an invalid date.
+      due_at: newAssignmentDue.value ? newAssignmentDue.value : undefined
+    })
+    addingAssignment.value = false
+    newAssignmentTitle.value = ''
+    newAssignmentProblems.value = ''
+    newAssignmentDue.value = ''
+    await loadAssignments()
+  } catch (err) {
+    errorMsg.value = messageOf(err, '无法发布作业')
+  } finally {
+    assignmentBusy.value = false
+  }
+}
+
+async function removeAssignment(assignment: AssignmentOut): Promise<void> {
+  try {
+    await deleteAssignment(assignment.id)
+    if (openAssignmentId.value === assignment.id) {
+      openAssignmentId.value = null
+      assignmentStats.value = null
+    }
+    await loadAssignments()
+  } catch (err) {
+    errorMsg.value = messageOf(err, `无法删除「${assignment.title}」`)
+  }
 }
 
 // --- Reviewing a flag (阶段 5) ----------------------------------------
@@ -718,6 +817,107 @@ onMounted(() => {
             </ul>
           </section>
 
+          <!-- --- Homework (阶段 4) --- -->
+          <section class="section">
+            <h2 class="section-title">作业</h2>
+            <p class="section-note">
+              作业就是「一组题目 + 截止时间」。谁交了、谁没交是<strong>临时算出来的</strong>
+              （名册减去有提交的人），不是存在库里的状态——少一处需要跟着每次提交同步的地方。
+            </p>
+
+            <div v-if="assignments.length === 0" class="empty-inline">还没有布置作业。</div>
+
+            <ul v-else class="assignment-list">
+              <li v-for="a in assignments" :key="a.id" class="assignment-item">
+                <div class="assignment-head">
+                  <button type="button" class="assignment-title" @click="toggleAssignment(a)">
+                    {{ a.title }}
+                  </button>
+                  <span class="assignment-meta">{{ a.problem_ids.length }} 题</span>
+                  <span v-if="a.due_at" class="assignment-meta" :class="{ overdue: a.overdue }">
+                    {{ a.overdue ? '已过期 · ' : '' }}{{ dateText(a.due_at) }}
+                  </span>
+                  <button type="button" class="review-btn subtle" @click="removeAssignment(a)">
+                    删除
+                  </button>
+                </div>
+
+                <!-- Loaded on demand: the stats are a second request per
+                     assignment, and a teacher opening one should not pay
+                     for all of them. -->
+                <div v-if="openAssignmentId === a.id" class="assignment-stats">
+                  <p v-if="assignmentLoading" class="placeholder-inline">统计中…</p>
+                  <template v-else-if="assignmentStats">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>题目</th>
+                          <th class="num">提交</th>
+                          <th class="num">通过</th>
+                          <th class="num">正确率</th>
+                          <th class="num">做过的人数</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="p in assignmentStats.problems" :key="p.problem_id">
+                          <td>第 {{ p.problem_id }} 题</td>
+                          <td class="num">{{ p.submissions }}</td>
+                          <td class="num">{{ p.accepted }}</td>
+                          <td class="num">{{ percent(p.accuracy) }}</td>
+                          <td class="num">{{ p.students }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <p class="assignment-missing">
+                      <template v-if="assignmentStats.students_missing.length">
+                        还没交（{{ assignmentStats.students_missing.length }} 人）：
+                        {{ assignmentStats.students_missing.join('、') }}
+                      </template>
+                      <template v-else>都交了。</template>
+                    </p>
+                  </template>
+                </div>
+              </li>
+            </ul>
+
+            <button
+              v-if="!addingAssignment"
+              class="primary"
+              type="button"
+              @click="addingAssignment = true"
+            >
+              布置作业
+            </button>
+
+            <form v-else class="roster-form" @submit.prevent="submitAssignment">
+              <label class="field">
+                <span class="field-label">标题</span>
+                <input v-model="newAssignmentTitle" class="input" type="text" required />
+              </label>
+              <label class="field">
+                <span class="field-label">题目编号（逗号分隔）</span>
+                <input
+                  v-model="newAssignmentProblems"
+                  class="input"
+                  type="text"
+                  placeholder="1,2,3"
+                />
+              </label>
+              <label class="field">
+                <span class="field-label">截止时间（可留空）</span>
+                <input v-model="newAssignmentDue" class="input" type="datetime-local" />
+              </label>
+              <div class="roster-actions">
+                <button class="primary" type="submit" :disabled="assignmentBusy">
+                  {{ assignmentBusy ? '发布中…' : '发布' }}
+                </button>
+                <button class="review-btn" type="button" @click="addingAssignment = false">
+                  取消
+                </button>
+              </div>
+            </form>
+          </section>
+
           <!-- --- Roster --- -->
           <section class="section">
             <h2 class="section-title">学生账号</h2>
@@ -1200,6 +1400,71 @@ onMounted(() => {
   padding-left: 18px;
   line-height: 1.7;
   color: var(--af-text-secondary);
+}
+
+/* --- Homework (阶段 4) --- */
+
+.assignment-list {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.assignment-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--af-border);
+}
+
+.assignment-item:last-child {
+  border-bottom: none;
+}
+
+.assignment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.assignment-title {
+  padding: 0;
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--af-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.assignment-title:hover {
+  text-decoration: underline;
+}
+
+.assignment-meta {
+  font-size: 12px;
+  color: var(--af-text-muted);
+}
+
+.assignment-meta.overdue {
+  color: var(--af-danger);
+}
+
+.assignment-stats {
+  margin-top: 10px;
+}
+
+/* The actionable line of the whole section, so it gets its own row. */
+.assignment-missing {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--af-text-secondary);
+}
+
+.placeholder-inline {
+  margin: 0;
+  font-size: 13px;
+  color: var(--af-text-muted);
 }
 
 /* --- The attention list (阶段 6) --- */

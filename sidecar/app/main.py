@@ -8,6 +8,7 @@ feature module owns its own router.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.assignments import router as assignments_router
 from app.api.auth import router as auth_router
 from app.api.env_check import router as env_check_router
 from app.api.health import router as health_router
@@ -73,3 +74,4 @@ app.include_router(mistake_book_router)
 app.include_router(profile_router)
 app.include_router(review_router)
 app.include_router(teacher_router)
+app.include_router(assignments_router)

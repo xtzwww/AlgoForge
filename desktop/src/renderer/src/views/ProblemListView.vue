@@ -40,6 +40,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { listProblems, type ProblemSummary } from '../api/problems'
 import { fetchVerdictsByProblem, type ProblemVerdict } from '../api/submissions'
+import { getOpenAssignments, type AssignmentOut } from '../api/assignments'
 
 const router = useRouter()
 
@@ -106,6 +107,12 @@ const allTags = computed<string[]>(() => {
  */
 const filteredProblems = computed<ProblemSummary[]>(() =>
   problems.value.filter((p) => {
+    // Homework first: it is the narrowest filter and the one that was
+    // asked for, so it wins over the browse-filters rather than being
+    // an extra chip competing with them.
+    if (activeAssignment.value !== null && !activeAssignment.value.problem_ids.includes(p.id)) {
+      return false
+    }
     if (difficultyFilter.value !== 'all' && p.difficulty !== difficultyFilter.value) {
       return false
     }
@@ -125,6 +132,35 @@ const filteredProblems = computed<ProblemSummary[]>(() =>
 const solvedCount = computed<number>(
   () => problems.value.filter((p) => verdicts.value.get(p.id)?.passed).length
 )
+
+/**
+ * Homework is read from an open endpoint (阶段 4).
+ *
+ * Nothing here requires a login: a student has to be able to see what
+ * was set, and the desktop client's normal path is not logged in. A
+ * failure to load it is also deliberately quiet — homework is an
+ * addition to a browseable catalogue, not the thing that makes the page
+ * work, and a failed fetch must not take the problem list down with it.
+ */
+const assignments = ref<AssignmentOut[]>([])
+const activeAssignmentId = ref<number | null>(null)
+
+const activeAssignment = computed<AssignmentOut | null>(
+  () => assignments.value.find((a) => a.id === activeAssignmentId.value) ?? null
+)
+
+function toggleAssignment(assignment: AssignmentOut): void {
+  activeAssignmentId.value = activeAssignmentId.value === assignment.id ? null : assignment.id
+}
+
+async function loadAssignments(): Promise<void> {
+  try {
+    assignments.value = await getOpenAssignments()
+  } catch {
+    // See the comment above: the catalogue is the page; homework is not.
+    assignments.value = []
+  }
+}
 
 /**
  * Load the catalogue and, independently, the verdict column.
@@ -154,6 +190,8 @@ async function load(): Promise<void> {
     verdictError.value = (err as Error).message
   }
 
+  await loadAssignments()
+
   loading.value = false
 }
 
@@ -174,6 +212,13 @@ function resetFilters(): void {
   difficultyFilter.value = 'all'
   statusFilter.value = 'all'
   selectedTag.value = null
+  activeAssignmentId.value = null
+}
+
+function dueText(dueAt: string | null): string {
+  if (!dueAt) return ''
+  // ISO from the server; only the date part is worth showing a student.
+  return dueAt.slice(0, 10)
 }
 
 onMounted(load)
@@ -192,6 +237,21 @@ onMounted(load)
         </button>
       </div>
     </header>
+
+    <!-- Homework (阶段 4). Open endpoint: no login needed to see it. -->
+    <nav v-if="assignments.length > 0" class="assignment-bar">
+      <span class="assignment-bar-label">作业</span>
+      <button
+        v-for="a in assignments"
+        :key="a.id"
+        class="assignment-chip"
+        :class="{ active: activeAssignmentId === a.id, overdue: a.overdue }"
+        @click="toggleAssignment(a)"
+      >
+        {{ a.title }}
+        <span v-if="a.due_at" class="assignment-due">{{ dueText(a.due_at) }}</span>
+      </button>
+    </nav>
 
     <!-- Filter bar -->
     <div class="filter-bar">
@@ -215,7 +275,12 @@ onMounted(load)
         </label>
 
         <button
-          v-if="difficultyFilter !== 'all' || statusFilter !== 'all' || selectedTag !== null"
+          v-if="
+            difficultyFilter !== 'all' ||
+            statusFilter !== 'all' ||
+            selectedTag !== null ||
+            activeAssignmentId !== null
+          "
           class="reset-btn"
           @click="resetFilters"
         >
@@ -300,6 +365,64 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* --- Homework (阶段 4) --- */
+
+.assignment-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  background: var(--af-surface);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-md);
+}
+
+.assignment-bar-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--af-text-muted);
+}
+
+.assignment-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--af-text-secondary);
+  background: var(--af-canvas);
+  border: 1px solid var(--af-border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.assignment-chip:hover {
+  border-color: var(--af-accent);
+}
+
+.assignment-chip.active {
+  color: #ffffff;
+  background: var(--af-accent);
+  border-color: var(--af-accent);
+}
+
+.assignment-chip.overdue:not(.active) {
+  color: var(--af-danger);
+  border-color: var(--af-danger);
+}
+
+.assignment-due {
+  font-size: 11px;
+  color: var(--af-text-muted);
+}
+
+.assignment-chip.active .assignment-due {
+  color: #ffffff;
+}
+
 .problem-list-view {
   display: flex;
   flex-direction: column;
