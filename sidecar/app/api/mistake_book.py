@@ -14,6 +14,9 @@ CRUD for the mistake-book:
     Update error_cause and/or reviewed flag.
 - DELETE /api/v1/mistake-book/{entry_id}
     Remove an entry.
+- POST   /api/v1/mistake-book/{entry_id}/analyze
+    Re-run the error analysis for an entry that has none (P2-24). Returns
+    before the analysis does; poll GET on the entry for the outcome.
 
 Database wiring is minimal for P1-18: the sidecar creates a single
 SQLite session per request. P1-10 / P1-20 will swap this for an async
@@ -23,18 +26,26 @@ so the swap is mechanical.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_session, reset_engine  # noqa: F401  (re-exported)
 from app.models.base import Base
-from app.models.mistake_book import MistakeBookEntry
+from app.models.mistake_book import (
+    ANALYSIS_DONE,
+    ANALYSIS_PENDING,
+    MistakeBookEntry,
+)
 from app.models.problem import Problem
 from app.models.submission import Submission
+from app.records import reanalyse_entry
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/mistake-book", tags=["mistake-book"])
 
@@ -77,6 +88,16 @@ class MistakeEntryOut(BaseModel):
     review_count: int
     last_reviewed_at: Optional[str] = None
     created_at: Optional[str] = None
+    #: P2-4's analysis. It has been written to the row since P2-4 but was
+    #: never served, so the fields existed and no client could see them —
+    #: the mistake book looked exactly as it did before the agent was
+    #: wired up. Served from here on.
+    agent_error_type: Optional[str] = None
+    agent_suggestion: str = ""
+    #: P2-24: pending / done / failed. A client needs it to decide whether
+    #: to offer a retry, and to stop showing a spinner that is never going
+    #: to resolve.
+    analysis_status: str = ANALYSIS_PENDING
 
 
 # --- Helpers -----------------------------------------------------------
@@ -100,6 +121,9 @@ def _entry_to_out(entry: MistakeBookEntry) -> MistakeEntryOut:
         created_at=(
             entry.created_at.isoformat() if entry.created_at is not None else None
         ),
+        agent_error_type=entry.agent_error_type,
+        agent_suggestion=entry.agent_suggestion,
+        analysis_status=entry.analysis_status,
     )
 
 
@@ -231,3 +255,66 @@ def delete_entry(entry_id: int) -> None:
         entry = _get_entry_or_404(session, entry_id)
         session.delete(entry)
         session.commit()
+
+
+def _reanalyse_in_background(entry_id: int) -> None:
+    """Run a retry off the request, logging rather than raising.
+
+    Same shape as the judge route's background analysis (``9e7911b``):
+    the response has already been sent, so an exception here has nobody
+    to reach. ``reanalyse_entry`` marks the entry failed before it
+    re-raises, so this log line is for the operator, not for the user —
+    the user reads the status off the entry.
+    """
+    try:
+        reanalyse_entry(entry_id)
+    except Exception:
+        logger.exception(
+            "background re-analysis failed for mistake book entry %s", entry_id
+        )
+
+
+@router.post("/{entry_id}/analyze", response_model=MistakeEntryOut, status_code=202)
+async def analyze_entry(entry_id: int, background: BackgroundTasks) -> MistakeEntryOut:
+    """Re-run the error analysis for a mistake-book entry.
+
+    The retry for P2-4's silent failure mode. An entry whose analysis hit
+    a provider outage kept ``agent_error_type = None`` forever, which is
+    also what an entry that was never analysed looks like — no way to
+    tell the two apart, and nothing to press.
+
+    **Returns before the analysis runs.** A retry re-judges the
+    submission and then calls the model, which together can take minutes;
+    waiting for that inside the response is precisely the delay
+    ``9e7911b`` removed from the judge route. The entry is set to
+    ``pending`` before this returns, so a client polling the entry sees
+    the retry start rather than a stale failure.
+
+    Raises:
+        HTTPException: 404 when the entry or its submission is gone, 409
+            when the entry already carries an analysis, 400 when the
+            submission was a free run with no problem to re-judge
+            against.
+    """
+    with get_session() as session:
+        entry = _get_entry_or_404(session, entry_id)
+        if entry.analysis_status == ANALYSIS_DONE:
+            raise HTTPException(
+                status_code=409,
+                detail="entry already has an analysis; nothing to retry",
+            )
+        submission = _get_submission_or_404(session, entry.submission_id)
+        if submission.problem_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "the submission was a free run with no problem, so there "
+                    "are no cases to re-judge against"
+                ),
+            )
+        entry.analysis_status = ANALYSIS_PENDING
+        session.commit()
+        payload = _entry_to_out(entry)
+
+    background.add_task(_reanalyse_in_background, entry_id)
+    return payload

@@ -33,6 +33,20 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 
+#: Values :attr:`MistakeBookEntry.analysis_status` can take.
+#:
+#: A tuple of constants rather than an Enum: the column is a plain
+#: string, and the API layer validates against this without importing
+#: anything SQLAlchemy-shaped. Same shape as ``submission.STATUSES``.
+ANALYSIS_PENDING = "pending"
+ANALYSIS_DONE = "done"
+ANALYSIS_FAILED = "failed"
+ANALYSIS_STATUSES: tuple[str, ...] = (
+    ANALYSIS_PENDING,
+    ANALYSIS_DONE,
+    ANALYSIS_FAILED,
+)
+
 
 class MistakeBookEntry(Base):
     """A single mistake-book entry derived from a wrong submission.
@@ -61,6 +75,10 @@ class MistakeBookEntry(Base):
             when the entry has not been analysed. See the column comment.
         agent_suggestion: P2-4's prose analysis (detail + hint + fix), or
             "" when the entry has not been analysed.
+        analysis_status: Whether an analysis has landed — one of
+            :data:`ANALYSIS_STATUSES`. Kept separate from
+            ``agent_error_type is None``, which cannot tell "not run yet"
+            from "ran and failed"; see the migration ``c4d17a9e3b28``.
         created_at: When this entry was added to the mistake book.
     """
 
@@ -94,6 +112,22 @@ class MistakeBookEntry(Base):
     #: would add two columns and a migration each time the prompt gains a
     #: field.
     agent_suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Whether an analysis has landed: one of :data:`ANALYSIS_STATUSES`.
+    #:
+    #: Exists because ``agent_error_type IS NULL`` cannot distinguish
+    #: "not analysed yet" from "analysed and failed". Before this column
+    #: the failure path in ``app/records.py`` only wrote a log line, so an
+    #: entry whose analysis hit a network blip was indistinguishable from
+    #: one that had never been tried — nothing to show the user and
+    #: nothing to retry from the UI. ``pending`` is the honest value for
+    #: both of those states; ``failed`` is the one that gives the retry
+    #: button something to key off.
+    analysis_status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=ANALYSIS_PENDING,
+        server_default=ANALYSIS_PENDING,
+    )
     #: PU-13: digest of (problem_id, language, code) for the submission
     #: that produced this entry. Written only for auto-archived entries,
     #: where it lets a resubmission of the same wrong code be recognised
@@ -130,6 +164,7 @@ class MistakeBookEntry(Base):
             "error_cause": self.error_cause,
             "agent_error_type": self.agent_error_type,
             "agent_suggestion": self.agent_suggestion,
+            "analysis_status": self.analysis_status,
             "knowledge_tags": list(self.knowledge_tags or []),
             "reviewed": self.reviewed,
             "review_count": self.review_count,

@@ -70,7 +70,14 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
-import { deleteMistake, listMistakes, updateMistake, type MistakeEntry } from '../api/mistake_book'
+import {
+  analyzeMistake,
+  deleteMistake,
+  getMistake,
+  listMistakes,
+  updateMistake,
+  type MistakeEntry
+} from '../api/mistake_book'
 
 const router = useRouter()
 
@@ -90,6 +97,16 @@ const selectedTag = ref<string | null>(null)
  * because two rows can legitimately be in flight at once.
  */
 const pending = ref<Set<number>>(new Set())
+
+/**
+ * Entry ids whose retry is being polled (P2-24).
+ *
+ * Kept apart from {@link pending} because the two mean different things:
+ * `pending` is one request in flight, while a retry is a background job
+ * that can run for minutes. Sharing the set would leave 标记已复习
+ * disabled for the whole analysis.
+ */
+const reanalysing = ref<Set<number>>(new Set())
 
 /** All unique tags across all loaded entries, sorted. */
 const allTags = computed<string[]>(() => {
@@ -154,6 +171,53 @@ async function markReviewed(entry: MistakeEntry): Promise<void> {
     const next = new Set(pending.value)
     next.delete(entry.id)
     pending.value = next
+  }
+}
+
+/** How often to ask whether a retry has landed, and for how long. */
+const ANALYSIS_POLL_INTERVAL_MS = 3000
+const ANALYSIS_POLL_ATTEMPTS = 60
+
+/**
+ * Replace an entry in the list, guarding against a concurrent reload.
+ *
+ * The index is looked up fresh rather than captured: the list can be
+ * reloaded while a request is in flight, and the old index would then
+ * belong to a different entry.
+ */
+function replaceEntry(id: number, updated: MistakeEntry): void {
+  const idx = entries.value.findIndex((e) => e.id === id)
+  if (idx !== -1 && entries.value[idx].id === id) {
+    entries.value[idx] = updated
+  }
+}
+
+/**
+ * Ask for another analysis and wait for it to land (P2-24).
+ *
+ * The sidecar answers as soon as the retry is accepted and does the work
+ * in the background, so the outcome can only be learned by asking again.
+ * Polling rather than the WebSocket because a retry is not a judge run —
+ * there is no stream to subscribe to.
+ */
+async function reanalyse(entry: MistakeEntry): Promise<void> {
+  if (reanalysing.value.has(entry.id)) return
+  reanalysing.value = new Set(reanalysing.value).add(entry.id)
+  try {
+    replaceEntry(entry.id, await analyzeMistake(entry.id))
+    for (let i = 0; i < ANALYSIS_POLL_ATTEMPTS; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, ANALYSIS_POLL_INTERVAL_MS))
+      const latest = await getMistake(entry.id)
+      replaceEntry(entry.id, latest)
+      if (latest.analysis_status !== 'pending') return
+    }
+    errorMsg.value = '分析用时过长，请稍后刷新查看'
+  } catch (err) {
+    errorMsg.value = (err as Error).message
+  } finally {
+    const next = new Set(reanalysing.value)
+    next.delete(entry.id)
+    reanalysing.value = next
   }
 }
 
@@ -311,10 +375,38 @@ onMounted(load)
           </div>
 
           <p v-if="entry.error_cause" class="entry-cause">{{ entry.error_cause }}</p>
-          <p v-else class="entry-cause entry-cause-empty">
-            尚未填写错因
-            <span class="cause-pending">· 待 AI 分析</span>
-          </p>
+          <p v-else class="entry-cause entry-cause-empty">尚未填写错因</p>
+
+          <!-- AI 诊断：结果、进行中、或失败后的重试入口（P2-24） -->
+          <div class="entry-analysis">
+            <template v-if="entry.analysis_status === 'done'">
+              <div class="analysis-head">
+                <span class="analysis-badge">AI 诊断</span>
+                <code v-if="entry.agent_error_type" class="analysis-type">
+                  {{ entry.agent_error_type }}
+                </code>
+              </div>
+              <p v-if="entry.agent_suggestion" class="analysis-prose">
+                {{ entry.agent_suggestion }}
+              </p>
+            </template>
+
+            <p v-else-if="entry.analysis_status === 'pending'" class="analysis-note">
+              {{ reanalysing.has(entry.id) ? '正在重新分析…' : 'AI 分析中…' }}
+            </p>
+
+            <div v-else class="analysis-failed">
+              <p class="analysis-note analysis-note-failed">AI 分析失败</p>
+              <button
+                class="btn btn-analyse"
+                type="button"
+                :disabled="reanalysing.has(entry.id)"
+                @click="reanalyse(entry)"
+              >
+                {{ reanalysing.has(entry.id) ? '分析中…' : '重新分析' }}
+              </button>
+            </div>
+          </div>
 
           <div v-if="entry.knowledge_tags.length" class="entry-tags">
             <span v-for="tag in entry.knowledge_tags" :key="tag" class="entry-tag">
@@ -580,10 +672,68 @@ onMounted(load)
   color: var(--af-text-muted);
 }
 
-.cause-pending {
-  font-style: normal;
+/*
+ * P2-24: the analysis block. Every colour here is an existing PU-0 token —
+ * the failure note borrows the same danger token the delete button and the
+ * verdict badges use, so the page gains no new semantic colour.
+ */
+.entry-analysis {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--af-surface);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+}
+
+.analysis-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analysis-badge {
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--af-accent);
+  border: 1px solid var(--af-accent);
+  border-radius: var(--af-radius-sm);
+}
+
+.analysis-type {
   font-size: 12px;
-  opacity: 0.8;
+  color: var(--af-text-secondary);
+}
+
+.analysis-prose {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--af-text-secondary);
+  /* The stored prose is three labelled paragraphs joined by newlines. */
+  white-space: pre-wrap;
+}
+
+.analysis-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--af-text-muted);
+}
+
+.analysis-note-failed {
+  color: var(--af-danger);
+}
+
+.analysis-failed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.btn-analyse {
+  color: var(--af-accent);
+  background: var(--af-accent-subtle);
+  border-color: var(--af-accent);
 }
 
 .entry-tags {

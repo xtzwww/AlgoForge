@@ -57,10 +57,12 @@ and the result is written back to ``agent_error_type`` /
 * Analysis runs **after** the entry is flushed and committed, so a slow
   provider never holds a database lock for the duration of an HTTP
   request. The commit after annotation is a second, separate transaction.
-* Failure to analyse is **absorbed**. The entry is still filed with
-  ``agent_error_type = None``, which is the honest "not yet analysed"
-  state and something a later phase can retry. An outage costs the
-  student the analysis, never the record of their mistake.
+* Failure to analyse is **absorbed**. The entry is still filed, and its
+  ``analysis_status`` records which of the two outcomes actually
+  happened: ``failed`` when the analysis ran and produced nothing,
+  ``pending`` when it has not run yet. An outage costs the student the
+  analysis, never the record of their mistake — and the entry can be
+  retried later (:func:`reanalyse_entry`).
 * ``error_cause`` is **not** what the agent writes. It stays the user's
   field, and its emptiness remains the dedupe marker. A consequence
   worth knowing: an annotated entry therefore stays "open" forever and
@@ -80,7 +82,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models.mistake_book import MistakeBookEntry
+from app.models.mistake_book import (
+    ANALYSIS_DONE,
+    ANALYSIS_FAILED,
+    ANALYSIS_PENDING,
+    MistakeBookEntry,
+)
 from app.models.problem import Problem
 from app.models.submission import Submission
 from app.sandbox.judge import JudgeResult, JudgeStatus
@@ -248,6 +255,23 @@ def _assemble_statement(problem: Problem) -> str:
     return "\n\n".join(parts)
 
 
+def _first_failing_case(result: JudgeResult) -> Optional[Any]:
+    """The case the analysis is built around, or None when there is none.
+
+    The analysis needs one case's input, expected output and actual
+    output. "Failing" means anything that is not AC — a TLE has no wrong
+    output but is still the case the student needs explained.
+
+    Shared with :func:`will_analyse` so that "an analysis will follow
+    this verdict" and "there is a case to analyse" cannot drift apart.
+    A CE is what makes the distinction visible: the entry is filed, but
+    the judge ran no case, so no analysis can be built for it.
+    """
+    return next(
+        (tc for tc in result.test_cases if tc.status != JudgeStatus.AC), None
+    )
+
+
 def _analyse_and_annotate(
     entry: MistakeBookEntry,
     result: JudgeResult,
@@ -290,10 +314,20 @@ def _analyse_and_annotate(
     # practically, keeps the import graph acyclic while P2-4 is landing.
     from app.agent.analyzer import analyze_error
 
-    failing = next(
-        (tc for tc in result.test_cases if tc.status != JudgeStatus.AC), None
-    )
+    failing = _first_failing_case(result)
     if failing is None:
+        # Nothing to analyse. CE is what reaches here in practice:
+        # compilation failed, so the judge ran no case and there is no
+        # input / expected / actual to build a prompt from. Marking it
+        # failed is the honest terminal state — an entry left on
+        # "pending" reads as work that is still coming and never will.
+        entry.analysis_status = ANALYSIS_FAILED
+        logger.info(
+            "no failing case to analyse for mistake book entry %s "
+            "(verdict %s); marked failed",
+            entry.id,
+            result.status.value,
+        )
         return
 
     # P2-8's event vocabulary for the analysis phase. Emitted from here
@@ -345,9 +379,15 @@ def _analyse_and_annotate(
         )
 
     if not outcome.ok or outcome.result is None:
+        # The entry says so out loud now. Before this it kept
+        # ``agent_error_type = None``, which is also what an entry that
+        # was never analysed looks like — so a provider outage produced an
+        # entry nobody could tell apart from an untouched one, and nothing
+        # in the UI could offer to try again.
+        entry.analysis_status = ANALYSIS_FAILED
         logger.info(
             "error analysis unavailable for problem %s (%s); "
-            "mistake book entry %s stays unanalysed",
+            "mistake book entry %s marked failed and retryable",
             context.problem_id,
             outcome.error,
             entry.id,
@@ -357,6 +397,7 @@ def _analyse_and_annotate(
     analysis = outcome.result
     entry.agent_error_type = str(analysis.error_type)
     entry.agent_suggestion = _format_suggestion(analysis)
+    entry.analysis_status = ANALYSIS_DONE
 
 
 def _format_suggestion(analysis: object) -> str:
@@ -528,8 +569,15 @@ def will_analyse(result: JudgeResult, context: SubmissionContext) -> bool:
     Deliberately approximate in one direction: it does not check that the
     problem row exists, which only the write can know. On the judge routes
     the problem was resolved moments earlier, so it does.
+
+    The second condition is not redundant. A CE is filed in the mistake
+    book but has no case to analyse (see :func:`_first_failing_case`), so
+    answering "an analysis is coming" for it would leave a client waiting
+    on events that were never scheduled.
     """
-    return _should_archive(result, context)
+    return (
+        _should_archive(result, context) and _first_failing_case(result) is not None
+    )
 
 
 def _write(
@@ -638,6 +686,120 @@ def analyse_submission(
         _analyse_and_annotate(entry, result, context, statement, on_event)
         session.commit()
         return True
+
+
+def _mark_analysis_failed(entry_id: int) -> None:
+    """Mark an entry's analysis failed, tolerating a row that is gone.
+
+    Used only on the retry path's early exits, where the alternative is
+    leaving the entry on the ``pending`` that :func:`reanalyse_entry`
+    just wrote. An entry deleted mid-retry is not an error worth raising
+    over — there is nothing left to annotate.
+    """
+    with get_session() as session:
+        entry = session.get(MistakeBookEntry, entry_id)
+        if entry is not None:
+            entry.analysis_status = ANALYSIS_FAILED
+            session.commit()
+
+
+def reanalyse_entry(entry_id: int) -> bool:
+    """Re-run the analysis for an entry, by re-judging its submission.
+
+    The retry path. A failed analysis used to be permanent: the failure
+    was a log line, the entry stayed indistinguishable from one that had
+    never been tried, and nothing could ask for it again. A provider
+    outage therefore cost that mistake its diagnosis for good.
+
+    Why this re-judges instead of replaying what was stored
+    ------------------------------------------------------
+    The analysis needs the failing case's input, expected output and
+    actual output. The submission row keeps only the *actual*
+    (``stdout``); the other two live in ``test_cases``, which does not
+    record which case failed. Re-judging is the only way to recover the
+    triple, and it is deterministic — same code, same cases, same limits,
+    so the case that failed before is the case that fails now. The
+    alternative was storing the triple on the entry, which would mean
+    three columns duplicating something the judge produces on demand.
+
+    The cost is a real compile-and-run, which is why the route schedules
+    this on a background task rather than inside the request.
+
+    Args:
+        entry_id: The mistake-book entry to retry.
+
+    Returns:
+        True when an analysis was attempted, False when there was nothing
+        to retry — a missing entry, a submission that is gone, a free run
+        with no problem to re-judge against, or a problem whose cases no
+        longer resolve. False is not a failure of this call; it means no
+        further work is possible, and the entry's status says so.
+
+    Note:
+        Writes ``pending`` before doing any work, so a UI that polls sees
+        the retry start rather than a stale terminal state. Exceptions
+        propagate: unlike :func:`record_submission` there is no
+        user-visible verdict left to protect, and the caller scheduled
+        this deliberately.
+    """
+    # Imported lazily for the same reason ``_analyse_and_annotate`` does
+    # it: this module is imported by the judge routes, and the sandbox
+    # pulls in the compiler machinery that a never-retrying deployment
+    # has no reason to load.
+    from app.sandbox.judge import judge
+    from app.sandbox.judge_input import JudgeInputError, resolve
+
+    with get_session() as session:
+        entry = session.get(MistakeBookEntry, entry_id)
+        if entry is None:
+            return False
+        submission = session.get(Submission, entry.submission_id)
+        if submission is None or submission.problem_id is None:
+            return False
+        submission_id = submission.id
+        code = submission.code
+        language = submission.language
+        problem_id = submission.problem_id
+        entry.analysis_status = ANALYSIS_PENDING
+        session.commit()
+
+    try:
+        resolved = resolve(problem_id=problem_id)
+    except JudgeInputError:
+        # The problem was deleted or left without cases. There is no
+        # input to re-judge against, so no amount of retrying helps.
+        logger.warning(
+            "cannot re-judge problem %s for mistake book entry %s; "
+            "marking the analysis failed",
+            problem_id,
+            entry_id,
+            exc_info=True,
+        )
+        _mark_analysis_failed(entry_id)
+        return False
+
+    try:
+        result = judge(
+            code,
+            resolved.test_cases,
+            time_limit=resolved.time_limit,
+            mem_limit_mb=resolved.mem_limit_mb,
+            language=language,
+        )
+        context = SubmissionContext(
+            code=code,
+            language=language,
+            problem_id=problem_id,
+            time_limit=resolved.time_limit,
+            mem_limit_mb=resolved.mem_limit_mb,
+        )
+        return analyse_submission(submission_id, result, context)
+    except Exception:
+        # The entry was moved to pending above. Leaving it there would
+        # read as work in progress that is never coming, so it is marked
+        # before the exception continues on its way to the caller's log.
+        _mark_analysis_failed(entry_id)
+        raise
 
 
 def record_submission_quietly(
