@@ -17,7 +17,7 @@ that the API layer (P1-20) can serialize directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Optional, Sequence
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
@@ -53,7 +53,9 @@ class KnowledgeStat:
         }
 
 
-def compute_knowledge_stats(session: Session) -> list[KnowledgeStat]:
+def compute_knowledge_stats(
+    session: Session, user_id: Optional[int] = None
+) -> list[KnowledgeStat]:
     """Aggregate per-tag accuracy across all submissions.
 
     Joins ``submissions`` to ``problems`` and explodes
@@ -63,6 +65,16 @@ def compute_knowledge_stats(session: Session) -> list[KnowledgeStat]:
     Args:
         session: A SQLAlchemy session (sync). The async variant for
             the production API is deferred to P1-20.
+        user_id: Restrict to one student's submissions. ``None`` — the
+            default, and the pre-existing behaviour — aggregates over
+            everyone, which is what the student's own profile page wants
+            and what the teacher's class-wide view wants.
+
+            The teacher's *per-student* drill-down passes an id. Note
+            that ``None`` deliberately does not mean "unowned rows": a
+            submission with no owner is excluded from every student's
+            view, and lumping them into the class total is a separate
+            question the total is not trying to answer.
 
     Returns:
         A list of :class:`KnowledgeStat`, one per tag that has at least
@@ -95,6 +107,8 @@ def compute_knowledge_stats(session: Session) -> list[KnowledgeStat]:
         .group_by(tag_value.c.value)
         .order_by(tag_value.c.value)
     )
+    if user_id is not None:
+        stmt = stmt.where(Submission.user_id == user_id)
 
     rows = session.execute(stmt).all()
     results: list[KnowledgeStat] = []
@@ -118,7 +132,7 @@ def compute_knowledge_stats(session: Session) -> list[KnowledgeStat]:
 
 
 def compute_knowledge_stats_for(
-    session: Session, tags: Sequence[str]
+    session: Session, tags: Sequence[str], user_id: Optional[int] = None
 ) -> list[KnowledgeStat]:
     """Aggregate accuracy restricted to a specific set of tags.
 
@@ -131,6 +145,7 @@ def compute_knowledge_stats_for(
         session: A SQLAlchemy session.
         tags: The tags to compute stats for. Order is preserved in the
             returned list.
+        user_id: Same restriction as :func:`compute_knowledge_stats`.
 
     Returns:
         One :class:`KnowledgeStat` per requested tag, in the same
@@ -139,7 +154,7 @@ def compute_knowledge_stats_for(
     if not tags:
         return []
 
-    full = {s.tag: s for s in compute_knowledge_stats(session)}
+    full = {s.tag: s for s in compute_knowledge_stats(session, user_id=user_id)}
     return [
         full.get(
             tag,

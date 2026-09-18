@@ -35,6 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_session, reset_engine  # noqa: F401  (re-exported)
+from app.eval_cases import ROOT_CAUSE_DESCRIPTIONS
 from app.models.mistake_book import (
     ANALYSIS_DONE,
     ANALYSIS_PENDING,
@@ -42,7 +43,7 @@ from app.models.mistake_book import (
 )
 from app.models.problem import Problem
 from app.models.submission import Submission
-from app.records import reanalyse_entry
+from app.records import reanalyse_entry, split_suggestion
 
 logger = logging.getLogger(__name__)
 
@@ -97,13 +98,39 @@ class MistakeEntryOut(BaseModel):
     #: to offer a retry, and to stop showing a spinner that is never going
     #: to resolve.
     analysis_status: str = ANALYSIS_PENDING
+    #: ``agent_suggestion`` split back into its three sections, plus the
+    #: Chinese reading of ``agent_error_type``. Served as separate fields
+    #: because the three sections are meant to be *read in order*, not
+    #: all at once: ``error_detail`` says what is wrong, ``hint`` nudges,
+    #: ``suggested_fix`` gives the answer away. A client that renders the
+    #: joined text defeats the point of analysing the error at all — the
+    #: student scrolls to the fix. These fields exist so the release can
+    #: be paced by the client; ``agent_suggestion`` stays for callers that
+    #: want the raw column (and for rows whose format predates the split).
+    #:
+    #: A section that was not present is ``""``, never missing — see
+    #: :func:`app.records.split_suggestion`, which is also where the
+    #: unlabelled-old-row fallback is documented. ``agent_error_type`` is
+    #: a machine label; ``error_type_description`` is the same label in
+    #: the wording the student is taught in.
+    error_detail: str = ""
+    hint: str = ""
+    suggested_fix: str = ""
+    error_type_description: str = ""
 
 
 # --- Helpers -----------------------------------------------------------
 
 
 def _entry_to_out(entry: MistakeBookEntry) -> MistakeEntryOut:
-    """Serialize an ORM row to the API response model."""
+    """Serialize an ORM row to the API response model.
+
+    The stored ``agent_suggestion`` is a single labelled blob; it is
+    split here rather than at the client so the parse has exactly one
+    implementation shared by every caller. See
+    :func:`app.records.split_suggestion` for why the split is lenient.
+    """
+    parts = split_suggestion(entry.agent_suggestion or "")
     return MistakeEntryOut(
         id=entry.id,
         submission_id=entry.submission_id,
@@ -123,6 +150,18 @@ def _entry_to_out(entry: MistakeBookEntry) -> MistakeEntryOut:
         agent_error_type=entry.agent_error_type,
         agent_suggestion=entry.agent_suggestion,
         analysis_status=entry.analysis_status,
+        error_detail=parts["error_detail"],
+        hint=parts["hint"],
+        suggested_fix=parts["suggested_fix"],
+        # The label is served untranslated next to its translation: the
+        # Chinese text is what the student reads, the label is what the
+        # teacher and the statistics layer group by. Unknown labels (a
+        # model that invented one, or a label retired since the row was
+        # written) fall back to "" rather than echoing the raw label, so
+        # the client shows nothing instead of leaking an identifier.
+        error_type_description=(
+            ROOT_CAUSE_DESCRIPTIONS.get(entry.agent_error_type or "", "")
+        ),
     )
 
 

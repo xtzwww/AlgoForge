@@ -3,7 +3,7 @@
 PU-13 gave ``submissions`` its write path. Before that the table existed
 but nothing inserted into it, while ``MistakeBookEntry`` required a
 ``submission_id`` that had to already exist — so the mistake book could
-not be reached by its normal route (gap 7 in ``docs/PHASE-UX.md``).
+not be reached by its normal route.
 
 The behavior worth guarding here is the one that decides whether the
 model can represent what judging produces:

@@ -13,6 +13,7 @@
  */
 
 import { http } from './http'
+import type { ProcessView } from '../edit-trace'
 
 export interface TestCaseIn {
   input: string
@@ -36,6 +37,13 @@ export interface JudgeResponse {
   /** Echo of the request's problem_id, or null for inline cases. */
   problem_id: number | null
   test_cases: TestCaseOut[]
+  /**
+   * The edit-behaviour observation (C1), or null when no trace was sent.
+   *
+   * Arrives with the verdict rather than needing a second call: both are
+   * facts about this one submission, known at the same moment.
+   */
+  process?: ProcessView | null
 }
 
 export interface JudgeRequest {

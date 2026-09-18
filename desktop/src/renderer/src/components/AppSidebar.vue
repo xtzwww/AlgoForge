@@ -73,7 +73,10 @@ const ICONS: Record<string, string> = {
   mistakes:
     'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z',
   profile: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
-  plan: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'
+  plan: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
+  // A rostrum: three bars over a baseline. Chosen over a "people" glyph
+  // so it does not read as a class list — this is the aggregate view.
+  teacher: 'M4 20h16M7 20V9M12 20V4M17 20v-7'
 }
 
 const items = computed<NavItem[]>(() =>
@@ -130,7 +133,7 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
         <path d="M4 18 12 5l8 13" />
         <path d="M8.5 15h7" />
       </svg>
-      <span class="brand-name">AlgoForge</span>
+      <span class="brand-name">智能学情反馈</span>
     </div>
 
     <ul class="nav-list">

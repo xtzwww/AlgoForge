@@ -13,7 +13,7 @@ The two modes
 * **By problem id** — ``{"problem_id": 7}``. The server reads the cases
   and limits from the database, so the client never has to receive the
   hidden cases at all. This is the mode the product uses; see
-  ``docs/PHASE-UX.md`` PU-12 for why judging was designed this way from
+  the module docstring for why judging was designed this way from
   the start instead of being retrofitted when the app grows a web front
   end.
 * **Inline cases** — ``{"test_cases": [...]}``. The caller supplies the

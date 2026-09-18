@@ -40,7 +40,7 @@
  * ---------------------------------------------------------------------
  * **The disabled 错因筛选 control.**
  *
- * PHASE-UX asks for the error-cause filter to be *shown as disabled and
+ * The error-cause filter is deliberately *shown as disabled and
  * labelled 「AI 接入后可用」* rather than omitted until it works. The
  * reason is honesty about capability: a user who cannot find the filter
  * concludes the app never had one, while a user who sees it greyed out
@@ -56,8 +56,26 @@
  * explanation behind `title` effectively has no explanation.
  *
  * The error-cause taxonomy is Phase 2's P2-21 (`agent_error_type` on the
- * entry model is already reserved, see `models/mistake_book.py`). Nothing
- * here reads that field, so the slot stays a rectangle and a sentence.
+ * entry model is already reserved, see `models/mistake_book.py`). The
+ * analysis card now reads it — it is the label above the three released
+ * sections, together with its Chinese description.
+ *
+ * ---------------------------------------------------------------------
+ * **Layered feedback release (current phase).**
+ *
+ * This supersedes the "AI 诊断" block that used to render
+ * `agent_suggestion` as one wall of text. The analysis has always
+ * produced three separately-labelled sections — 错在哪 / 提示 / 怎么改 —
+ * and rendering them together guaranteed only the last was read. The
+ * page now releases them one at a time behind a 还是不会 button, starting
+ * from nothing at all. See `LayeredFeedback.vue` for the full rationale;
+ * the short version is that reading the fix is not the same as
+ * understanding the error, and the UI was making the first one free.
+ *
+ * This is also why `agent_suggestion` is no longer used for display: the
+ * API serves the three sections separately (`error_detail` / `hint` /
+ * `suggested_fix`), and the joined column is kept only for callers with
+ * no interest in pacing the reveal.
  *
  * ---------------------------------------------------------------------
  * **Filtering is client-side.** All entries are loaded once and filtered
@@ -69,6 +87,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import EmptyState from '../components/EmptyState.vue'
+import LayeredFeedback from '../components/LayeredFeedback.vue'
 import PageHeader from '../components/PageHeader.vue'
 import {
   analyzeMistake,
@@ -76,6 +95,7 @@ import {
   getMistake,
   listMistakes,
   updateMistake,
+  type FeedbackSection,
   type MistakeEntry
 } from '../api/mistake_book'
 
@@ -140,6 +160,33 @@ const subtitle = computed<string>(() => {
 const filteredToNothing = computed<boolean>(
   () => entries.value.length > 0 && filteredEntries.value.length === 0
 )
+
+/* ---------------------------------------------------------------------
+ * Layered feedback release.
+ *
+ * The gating itself now lives in `LayeredFeedback`, which owns its own
+ * release state — one instance per entry, so this page keeps no
+ * bookkeeping of its own and two entries can sit at different layers
+ * without any of it being coordinated from here. See that component for
+ * why the sections are released one at a time and why progress is not
+ * persisted.
+ *
+ * What stays here is the one question the card has to answer before it
+ * can render one at all: does this entry have anything to show?
+ * ------------------------------------------------------------------- */
+
+/**
+ * Whether the analysis produced any prose.
+ *
+ * A `done` entry whose three sections are all empty falls through to the
+ * same note as `pending`: the analysis ran but said nothing. Showing an
+ * empty labelled panel would look like a rendering bug, and there is
+ * genuinely nothing to offer.
+ */
+function hasFeedback(entry: MistakeEntry): boolean {
+  const sections: FeedbackSection[] = ['error_detail', 'hint', 'suggested_fix']
+  return sections.some((s) => entry[s] !== '')
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -377,21 +424,36 @@ onMounted(load)
           <p v-if="entry.error_cause" class="entry-cause">{{ entry.error_cause }}</p>
           <p v-else class="entry-cause entry-cause-empty">尚未填写错因</p>
 
-          <!-- AI 诊断：结果、进行中、或失败后的重试入口（P2-24） -->
-          <div class="entry-analysis">
-            <template v-if="entry.analysis_status === 'done'">
-              <div class="analysis-head">
-                <span class="analysis-badge">AI 诊断</span>
-                <code v-if="entry.agent_error_type" class="analysis-type">
-                  {{ entry.agent_error_type }}
-                </code>
-              </div>
-              <p v-if="entry.agent_suggestion" class="analysis-prose">
-                {{ entry.agent_suggestion }}
-              </p>
-            </template>
+          <!--
+            AI 诊断（P2-24），分层释放。
 
-            <p v-else-if="entry.analysis_status === 'pending'" class="analysis-note">
+            The gating lives in `LayeredFeedback`; see that component for
+            why the sections are released one at a time. Note that the
+            initial state is *nothing shown* — even 错在哪 sits behind a
+            press. That is the point of the gate: the first thing the
+            student does is commit to having looked at their own code.
+            Revealing 错在哪 by default would make the button a "show me
+            the rest" control, which is a weaker prompt to think.
+
+            A `done` entry with nothing to show falls through to the same
+            note as `pending`: the analysis ran but produced no prose.
+            Showing an empty labelled panel would look like a rendering
+            bug, and there is genuinely nothing to offer.
+          -->
+          <div class="entry-analysis">
+            <LayeredFeedback
+              v-if="entry.analysis_status === 'done' && hasFeedback(entry)"
+              :error-detail="entry.error_detail"
+              :hint="entry.hint"
+              :suggested-fix="entry.suggested_fix"
+              :error-type-description="entry.error_type_description"
+              :error-type="entry.agent_error_type"
+            />
+
+            <p
+              v-else-if="entry.analysis_status === 'pending' || entry.analysis_status === 'done'"
+              class="analysis-note"
+            >
               {{ reanalysing.has(entry.id) ? '正在重新分析…' : 'AI 分析中…' }}
             </p>
 
@@ -673,44 +735,14 @@ onMounted(load)
 }
 
 /*
- * P2-24: the analysis block. Every colour here is an existing PU-0 token —
- * the failure note borrows the same danger token the delete button and the
- * verdict badges use, so the page gains no new semantic colour.
+ * The analysis block itself now lives in `LayeredFeedback.vue` — the same
+ * component `Practice.vue` renders after a verdict, so the two surfaces
+ * cannot drift apart. What stays here is only the chrome around it: the
+ * spacing above it, the note shown while an analysis is pending, and the
+ * failed-analysis row.
  */
 .entry-analysis {
   margin-top: 10px;
-  padding: 10px 12px;
-  background: var(--af-surface);
-  border: 1px solid var(--af-border);
-  border-radius: var(--af-radius-sm);
-}
-
-.analysis-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.analysis-badge {
-  padding: 1px 8px;
-  font-size: 11px;
-  color: var(--af-accent);
-  border: 1px solid var(--af-accent);
-  border-radius: var(--af-radius-sm);
-}
-
-.analysis-type {
-  font-size: 12px;
-  color: var(--af-text-secondary);
-}
-
-.analysis-prose {
-  margin: 8px 0 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--af-text-secondary);
-  /* The stored prose is three labelled paragraphs joined by newlines. */
-  white-space: pre-wrap;
 }
 
 .analysis-note {

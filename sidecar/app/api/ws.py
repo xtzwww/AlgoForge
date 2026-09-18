@@ -11,7 +11,9 @@ WS /ws/run-log
          "problem_id": 7,       // server reads the stored cases
          "time_limit": 5.0,     // optional — overrides the problem
          "mem_limit_mb": 512,   // optional — overrides the problem
-         "record": true         // optional, default true
+         "record": true,        // optional, default true
+         "process_trace": {...}, // optional, the editor's behaviour trace
+         "user_token": "…"      // optional, the logged-in user's session
        }
 
      Inline cases (self-test):
@@ -21,10 +23,23 @@ WS /ws/run-log
          "test_cases": [{"input": "...", "expected_output": "..."}],
          "time_limit": 10.0,    // optional, seconds, default 10
          "mem_limit_mb": 256,   // optional, MB, default 256
-         "record": true         // optional, default true
+         "record": true,        // optional, default true
+         "process_trace": {...} // optional, the editor's behaviour trace
        }
 
      Exactly one of ``problem_id`` / ``test_cases`` is required.
+
+     ``process_trace`` (C1) is the editor's record of how the code was
+     written — paste events, edit sizes, timestamps. It is telemetry: a
+     malformed one is dropped with a log line rather than failing the
+     request, because it must never cost the student the verdict they
+     are waiting for. See :mod:`app.process_trace`.
+
+     ``user_token`` (B1) is who is submitting. A WebSocket cannot carry
+     an ``Authorization`` header, so it travels in the body instead. It
+     is resolved best-effort: an unknown or expired token, or a database
+     that will not answer, leaves the submission unowned rather than
+     failing it. See :func:`resolve_user_id`.
   3. Server runs the judge pipeline in a worker thread and streams
      progress events (compile_start, compile_done, case_start,
      case_done, judge_done) back as JSON messages.
@@ -55,7 +70,9 @@ aborting the socket with a 404: the client has already been accepted by
 that point.
 
 The synchronous ``judge`` function runs in a worker thread via
-``asyncio.to_thread``. Its ``on_event`` callback bridges into the
+:func:`app.sandbox.pool.run_in_sandbox` — off the loop, and capped so a
+burst of sockets cannot start one compiler each. Its ``on_event``
+callback bridges into the
 event loop through ``asyncio.run_coroutine_threadsafe`` on an
 ``asyncio.Queue``, so the WS coroutine can ``await`` each event
 without blocking the event loop.
@@ -72,6 +89,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.api import validate_language_id
+from app.auth import user_for_token
+from app.db import get_session
+from app.process_trace import parse_process_trace, view_for
 from app.records import (
     SubmissionContext,
     analyse_submission,
@@ -85,6 +105,7 @@ from app.sandbox.judge_input import (
     parse_record_flag,
     resolve,
 )
+from app.sandbox.pool import run_in_sandbox
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +170,36 @@ def _parse_request(
     return code, resolved, language, parse_record_flag(payload)
 
 
+def resolve_user_id(token: object) -> Optional[int]:
+    """Which user a session token belongs to, or ``None``.
+
+    A WebSocket request cannot carry an ``Authorization`` header, so the
+    client puts the token in the message body instead. It is resolved
+    here rather than in ``_parse_request`` so that function keeps the
+    signature and arity its tests pin.
+
+    Never raises. Failing to resolve who submitted must not fail the
+    submission: the verdict is what the student is waiting for, and an
+    unowned run still lands in the history (see
+    ``Submission.user_id``'s docstring on why that is a legitimate
+    state). A database that cannot be reached therefore costs the row
+    its owner, not the student their verdict.
+
+    Returns ``None`` for an absent, unknown, or expired token, and for a
+    database that would not answer — the caller cannot distinguish them
+    and does not need to.
+    """
+    if not isinstance(token, str) or not token:
+        return None
+    try:
+        with get_session() as session:
+            user = user_for_token(session, token)
+            return user.id if user is not None else None
+    except Exception:
+        logger.exception("could not resolve the user for a run-log session")
+        return None
+
+
 @router.websocket("/ws/run-log")
 async def run_log(websocket: WebSocket) -> None:
     """Stream judge progress events to the connected client."""
@@ -179,6 +230,13 @@ async def run_log(websocket: WebSocket) -> None:
         problem_id=resolved.problem_id,
         time_limit=resolved.time_limit,
         mem_limit_mb=resolved.mem_limit_mb,
+        # Parsed here rather than inside ``_parse_request`` so that
+        # function keeps the signature and the return arity its tests
+        # pin. A malformed trace is dropped with a log line, never a
+        # ``judge_error``: telemetry must not cost the student the
+        # verdict. See :func:`parse_process_trace`.
+        trace=parse_process_trace(payload.get("process_trace")),
+        user_id=resolve_user_id(payload.get("user_token")),
     )
 
     # Bridge between the judging worker thread and this async coroutine.
@@ -255,6 +313,12 @@ async def run_log(websocket: WebSocket) -> None:
         terminal = outcome.to_dict()
         terminal["type"] = "judge_done"
         terminal["analysing"] = analysing
+        # The edit-behaviour observation (C1), or None when the client
+        # sent no trace. Carried on the terminal event rather than as an
+        # event of its own: it is a fact about the submission the verdict
+        # just described, and the client is already waiting on this
+        # message to render the result.
+        terminal["process"] = view_for(context.trace, code)
         on_event(terminal)
 
         if analysing and submission_id is not None:
@@ -276,13 +340,26 @@ async def run_log(websocket: WebSocket) -> None:
                         "ok": False,
                         "error": f"{type(exc).__name__}: {exc}",
                         "error_type": None,
+                        "error_type_description": None,
                         "tools": [],
+                        # Every field the success payload carries, present
+                        # and null. The practice page releases the three
+                        # sections one at a time and reads all three keys
+                        # unconditionally, so an absent one would be read
+                        # as "the section is empty" rather than "the
+                        # analysis never ran".
+                        "suggestion": None,
+                        "error_detail": None,
+                        "hint": None,
+                        "suggested_fix": None,
                     }
                 )
 
     async def run_judge() -> None:
         try:
-            await asyncio.to_thread(judge_and_record)
+            # Capped like the REST route — a burst of submissions should
+            # queue, not start one compiler per open socket.
+            await run_in_sandbox(judge_and_record)
         except Exception as exc:
             # Propagate unexpected failures as a terminal event so the
             # reader loop unblocks and the client sees what happened.

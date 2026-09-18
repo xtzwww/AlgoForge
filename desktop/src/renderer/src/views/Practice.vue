@@ -66,6 +66,7 @@ import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
 import { getProblem, getProblemTestCases, type ProblemDetail } from '../api/problems'
 import { getLanguageOptions, pickDefaultLanguage, type LanguageOption } from '../api/languages'
 import { hasNativeHighlighting, type MonacoLanguageId } from '../monaco-theme'
+import { editTrace } from '../edit-trace'
 import { publishPageCrumb } from '../composables/usePageCrumb'
 
 const props = withDefaults(
@@ -520,12 +521,27 @@ function buildPlan(kind: RunKind): RunPlan | null {
   const language = languageId.value
   const problemId = props.problemId
 
+  /**
+   * The edit-behaviour trace, attached to every request (C1).
+   *
+   * Snapshotted here rather than at submit time only, because a scratch
+   * run carries it too: the sidecar ignores it when it does not record,
+   * and one code path that always attaches it cannot drift from a second
+   * that sometimes does.
+   *
+   * The snapshot is a copy — the session keeps running, so the next
+   * submission describes strictly more work than this one, which is what
+   * makes a second attempt look different from a first.
+   */
+  const trace = editTrace.snapshot()
+
   if (problemId === null) {
     const cases = FREE_RUN_CASES
     const opts = {
       language,
       timeLimit: FREE_RUN_TIME_LIMIT,
-      memLimitMb: FREE_RUN_MEM_LIMIT_MB
+      memLimitMb: FREE_RUN_MEM_LIMIT_MB,
+      processTrace: trace
     }
     return {
       request: (onEvent) =>
@@ -540,7 +556,8 @@ function buildPlan(kind: RunKind): RunPlan | null {
   if (kind === 'submit') {
     const expected = expectedByOrdinal.value
     return {
-      request: (onEvent) => submitProblem(code.value, problemId, onEvent, { language }),
+      request: (onEvent) =>
+        submitProblem(code.value, problemId, onEvent, { language, processTrace: trace }),
       expectedAt: (i) => expected.get(i + 1) ?? '',
       // The stream echoes the input on `case_done`, so this is a fallback.
       inputAt: () => ''
@@ -550,7 +567,7 @@ function buildPlan(kind: RunKind): RunPlan | null {
   const cases = runCasesForProblem.value
   if (cases.length === 0) return null
   return {
-    request: (onEvent) => runCases(code.value, cases, onEvent, { language }),
+    request: (onEvent) => runCases(code.value, cases, onEvent, { language, processTrace: trace }),
     expectedAt: (i) => cases[i]?.expected_output ?? '',
     inputAt: (i) => cases[i]?.input ?? ''
   }
@@ -598,7 +615,11 @@ async function start(kind: RunKind): Promise<void> {
         passed: ev.passed ?? 0,
         total: ev.total ?? 0,
         problem_id: props.problemId,
-        test_cases: caseResults
+        test_cases: caseResults,
+        // The edit-behaviour observation (C1), carried on the terminal
+        // event. Null when the sidecar had no trace to work from, which
+        // the panel reports as nothing rather than as a clean run.
+        process: ev.process ?? null
       }
     }
 
@@ -642,6 +663,10 @@ async function start(kind: RunKind): Promise<void> {
 
 /** 运行: run against the visible cases, record nothing. */
 function run(): Promise<void> {
+  // Counted in the trace as "asked for a verdict". Not counted for
+  // 提交: the backend reports this as runs *before* the submission, and
+  // including the submission itself would make the number a lie.
+  editTrace.recordRun()
   return start('run')
 }
 

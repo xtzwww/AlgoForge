@@ -26,7 +26,7 @@ The two collections answer different questions and have different
 trust levels. ``samples`` is *presentation*: it belongs to the problem
 record, has no ordinal semantics beyond array order, and is safe to
 send to the client whole. :class:`TestCase` is *judging*: it is ordered,
-carries the hidden/visible distinction, and — per PHASE-UX PU-12 — is
+carries the hidden/visible distinction, and is
 the collection whose full contents must not leak to the client.
 
 Keeping them apart means "show the user the samples" and "judge against

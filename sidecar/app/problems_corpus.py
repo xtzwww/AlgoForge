@@ -238,7 +238,7 @@ class CatalogueProblem:
         compile, and it is reported for every file at once rather than
         one per run.
 
-        The count requirements come from ``docs/PHASE-UX.md`` PU-14:
+        The count requirements are:
         at least two samples (so the user can see what the format looks
         like) and at least three hidden cases (so a solution that only
         satisfies the samples is still caught).

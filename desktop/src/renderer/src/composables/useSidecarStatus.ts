@@ -9,7 +9,7 @@
  * **Why a module-level ref instead of Pinia.** AGENTS.md names Pinia as
  * the state manager, and this is the shape of thing it exists for. It is
  * not used yet because there is nothing else to store — this is the
- * first shared state in the frontend — and PHASE-UX.md decision 3 makes
+ * first shared state in the frontend — and the decision to keep the
  * vue-router the only new runtime dependency this phase. A singleton
  * composable is the dependency-free version of the same idea, and moving
  * this into a store later is a mechanical change because every consumer

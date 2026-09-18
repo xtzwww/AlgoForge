@@ -55,7 +55,7 @@ AGENTS.md), so the portable ``sa.JSON()`` is correct here.
 
 Known limitation
 ----------------
-Per docs/PHASE-UX.md PU-11 this migration is required to be verified on a
+This migration is required to be verified on a
 real PostgreSQL instance, because JSON column DDL can differ from
 SQLite's. On the development machine PostgreSQL was not running (nothing
 listening on 5432), so verification covered SQLite only: upgrade over a

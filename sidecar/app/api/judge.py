@@ -48,12 +48,15 @@ what tests and simple clients want.
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api import LanguageId
+from app.api.auth import current_user
+from app.models.user import User
+from app.process_trace import parse_process_trace, view_for
 from app.records import (
     SubmissionContext,
     analyse_submission,
@@ -62,6 +65,7 @@ from app.records import (
 )
 from app.sandbox.judge import JudgeResult, judge
 from app.sandbox.judge_input import JudgeInputError, resolve
+from app.sandbox.pool import run_in_sandbox
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +105,12 @@ class JudgeRequest(BaseModel):
     #: :func:`app.sandbox.judge_input.parse_record_flag` so this route and
     #: ``WS /ws/run-log`` cannot disagree about the default.
     record: bool = True
+    #: The editor's behaviour trace for the session that produced this
+    #: code (C1). Typed ``Any``, not ``ProcessTrace``, on purpose: a
+    #: malformed trace is dropped with a log line rather than turning
+    #: into a 422, because telemetry must never cost the student the
+    #: verdict they are waiting for. See :func:`parse_process_trace`.
+    process_trace: Any = None
 
 
 class TestCaseOut(BaseModel):
@@ -122,6 +132,11 @@ class JudgeResponse(BaseModel):
     #: responses apart without correlating by hand.
     problem_id: Optional[int] = None
     test_cases: list[TestCaseOut]
+    #: The edit-behaviour observation (C1), or ``None`` when the client
+    #: sent no trace. Returned here rather than left for the client to
+    #: fetch because it is known at the same moment as the verdict and
+    #: belongs beside it: both are facts about this one submission.
+    process: Optional[dict] = None
 
 
 async def _analyse_in_background(
@@ -145,7 +160,11 @@ async def _analyse_in_background(
 
 
 @router.post("/judge", response_model=JudgeResponse)
-async def judge_code(req: JudgeRequest, background: BackgroundTasks) -> JudgeResponse:
+async def judge_code(
+    req: JudgeRequest,
+    background: BackgroundTasks,
+    user: Optional[User] = Depends(current_user),
+) -> JudgeResponse:
     """Build and judge the submitted code against the test cases.
 
     The program is built once (P1-11) and reused for every test case
@@ -181,6 +200,8 @@ async def judge_code(req: JudgeRequest, background: BackgroundTasks) -> JudgeRes
         problem_id=resolved.problem_id,
         time_limit=resolved.time_limit,
         mem_limit_mb=resolved.mem_limit_mb,
+        trace=parse_process_trace(req.process_trace),
+        user_id=user.id if user is not None else None,
     )
 
     # Judging is blocking — it compiles and runs a subprocess per case —
@@ -213,7 +234,10 @@ async def judge_code(req: JudgeRequest, background: BackgroundTasks) -> JudgeRes
             submission_id = record_judge_outcome(outcome, context, analyse=False)
         return outcome, submission_id
 
-    result, submission_id = await asyncio.to_thread(_judge_and_record)
+    # Capped: see :mod:`app.sandbox.pool`. Off the loop is not the same
+    # thing as at most four, and "the judge got slow" is a much harder
+    # failure to diagnose than "a submission had to wait".
+    result, submission_id = await run_in_sandbox(_judge_and_record)
 
     if submission_id is not None and will_analyse(result, context):
         # Scheduled, not awaited: the student gets the verdict now and
@@ -222,4 +246,8 @@ async def judge_code(req: JudgeRequest, background: BackgroundTasks) -> JudgeRes
 
     payload = result.to_dict()
     payload["problem_id"] = resolved.problem_id
+    # Reported even when ``record`` is false: the observation is about
+    # the editing session, not about whether this run became history, and
+    # a scratch run is exactly where a student would want the nudge.
+    payload["process"] = view_for(context.trace, req.code)
     return JudgeResponse(**payload)

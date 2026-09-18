@@ -91,11 +91,34 @@ def build_engine(url: Optional[str] = None) -> Engine:
 
 
 def _ensure_engine() -> None:
-    """Build the process-wide engine + session factory on first use."""
+    """Build the process-wide engine + session factory on first use.
+
+    The schema check lives here rather than in :func:`get_session`.
+    ``get_session`` is a *per-request* dependency, and ``create_all``
+    reflects the existing schema — it queries the catalogue for every
+    table — before concluding there is nothing to do. Calling it per
+    request therefore costs N catalogue round trips for N tables on every
+    single request. A local SQLite file and a same-machine PostgreSQL hide
+    that; it stops being hidden as soon as there is real traffic, and the
+    cost grows with the schema, which is the worst shape a performance
+    trap can have.
+
+    Running it once per process keeps the property the per-request call
+    existed for — a fresh development database is immediately usable —
+    while removing the per-request cost.
+
+    Caveat this does **not** fix: ``create_all`` builds whatever the ORM
+    models currently declare, so against a database Alembic manages it can
+    create a table the migrations have not reached yet, leaving the two
+    out of step. Alembic remains the source of truth for schema changes
+    (AGENTS.md §二); this is a development convenience, not a migration
+    strategy.
+    """
     global _engine, _SessionFactory
     if _engine is not None:
         return
     _engine = build_engine()
+    Base.metadata.create_all(_engine)
     _SessionFactory = sessionmaker(_engine, expire_on_commit=False)
 
 
@@ -103,12 +126,9 @@ def get_session() -> Session:
     """Return a new session bound to the process-wide engine.
 
     Callers use this as a context manager (``with get_session() as s:``).
-    Tables are created if absent so a fresh dev database is immediately
-    usable; Alembic remains the source of truth for schema changes.
     """
     _ensure_engine()
     assert _SessionFactory is not None  # narrowed by _ensure_engine
-    Base.metadata.create_all(_engine)
     return _SessionFactory()
 
 

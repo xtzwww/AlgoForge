@@ -31,6 +31,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.eval_cases import ROOT_CAUSE_DESCRIPTIONS
 from app.llm.gateway import Completion, LLMConnectionError, ToolCall
 from app.models.base import Base
 from app.models.mistake_book import MistakeBookEntry
@@ -548,6 +549,10 @@ def test_an_analysis_outage_is_still_announced_as_finished(session, problem):
     # a key that only appeared on success would make "no diagnosis" and
     # "the field was renamed" look the same to it.
     assert events[1]["suggestion"] is None
+    assert events[1]["error_detail"] is None
+    assert events[1]["hint"] is None
+    assert events[1]["suggested_fix"] is None
+    assert events[1]["error_type_description"] is None
     # And the mistake is still filed, unanalysed.
     assert _entries(session)[0].agent_error_type is None
 
@@ -581,6 +586,40 @@ def test_the_stream_carries_the_same_diagnosis_the_entry_stores(session, problem
     # and an explanation with no fix is not what the student came for.
     assert "【提示】看看乘法的操作数是什么类型" in done["suggestion"]
     assert "【怎么改】让运算前就是 64 位" in done["suggestion"]
+
+
+def test_the_stream_carries_the_diagnosis_already_split(session, problem):
+    """The three sections arrive split, so no client parses the labels.
+
+    `suggestion` is the joined prose and is what gets stored; what the
+    student reads is three separately-paced paragraphs. Splitting is
+    `split_suggestion`'s job and the mistake book already calls it on the
+    stored column, so a client that re-derived the sections from
+    `suggestion` would be a second implementation of a format it does not
+    own — and the practice page and the mistake book would eventually
+    disagree about where one section ends.
+
+    The Chinese reading of the label rides along for the same reason: it
+    is one dict lookup on the server, versus a third copy of the
+    taxonomy living in the browser.
+    """
+    events = []
+
+    with _stub_analysis(VALID_ANALYSIS):
+        record_submission(
+            _wa_result(), _context(), session=session, on_event=events.append
+        )
+
+    done = events[-1]
+
+    assert done["error_detail"] == "a * b 在 int 内先溢出"
+    assert done["hint"] == "看看乘法的操作数是什么类型"
+    assert done["suggested_fix"] == "让运算前就是 64 位"
+    # The label, and the label in the words the student is meant to read.
+    assert done["error_type"] == "overflow"
+    assert done["error_type_description"] == ROOT_CAUSE_DESCRIPTIONS["overflow"]
+    # Section by section, this is the same prose as the joined column.
+    assert "【错在哪】" + done["error_detail"] in done["suggestion"]
 
 
 def test_the_analysis_hands_the_terminal_event_back(session, problem):

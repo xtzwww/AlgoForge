@@ -43,9 +43,17 @@
  * watch, rather than in a second one, is what keeps the two from racing:
  * `setValue` alone resets the model to plain text, and the language has
  * to be re-declared immediately after it.
+ *
+ * **C1: this component is also the edit-behaviour probe.** It is the only
+ * thing in the app that can see a paste — Monaco fires `onDidPaste` on
+ * the editor instance and nowhere else — so it is where the system's
+ * learning-process data actually originates. The recorder lives in
+ * `edit-trace.ts`; this file only tells it what happened, and only in
+ * *sizes*, never in text. See that module for why.
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import monaco from '../monaco'
+import { editTrace } from '../edit-trace'
 import { ALGOFORGE_THEME, installAlgoforgeTheme, type MonacoLanguageId } from '../monaco-theme'
 
 // Importing this component is what installs the theme, so the two cannot
@@ -88,10 +96,39 @@ onMounted(() => {
     insertSpaces: false
   })
 
-  editor.onDidChangeModelContent(() => {
-    if (editor) {
-      emit('update:modelValue', editor.getValue())
+  // Creating the editor is the start of an editing session: whatever was
+  // on screen before belongs to a different problem, or to nothing.
+  editTrace.reset(props.modelValue.length)
+
+  editor.onDidChangeModelContent((e) => {
+    if (!editor) return
+
+    // `isFlush` is the buffer being replaced wholesale — `setValue` from
+    // the watch below, i.e. a different problem or a language switch.
+    // The trace has to start over, because what it has been describing
+    // is no longer the code on screen.
+    if (e.isFlush) {
+      editTrace.reset(editor.getValue().length)
+    } else {
+      // Sizes only. This loop never touches the text of a change, so the
+      // trace can never carry source code.
+      let inserted = 0
+      let removed = 0
+      for (const change of e.changes) {
+        inserted += change.text.length
+        removed += change.rangeLength
+      }
+      editTrace.applyChange(inserted, removed, e.isUndoing || e.isRedoing)
     }
+
+    emit('update:modelValue', editor.getValue())
+  })
+
+  // Fired *after* the content change above, from the same synchronous
+  // call, which is why it rewrites the event just recorded rather than
+  // adding one — see `markLastAsPaste` in `edit-trace.ts`.
+  editor.onDidPaste(() => {
+    editTrace.markPaste()
   })
 })
 

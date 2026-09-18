@@ -18,7 +18,7 @@ possible, which is why :attr:`TestCase.is_sample` exists:
 
 The safety story is only as good as the API that reads it. PU-12 must
 keep the hidden rows off ``GET /problems/{id}``; the model enforces
-nothing by itself, and per PHASE-UX's security note a single-user local
+nothing by itself, and a single-user local
 app is the boundary this design assumes.
 
 Ordinal vs. id ordering

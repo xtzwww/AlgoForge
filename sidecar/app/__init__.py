@@ -1,1 +1,1 @@
-"""AlgoForge Sidecar application package."""
+"""基于 AI Agent 的编程课程学习过程分析与反馈系统 — 后端应用包。"""

@@ -6,7 +6,7 @@ Before PU-13 the ``submissions`` table had **no writer**. ``MistakeBookEntry``
 requires a ``submission_id``, and ``app/api/mistake_book.py`` refuses a
 submission that does not exist, so the mistake book could only be reached
 by a client that already knew an id it had no way to obtain. That is gap 7
-in ``docs/PHASE-UX.md``; this module closes it.
+this module closes it.
 
 Where it sits
 -------------
@@ -82,6 +82,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
+from app.eval_cases import ROOT_CAUSE_DESCRIPTIONS
 from app.models.mistake_book import (
     ANALYSIS_DONE,
     ANALYSIS_FAILED,
@@ -89,7 +90,9 @@ from app.models.mistake_book import (
     MistakeBookEntry,
 )
 from app.models.problem import Problem
+from app.models.recurrence import Recurrence, find_recurrence
 from app.models.submission import Submission
+from app.process_trace import ProcessTrace, describe, from_trace
 from app.sandbox.judge import JudgeResult, JudgeStatus
 
 logger = logging.getLogger(__name__)
@@ -130,6 +133,17 @@ class SubmissionContext:
     mem_limit_mb: Optional[int] = None
     #: Overrides recorded only when set.
     tags: list[str] = field(default_factory=list)
+    #: The editor's behaviour trace for the session that produced this
+    #: submission (C1), or ``None`` when the caller has none — which is
+    #: the normal case for the REST route, for an older client, and for
+    #: anything submitted outside the editor. ``None`` is recorded as
+    #: "no process observed", never as a clean process.
+    trace: Optional[ProcessTrace] = None
+    #: Who submitted it (B1), or ``None`` for an unowned run. Carried
+    #: here rather than resolved inside the write so both entry points
+    #: decide it the same way and the router — which is where the
+    #: credential is available — stays the only place that reads it.
+    user_id: Optional[int] = None
 
 
 def _pick_output(result: JudgeResult) -> tuple[str, str]:
@@ -401,11 +415,20 @@ def _analyse_and_annotate(
             "ok": False,
             "error": outcome.error,
             "error_type": None,
+            "error_type_description": None,
             "tools": outcome.tool_names,
             # Present and null rather than absent: the frontend branches on
             # the value, and a key that appears only on success would make
             # "no diagnosis" and "the field was renamed" look the same.
             "suggestion": None,
+            "error_detail": None,
+            "hint": None,
+            "suggested_fix": None,
+            # Zero rather than absent, for the same reason as the fields
+            # above: a client that has to guess whether the key exists
+            # will eventually guess wrong. No label was settled on, so
+            # there is no history to claim.
+            "recurrence": Recurrence(label="").to_dict(),
         }
 
     analysis = outcome.result
@@ -417,24 +440,88 @@ def _analyse_and_annotate(
     entry.agent_suggestion = suggestion
     entry.analysis_status = ANALYSIS_DONE
 
+    # 历史联动反馈 (阶段 1): "这个错因你之前也出现过 N 次".
+    #
+    # Read *after* the label is written and *excluding this entry*, so
+    # the count is "how many times before now" rather than "including
+    # this one" — an off-by-one here is the difference between "again"
+    # and "for the first time".
+    recurrence = _find_recurrence(entry, context, str(analysis.error_type))
+
+    # Split server-side rather than re-parsing the labels in the client.
+    # The mistake book serves these same three fields off the stored
+    # column through the same parser, so the practice page can release
+    # them one at a time without the two screens ever disagreeing about
+    # where one section ends and the next begins.
+    parts = split_suggestion(suggestion)
+    label = str(analysis.error_type)
+
     return {
         "type": "agent_done",
         "ok": True,
         "error": None,
-        "error_type": str(analysis.error_type),
+        "error_type": label,
+        # The label in student-facing Chinese, or '' when this build does
+        # not know it — same value, same source as the mistake book's.
+        "error_type_description": ROOT_CAUSE_DESCRIPTIONS.get(label, ""),
         "tools": outcome.tool_names,
         "suggestion": suggestion,
+        "error_detail": parts["error_detail"],
+        "hint": parts["hint"],
+        "suggested_fix": parts["suggested_fix"],
+        # Present and never null, so the client can render it without a
+        # branch. `count == 0` is the answer "this is the first time",
+        # not an absence of an answer.
+        "recurrence": recurrence.to_dict(),
     }
+
+
+def _find_recurrence(
+    entry: MistakeBookEntry, context: SubmissionContext, error_type: str
+) -> Recurrence:
+    """Look up this mistake's prior occurrences, without letting it fail.
+
+    Wrapped rather than called inline because the lookup is a *bonus* on
+    the diagnosis: the analysis the student is waiting for has already
+    landed by the time this runs, and a database that will not answer
+    here must not turn a successful analysis into a failed one.
+
+    The session comes from the entry rather than from a new parameter, so
+    :func:`_analyse_and_annotate` keeps the signature its tests pin.
+    """
+    from sqlalchemy.orm import Session as OrmSession
+
+    try:
+        session = OrmSession.object_session(entry)
+        if session is None:
+            return Recurrence(label=error_type)
+        return find_recurrence(
+            session,
+            user_id=context.user_id,
+            error_type=error_type,
+            problem_id=context.problem_id,
+            exclude_entry_id=entry.id,
+        )
+    except Exception:
+        logger.exception("could not look up the history for mistake %s", entry.id)
+        return Recurrence(label=error_type)
 
 
 def _format_suggestion(analysis: object) -> str:
     """Join the analysis prose into the single text column.
 
-    The three prose fields are always displayed together and never
-    queried individually, so they share one column (see the column
-    comment in ``app/models/mistake_book.py``). Labelled with their
-    Chinese headings so the stored string is still readable when dumped
-    straight into a terminal or a bug report.
+    The three prose fields share one column rather than three because
+    they are written as a unit and were, until :func:`split_suggestion`
+    existed, read as a unit too. Labelled with their Chinese headings so
+    the stored string is still readable when dumped straight into a
+    terminal or a bug report.
+
+    The labels are load-bearing: :func:`split_suggestion` parses them
+    back out, and the frontend uses the split to release the three
+    parts one at a time instead of handing the student the fix up
+    front. So the format here and the parser below are one contract —
+    change one, change both, and :data:`_SUGGESTION_LABELS` is the
+    single source for the label strings.
     """
     detail = getattr(analysis, "error_detail", "") or ""
     hint = getattr(analysis, "hint", "") or ""
@@ -442,12 +529,95 @@ def _format_suggestion(analysis: object) -> str:
 
     parts = []
     if detail:
-        parts.append(f"【错在哪】{detail}")
+        parts.append(f"{_SUGGESTION_LABELS['error_detail']}{detail}")
     if hint:
-        parts.append(f"【提示】{hint}")
+        parts.append(f"{_SUGGESTION_LABELS['hint']}{hint}")
     if fix:
-        parts.append(f"【怎么改】{fix}")
+        parts.append(f"{_SUGGESTION_LABELS['suggested_fix']}{fix}")
     return "\n".join(parts)
+
+
+#: The Chinese headings ``_format_suggestion`` writes and
+#: :func:`split_suggestion` reads back. Kept as data rather than as
+#: literals in both functions so a reworded heading cannot desynchronise
+#: the writer from the parser.
+_SUGGESTION_LABELS: dict[str, str] = {
+    "error_detail": "【错在哪】",
+    "hint": "【提示】",
+    "suggested_fix": "【怎么改】",
+}
+
+
+def split_suggestion(suggestion: str) -> dict[str, str]:
+    """Split ``agent_suggestion`` back into its three prose fields.
+
+    The inverse of :func:`_format_suggestion`. Exists so the API can
+    serve the parts separately and the frontend can release them one at
+    a time — the point of which is pedagogical: ``hint`` is a nudge and
+    ``suggested_fix`` is the answer, and presenting them together means
+    the student reads the answer and never uses the nudge. The storage
+    format is unchanged; only the read path gained structure.
+
+    Parsed leniently rather than strictly, for three reasons:
+
+    * **Old rows.** ``agent_suggestion`` is free text that predates any
+      contract. A row written before a label was renamed, or by a
+      different prompt version, simply won't match — and must still
+      render. Anything unmatched is returned as-is under
+      ``error_detail``, which is the field the UI always shows first, so
+      the worst case is "the whole text appears at once" (the old
+      behaviour) rather than "the text disappears".
+    * **Model-authored newlines.** The prose itself may contain the
+      label of a *later* section, or contain no label at all. Splitting
+      on the first occurrence of each known label in order is enough to
+      survive that; a strict line-by-line grammar would not.
+    * **Cost of being wrong.** A false split shows a student a
+      mislabelled paragraph. A lost split shows nothing. The lenient
+      path degrades to the previous behaviour, so this is the safe
+      direction to fail in.
+
+    Args:
+        suggestion: The stored column value. May be empty, may be
+            unlabelled free text, may hold any subset of the three
+            sections.
+
+    Returns:
+        A dict with keys ``error_detail``, ``hint`` and ``suggested_fix``.
+        Every key is present; a section that was not found is ``""``.
+        When no label matches at all, the whole input is returned under
+        ``error_detail``.
+    """
+    if not suggestion:
+        return {"error_detail": "", "hint": "", "suggested_fix": ""}
+
+    # Locate each label, keeping only the first occurrence of each. A
+    # label appearing later inside another section's prose is ignored,
+    # because by then we already have that section's start.
+    found: list[tuple[int, str]] = []
+    # `section`, not `field`: `field` is the dataclasses import above, and
+    # shadowing an import inside a loop is the kind of thing that turns
+    # into a real bug the moment the function grows a `@dataclass`.
+    for section, label in _SUGGESTION_LABELS.items():
+        at = suggestion.find(label)
+        if at != -1:
+            found.append((at, section))
+
+    if not found:
+        # Unlabelled free text: hand it back whole so the UI still has
+        # something to show.
+        return {
+            "error_detail": suggestion,
+            "hint": "",
+            "suggested_fix": "",
+        }
+
+    found.sort()
+    result = {"error_detail": "", "hint": "", "suggested_fix": ""}
+    for index, (start, section) in enumerate(found):
+        body_start = start + len(_SUGGESTION_LABELS[section])
+        body_end = found[index + 1][0] if index + 1 < len(found) else len(suggestion)
+        result[section] = suggestion[body_start:body_end].strip()
+    return result
 
 
 def _archive_mistake(
@@ -607,6 +777,29 @@ def will_analyse(result: JudgeResult, context: SubmissionContext) -> bool:
     )
 
 
+def _apply_trace(submission: Submission, context: SubmissionContext) -> None:
+    """Derive and attach the edit-behaviour features, if there is a trace.
+
+    Called between building the row and inserting it, so the features are
+    part of the same insert as the verdict — there is no window in which
+    a submission exists that claims to have no process data.
+
+    A missing trace leaves the row's ``process_*`` columns at ``None``
+    rather than zeroing them: "not observed" and "observed and
+    unremarkable" are different statements, and the teacher's evidence
+    panel reads them differently. Collapsing them would make every
+    submission made outside the editor look like a clean one.
+
+    Derivation is cheap — a few passes over at most
+    :data:`app.process_trace.MAX_EVENTS` items — which is why it happens
+    inline on the write path instead of being queued.
+    """
+    if context.trace is None:
+        return
+    features = from_trace(context.trace, context.code)
+    submission.apply_process(features, describe(features).flagged)
+
+
 def _write(
     session: Session,
     result: JudgeResult,
@@ -621,6 +814,7 @@ def _write(
     """Insert the submission and, for a wrong answer, archive the mistake."""
     submission = Submission(
         problem_id=context.problem_id,
+        user_id=context.user_id,
         status=result.status.value,
         code=context.code,
         language=context.language,
@@ -629,6 +823,7 @@ def _write(
         exec_time=exec_time,
         memory_used=memory_used,
     )
+    _apply_trace(submission, context)
     session.add(submission)
     # Assign the id before the mistake-book insert needs it as a FK.
     # flush() rather than commit() so the two rows land in one

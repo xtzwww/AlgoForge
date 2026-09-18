@@ -66,6 +66,8 @@
 import { computed } from 'vue'
 import type { JudgeEvent } from '../api/ws'
 import type { JudgeResponse } from '../api/judge'
+import type { FeedbackSection } from '../api/mistake_book'
+import LayeredFeedback from './LayeredFeedback.vue'
 import VerdictBadge from './VerdictBadge.vue'
 
 const props = defineProps<{
@@ -226,6 +228,66 @@ const agentDone = computed<JudgeEvent | null>(() => {
     if (props.events[i].type === 'agent_done') return props.events[i]
   }
   return null
+})
+
+/**
+ * The diagnosis as the three sections the sidecar already split it into.
+ *
+ * `agent_done` carries them separately (`error_detail` / `hint` /
+ * `suggested_fix`) precisely so no client has to parse the `【错在哪】`
+ * labels out of the joined prose — see `api/ws.ts`. This page is the one
+ * where the student meets the mistake, so it gets the same gated reveal
+ * the mistake book uses rather than the whole answer at once.
+ */
+const diagnosis = computed<Record<FeedbackSection, string>>(() => {
+  const ev = agentDone.value
+  if (!ev || ev.ok !== true) return { error_detail: '', hint: '', suggested_fix: '' }
+  return {
+    error_detail: ev.error_detail ?? '',
+    hint: ev.hint ?? '',
+    suggested_fix: ev.suggested_fix ?? ''
+  }
+})
+
+/**
+ * Whether there is anything to reveal.
+ *
+ * A successful analysis whose three sections are all empty is possible —
+ * the model answered with a label and nothing else. Rendering the panel
+ * then would show the header and a "that was everything" note with no
+ * content between them, which reads as a broken render.
+ */
+const hasDiagnosis = computed<boolean>(() =>
+  (Object.keys(diagnosis.value) as FeedbackSection[]).some((s) => diagnosis.value[s] !== '')
+)
+
+/**
+ * Whether to show the learning-process note (C1).
+ *
+ * Guarded on ``flagged`` alone. The sidecar always sends the whole
+ * observation — a submission that was *not* flagged still carries its
+ * evidence, because a teacher may want to see it — but none of that
+ * belongs on the student's screen unless it says something.
+ */
+const processFlagged = computed<boolean>(() => props.result?.process?.flagged === true)
+
+/**
+ * 「这个错因你之前也出现过 N 次」(阶段 1 · 历史联动反馈).
+ *
+ * Empty when the diagnosis failed, or when this really is the first
+ * time — and in the second case the panel renders *nothing*, because a
+ * line that always appears teaches the student to skip it, including on
+ * the day it finally says something.
+ *
+ * Counted across **other problems** only, which is why the wording says
+ * 「在别的题上」: retrying one problem three times is ordinary, while the
+ * same root cause resurfacing on three different problems is the
+ * pattern worth naming.
+ */
+const recurrenceNote = computed<string>(() => {
+  const ev = agentDone.value
+  if (!ev || ev.ok !== true) return ''
+  return ev.recurrence?.summary ?? ''
 })
 
 /** Cap a long single-line gist without cutting mid-character. */
@@ -392,6 +454,13 @@ function eventLabel(type: string): string {
       <div class="agent-header">
         <h3>Agent 分析</h3>
         <span v-if="agentRunning" class="agent-state">分析中…</span>
+        <!--
+          Once the diagnosis itself is on screen (below), the header does
+          not repeat the label — `LayeredFeedback` already shows it, in
+          Chinese, with the raw identifier beside it. Two copies of the
+          same fact is how they start to disagree.
+        -->
+        <span v-else-if="agentDone?.ok && hasDiagnosis" class="agent-state">分析完成</span>
         <span v-else-if="agentDone?.ok" class="agent-state">
           错因：<code>{{ agentDone.error_type ?? '（未给出）' }}</code>
         </span>
@@ -403,11 +472,34 @@ function eventLabel(type: string): string {
       </p>
 
       <!--
-        The diagnosis. Kept on one line: a `pre-wrap` element whose
-        mustache has whitespace around it would render that whitespace as
-        indentation on the first line and a trailing space on the last.
+        The diagnosis, released one section at a time.
+
+        The same component the mistake book renders, so the screen where
+        the student meets the mistake and the screen where they revisit
+        it cannot disagree about what the Agent said — or about how much
+        of it is handed over at once.
+
+        The joined `suggestion` underneath is only a fallback: a sidecar
+        that answered with prose but without the split. Showing nothing
+        there would be worse than showing the whole answer at once.
       -->
-      <p v-if="agentDone?.suggestion" class="agent-suggestion">{{ agentDone.suggestion }}</p>
+      <LayeredFeedback
+        v-if="hasDiagnosis"
+        class="agent-diagnosis"
+        :error-detail="diagnosis.error_detail"
+        :hint="diagnosis.hint"
+        :suggested-fix="diagnosis.suggested_fix"
+        :error-type-description="agentDone?.error_type_description ?? ''"
+        :error-type="agentDone?.error_type ?? null"
+      />
+      <p v-else-if="agentDone?.suggestion" class="agent-suggestion">{{ agentDone.suggestion }}</p>
+
+      <!--
+        The history line, placed *after* the diagnosis rather than before
+        it: "you have made this mistake before" only means something once
+        the student knows which mistake is being talked about.
+      -->
+      <p v-if="recurrenceNote" class="recurrence-note">{{ recurrenceNote }}</p>
 
       <!--
         An analysis that used no tools is a normal outcome — the model is
@@ -432,6 +524,37 @@ function eventLabel(type: string): string {
           </details>
         </li>
       </ul>
+    </section>
+
+    <!--
+      The learning-process note (C1).
+
+      A nudge, not an accusation, and it is worded that way on purpose:
+      the system reports that this submission's *editing pattern* differs
+      from the usual one and asks the student to check their own
+      reasoning. There is no score anywhere in it — a percentage would
+      read as a verdict, and a false one costs a student's trust in a way
+      no correction undoes.
+
+      Only the flagged case renders. An unflagged observation is still
+      recorded and still visible to a teacher, but showing "your process
+      looked fine" after every submission would train the student to
+      ignore the panel, which is the one thing it must not become.
+    -->
+    <section v-if="processFlagged" class="process-note">
+      <div class="process-note-head">
+        <span class="process-note-title">学习过程提示</span>
+        <span class="process-note-tag">过程特征</span>
+      </div>
+      <p class="process-note-summary">{{ props.result?.process?.summary }}</p>
+      <details class="process-note-details">
+        <summary>看看系统观察到了什么</summary>
+        <ul class="process-note-reasons">
+          <li v-for="(reason, i) in props.result?.process?.reasons ?? []" :key="i">
+            {{ reason }}
+          </li>
+        </ul>
+      </details>
     </section>
 
     <!-- Empty state: running but not yet anything to show -->
@@ -688,10 +811,104 @@ function eventLabel(type: string): string {
   color: var(--af-danger);
 }
 
+/*
+ * Spacing for the nested feedback card, applied from here rather than
+ * inside `LayeredFeedback`: how far the card sits from the tool list
+ * below it is this panel's rhythm, and the card is rendered in two
+ * different containers that are not the same distance from their
+ * neighbours.
+ */
+.agent-diagnosis {
+  margin-bottom: 8px;
+}
+
+/*
+ * The history line. A left rule rather than a filled box, and the muted
+ * text colour rather than the warning colour: it is context about the
+ * student's own past, not an alarm — and it must not compete with the
+ * diagnosis it is attached to.
+ */
+.recurrence-note {
+  margin: 0 0 8px;
+  padding: 6px 0 6px 10px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--af-text-secondary);
+  border-left: 3px solid var(--af-border-strong);
+}
+
 .agent-error {
   margin: 0 0 6px;
   font-size: 12px;
   color: var(--af-danger);
+}
+
+/*
+ * The learning-process note (C1).
+ *
+ * Deliberately *not* styled like a warning. `--af-danger` here would say
+ * "you did something wrong", which is not a claim the system makes and
+ * not one it can support: the observation is that an editing pattern
+ * differs from the usual one, and the student is being asked to think,
+ * not being told anything. The muted surface keeps it a note.
+ */
+.process-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--af-elevated);
+  border-left: 2px solid var(--af-text-muted);
+  border-radius: var(--af-radius-sm);
+}
+
+.process-note-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.process-note-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--af-text-primary);
+}
+
+/* "过程特征" rather than "AI 检测": the tag names what was measured,
+ * not what might be concluded from it. */
+.process-note-tag {
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--af-text-muted);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+}
+
+.process-note-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--af-text-primary);
+}
+
+/*
+ * The evidence is folded, not hidden: a student who disagrees has to be
+ * able to see exactly what was counted, or the note is an unappealable
+ * verdict — which is the failure mode this whole feature is designed
+ * around avoiding.
+ */
+.process-note-details summary {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--af-text-muted);
+  cursor: pointer;
+}
+
+.process-note-reasons {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--af-text-muted);
 }
 
 /* The diagnosis gets a surface of its own: it is this section's payload —

@@ -2,7 +2,7 @@
  * Application routes (PU-7).
  *
  * Replaces the `ref<Tab>` + `v-if` chain App.vue used to carry. Three
- * things forced the change (see PHASE-UX.md decision 3):
+ * things forced the change:
  *
  *   1. The web target needs a URL — a browser refresh should come back to
  *      the page you were on, and `#/problems/12` should be shareable.
@@ -37,6 +37,7 @@ import ProblemListView from '../views/ProblemListView.vue'
 import MistakesView from '../views/MistakesView.vue'
 import ProfileView from '../views/ProfileView.vue'
 import PlanView from '../views/PlanView.vue'
+import TeacherView from '../views/TeacherView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -44,14 +45,14 @@ declare module 'vue-router' {
     title: string
     /**
      * Name of the route one level up, for the breadcrumb. Absent on the
-     * five top-level pages, which are their own root.
+     * top-level pages, which are their own root.
      */
     parent?: string
   }
 }
 
 /**
- * The five top-level pages, in sidebar order.
+ * The top-level pages, in sidebar order.
  *
  * Exported because the sidebar renders its navigation from the route
  * table rather than a second hardcoded list: adding a page should mean
@@ -102,6 +103,18 @@ export const routes: RouteRecordRaw[] = [
     name: 'plan',
     component: PlanView,
     meta: { title: '复习' }
+  },
+  {
+    // Deliberately *not* role-gated in the route table. The console ships
+    // in the same bundle the students use, so "the student's build has no
+    // link to it" was never the boundary — the server's 403 is, and every
+    // teacher route raises it (see `app/api/teacher.py`). The page itself
+    // renders a login form for everybody else, which is a convenience
+    // rather than a gate.
+    path: '/teacher',
+    name: 'teacher',
+    component: TeacherView,
+    meta: { title: '学情看板' }
   },
 
   // A hand-typed or stale URL should land on the editor, not on a blank

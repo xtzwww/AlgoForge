@@ -9,8 +9,10 @@ with ``sqlite:///./algoforge.db``, so DATABASE_URL had no effect at all.
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import create_engine
 
 from app.db import _connect_args, _resolve_sync_url, build_engine
+from app.models.base import Base
 
 
 def test_sqlite_url_passes_through() -> None:
@@ -89,3 +91,45 @@ def test_build_engine_maps_asyncpg_to_psycopg() -> None:
         assert "sqlite" not in engine.dialect.name
     finally:
         engine.dispose()
+
+
+def test_the_schema_is_created_once_per_process_not_per_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``create_all`` must not run on every ``get_session()`` call.
+
+    ``get_session`` is a *per-request* dependency, and ``create_all``
+    reflects the existing schema — it queries the catalogue for every
+    table — before deciding there is nothing to do. Per request that is N
+    round trips for N tables, every time: invisible against a local
+    database, and growing with the schema once there is real traffic.
+
+    Counted rather than timed, so the assertion is about the number of
+    calls and not about how fast the machine is.
+    """
+    import app.db as db_module
+
+    # Another test may already have built the process-wide engine.
+    db_module.reset_engine()
+
+    calls: list[int] = []
+    real_create_all = Base.metadata.create_all
+
+    def counting_create_all(*args: object, **kwargs: object):
+        calls.append(1)
+        return real_create_all(*args, **kwargs)
+
+    monkeypatch.setattr(db_module.Base.metadata, "create_all", counting_create_all)
+    # A throwaway in-memory engine, so this never touches the configured
+    # database (which on this machine does not exist).
+    monkeypatch.setattr(
+        db_module, "build_engine", lambda url=None: create_engine("sqlite://")
+    )
+
+    try:
+        for _ in range(5):
+            db_module.get_session().close()
+    finally:
+        db_module.reset_engine()
+
+    assert len(calls) == 1, f"create_all ran {len(calls)} times for 5 sessions"

@@ -117,7 +117,7 @@ class LanguageSpec:
             True for all three languages, including Python: Python has no
             build phase, but it is still pushed through ``py_compile`` so
             a syntax error surfaces as CE rather than as a confusing
-            runtime error (see PHASE-UX decision 4).
+            runtime error.
         compile_cmd: ``(source_path, work_dir) -> argv`` performing the
             build. ``None`` only for a hypothetical language with no build
             step at all; none of the three registered here use that.
@@ -407,7 +407,7 @@ def _rss_allowance_java() -> int:
     The real memory bound for Java is the ``-Xmx`` already baked into
     :func:`_run_java`. This allowance only stops the OS-level check from
     firing first — it is the "relax Java's memory verdict" half of the
-    PHASE-UX decision, paired with ``-Xmx`` on the other half.
+    decision, paired with ``-Xmx`` on the other half.
 
     Known limitation: a Java submission that exhausts its heap dies with
     ``OutOfMemoryError`` and is therefore classified RE, not MLE. Making

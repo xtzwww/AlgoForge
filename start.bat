@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  AlgoForge 启动脚本 (cmd)
+REM  智能学情反馈 启动脚本 (cmd)
 REM
 REM  PU-3: 本脚本不再启动 sidecar。
 REM
@@ -51,7 +51,7 @@ REM --- 把 Node 追加到 PATH（不覆盖系统 PATH）---------------------
 set "PATH=%PATH%;%NODE_DIR%;%NODE_DIR%\node_modules\.bin"
 
 REM --- 交给 dev server；sidecar 由 Electron 拉起 ------------------
-echo [start] AlgoForge (Electron + sidecar)...
+echo [start] 智能学情反馈 (Electron + sidecar)...
 echo [hint]  sidecar 由 Electron 主进程拉起，日志前缀为 [sidecar]
 
 cd /d "%DESKTOP_DIR%"

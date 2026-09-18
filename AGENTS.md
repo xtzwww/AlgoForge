@@ -207,6 +207,10 @@ LANGSMITH_PROJECT=algoforge
 SIDECAR_PORT=                  # 留空则随机
 SIDECAR_TOKEN=                 # 留空则随机生成
 
+# 同时最多跑几个编译/判题（沙箱线程池大小）。留空用默认 4。
+# 这是上限不是目标值：超出的请求会排队等待，不会被拒绝。
+SANDBOX_CONCURRENCY=
+
 # PostgreSQL（业务数据 + LangGraph 检查点 + 长期记忆 Store）
 DATABASE_URL=postgresql+asyncpg://algoforge:algoforge@localhost:5432/algoforge
 LANGGRAPH_CHECKPOINT_URI=postgresql://algoforge:algoforge@localhost:5432/algoforge

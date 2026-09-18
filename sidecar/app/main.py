@@ -1,4 +1,4 @@
-"""AlgoForge Sidecar — FastAPI application entry point.
+"""基于 AI Agent 的编程课程学习过程分析与反馈系统 — FastAPI 后端入口。
 
 Minimal skeleton (Phase 1, slice P1-1). The app exposes a /health
 endpoint. Business routes are registered via include_router so each
@@ -8,6 +8,7 @@ feature module owns its own router.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import router as auth_router
 from app.api.env_check import router as env_check_router
 from app.api.health import router as health_router
 from app.api.judge import router as judge_router
@@ -17,13 +18,14 @@ from app.api.profile import router as profile_router
 from app.api.review import router as review_router
 from app.api.run_code import router as run_code_router
 from app.api.submissions import router as submissions_router
+from app.api.teacher import router as teacher_router
 from app.api.ws import router as ws_router
 from app.config import settings
 
 app = FastAPI(
-    title="AlgoForge Sidecar",
+    title="基于 AI Agent 的编程课程学习过程分析与反馈系统",
     version="0.1.0",
-    description="AI Agent 驱动的算法竞赛错因分析后端服务",
+    description="智能体驱动的编程学习过程分析与分层反馈后端服务",
 )
 
 # CORS: the Electron renderer calls the sidecar over localhost. In dev
@@ -60,6 +62,7 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(env_check_router)
 app.include_router(run_code_router)
 app.include_router(judge_router)
@@ -69,3 +72,4 @@ app.include_router(ws_router)
 app.include_router(mistake_book_router)
 app.include_router(profile_router)
 app.include_router(review_router)
+app.include_router(teacher_router)

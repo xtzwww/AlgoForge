@@ -1,6 +1,6 @@
 """End-to-end tests for PU-13's judge → store → mistake-book chain.
 
-This module is the closure of gap 7 in ``docs/PHASE-UX.md``: before
+This module closes a real gap: before
 PU-13, ``submissions`` had no writer while ``MistakeBookEntry`` required
 a ``submission_id`` that had to already exist, so the mistake book's
 normal route was unreachable. The tests here drive the whole chain —

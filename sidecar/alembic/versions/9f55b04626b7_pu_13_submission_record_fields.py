@@ -29,7 +29,7 @@ the migration to run against a database that already has rows:
 
 Known limitation: verified against SQLite only. No PostgreSQL instance
 was available in this environment, so the real-server check that
-``docs/PHASE-UX.md`` calls for is still outstanding.
+this design calls for is still outstanding.
 """
 from typing import Sequence, Union
 

@@ -1,7 +1,7 @@
 {
   "name": "algoforge-desktop",
   "version": "0.1.0",
-  "description": "AlgoForge Desktop — Electron + Vue 3 client",
+  "description": "基于 AI Agent 的编程课程学习过程分析与反馈系统 桌面端 — Electron + Vue 3 client",
   "main": "./out/main/index.js",
   "author": "example.com",
   "homepage": "https://electron-vite.org",

@@ -8,6 +8,8 @@
  */
 
 import type { TestCaseIn } from './judge'
+import type { ProcessTracePayload, ProcessView } from '../edit-trace'
+import { sessionToken } from './session'
 import { runtime } from '../runtime'
 
 export type JudgeEventType =
@@ -56,6 +58,17 @@ export interface JudgeEvent {
    */
   analysing?: boolean
 
+  // --- Process observation (C1) --------------------------------------
+  /**
+   * judge_done: the edit-behaviour observation for this submission, or
+   * null when the client sent no trace.
+   *
+   * Rides the verdict instead of arriving as its own event because it is
+   * a fact about the submission the verdict just described, known at the
+   * same moment, and the client is already waiting on this message.
+   */
+  process?: ProcessView | null
+
   // --- Agent phase (P2-8) --------------------------------------------
   // These arrive *after* `judge_done`: the analysis runs once the verdict
   // has been recorded and returned, so a client that stopped reading at
@@ -75,6 +88,12 @@ export interface JudgeEvent {
   /** agent_done: the label the Agent settled on, or null if it failed. */
   error_type?: string | null
   /**
+   * agent_done: the label in student-facing Chinese, or `''` when this
+   * build does not know the label. Same value and same source as the
+   * mistake book's `error_type_description`.
+   */
+  error_type_description?: string | null
+  /**
    * agent_done: the diagnosis itself — the three labelled prose sections
    * (`【错在哪】` / `【提示】` / `【怎么改】`) joined into one string, or
    * `null` when the analysis failed or produced no prose.
@@ -87,8 +106,38 @@ export interface JudgeEvent {
    * anything actionable.
    */
   suggestion?: string | null
+  /**
+   * agent_done: `suggestion` already split into its three parts by the
+   * sidecar, or `null` on failure.
+   *
+   * Split there rather than here on purpose: the mistake book serves
+   * these three off the stored column through the same parser, so the
+   * two screens cannot disagree about where one section ends. A client
+   * that re-parsed the labels would be a second implementation of a
+   * format it does not own.
+   */
+  error_detail?: string | null
+  hint?: string | null
+  suggested_fix?: string | null
   /** agent_done: names of the tools called, in order. */
   tools?: string[]
+  /**
+   * agent_done: 「这个错因你之前也出现过 N 次」(阶段 1 · 历史联动反馈).
+   *
+   * Always present, never null — `count === 0` is the answer "this is
+   * the first time on another problem", not an absence of an answer, so
+   * the client can read `count` without first checking whether the key
+   * exists. `summary` is the sentence the sidecar wrote; it is `''` when
+   * there is nothing to say, and the UI renders nothing in that case
+   * rather than a line that says "first time" every single time.
+   */
+  recurrence?: {
+    label: string
+    count: number
+    problem_ids: number[]
+    last_at: string | null
+    summary: string
+  }
 }
 
 export interface WsJudgeRequest {
@@ -131,6 +180,29 @@ export interface WsJudgeRequest {
    * otherwise silently lose its history.
    */
   record?: boolean
+  /**
+   * The editor's behaviour trace for the session that produced this code
+   * (C1) — paste events, edit sizes, timing. Omitted when there is none.
+   *
+   * Telemetry, and treated as such on both ends: the sidecar drops a
+   * malformed trace with a log line rather than failing the request,
+   * because a verdict is worth far more than a process column. A request
+   * that omits it is still a perfectly good submission; the row simply
+   * records no process, which the teacher side reports as "not observed"
+   * rather than as a clean run.
+   */
+  process_trace?: ProcessTracePayload
+  /**
+   * The logged-in user's session token (B1), when there is one.
+   *
+   * In the message body rather than a header because a browser's
+   * WebSocket cannot set `Authorization`. The sidecar resolves it
+   * best-effort: an absent, unknown, or expired token records the
+   * submission with no owner, which is a legitimate state (everything
+   * written before this existed is unowned) rather than an error — a
+   * verdict is worth far more than an owner column.
+   */
+  user_token?: string
 }
 
 /**
@@ -146,6 +218,13 @@ export interface JudgeStreamOptions {
   language?: string
   timeLimit?: number
   memLimitMb?: number
+  /**
+   * The edit-behaviour trace to attach (C1). Passed here rather than as a
+   * separate argument so every entry point carries it without growing a
+   * positional parameter list — and so a caller cannot attach a trace to
+   * one kind of run and forget it on another.
+   */
+  processTrace?: ProcessTracePayload
 }
 
 function applyOptions(req: WsJudgeRequest, opts?: JudgeStreamOptions): void {
@@ -153,6 +232,7 @@ function applyOptions(req: WsJudgeRequest, opts?: JudgeStreamOptions): void {
   if (opts.language !== undefined) req.language = opts.language
   if (opts.timeLimit !== undefined) req.time_limit = opts.timeLimit
   if (opts.memLimitMb !== undefined) req.mem_limit_mb = opts.memLimitMb
+  if (opts.processTrace !== undefined) req.process_trace = opts.processTrace
 }
 
 /**
@@ -264,11 +344,18 @@ export async function streamJudge(
 
   const ws = new WebSocket(wsUrl)
 
+  // Attached here rather than by the callers: there is exactly one place
+  // a judge request leaves the client, so this is the one place that can
+  // forget it. A per-caller flag would mean every future entry point has
+  // to remember that submissions have owners.
+  const token = sessionToken()
+  const payload: WsJudgeRequest = token ? { ...req, user_token: token } : req
+
   return new Promise<JudgeEvent>((resolve, reject) => {
     let terminal: JudgeEvent | null = null
 
     ws.onopen = () => {
-      ws.send(JSON.stringify(req))
+      ws.send(JSON.stringify(payload))
     }
 
     ws.onmessage = (ev: MessageEvent) => {

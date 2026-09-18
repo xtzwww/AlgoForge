@@ -33,6 +33,11 @@ extend-exclude = [
   "desktop",
   "**/node_modules",
   "sidecar/alembic/versions",
+  # One-shot scripts that generate the thesis figures. They are not part
+  # of the sidecar — nothing imports them and nothing runs them twice —
+  # so holding them to the backend's import and naming rules would be
+  # lint for lint's sake. The PNGs they produce are the deliverable.
+  "毕业论文",
 ]
 
 [lint]

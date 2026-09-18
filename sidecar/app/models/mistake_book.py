@@ -107,10 +107,15 @@ class MistakeBookEntry(Base):
     )
     #: P2-4: the agent's prose — ``error_detail`` + ``hint`` +
     #: ``suggested_fix``, joined for display. Stored as one text column
-    #: rather than three because they are always read together (the entry
-    #: is shown as a unit) and never queried individually; splitting them
-    #: would add two columns and a migration each time the prompt gains a
-    #: field.
+    #: rather than three so that adding a field to the prompt does not
+    #: need a migration; the display labels are the contract, and
+    #: ``app/records.py``'s ``split_suggestion`` parses them back out so
+    #: the API can serve the three parts separately.
+    #:
+    #: That read path is why the labels are data (``_SUGGESTION_LABELS``)
+    #: rather than literals in two places. Splitting at read time also
+    #: means rows written before the split existed keep working: an
+    #: unrecognised value degrades to "shown whole", not "shown empty".
     agent_suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
     #: Whether an analysis has landed: one of :data:`ANALYSIS_STATUSES`.
     #:

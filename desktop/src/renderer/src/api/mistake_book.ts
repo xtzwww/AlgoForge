@@ -25,6 +25,56 @@ export interface MistakeEntry {
   agent_suggestion: string
   /** Whether an analysis has landed. See {@link AnalysisStatus}. */
   analysis_status: AnalysisStatus
+  /**
+   * `agent_suggestion` split into its three sections, plus the Chinese
+   * reading of `agent_error_type`.
+   *
+   * The three sections are meant to be revealed in order — the fix last —
+   * so the UI reads these instead of the joined `agent_suggestion`. See
+   * {@link FeedbackSection}. All three are always present; a section the
+   * analysis did not produce is `''`. On rows written before the split
+   * existed, the whole text arrives under `error_detail` and the other
+   * two are empty.
+   */
+  error_detail: string
+  hint: string
+  suggested_fix: string
+  /**
+   * `agent_error_type` in student-facing Chinese, or `''` when the label
+   * is not one this build knows. Prefer it over the raw label for display.
+   */
+  error_type_description: string
+}
+
+/**
+ * The three sections of an AI diagnosis, in the order they are meant to
+ * be read.
+ *
+ * The order is the whole point: `error_detail` states what is wrong,
+ * `hint` nudges without solving, and `suggested_fix` gives the answer
+ * away. Showing all three at once means the student reads the last one
+ * and learns nothing — which is what the UI did before this existed.
+ */
+export type FeedbackSection = 'error_detail' | 'hint' | 'suggested_fix'
+
+/** Heading shown above each section when it is released. */
+export const FEEDBACK_SECTION_TITLES: Record<FeedbackSection, string> = {
+  error_detail: '错在哪',
+  hint: '提示',
+  suggested_fix: '怎么改'
+}
+
+/**
+ * Button label for the step that releases `section`.
+ *
+ * Worded as the student's own state ("还是不会") rather than as an action
+ * ("显示更多"), because the gate is meant to be a decision the student
+ * makes about their own understanding, not a control they operate.
+ */
+export const FEEDBACK_REVEAL_LABELS: Record<FeedbackSection, string> = {
+  error_detail: '看错因提示',
+  hint: '还是不会，给点提示',
+  suggested_fix: '还是不会，直接看怎么改'
 }
 
 /**

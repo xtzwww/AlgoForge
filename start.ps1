@@ -1,5 +1,5 @@
 # ============================================================
-#  AlgoForge launcher (PowerShell)
+#  智能学情反馈 launcher (PowerShell)
 #
 #  PU-3: this script no longer starts the sidecar.
 #
@@ -57,7 +57,7 @@ $env:PATH = "$env:PATH;$NodeDir;$NodeDir\node_modules\.bin"
 # --- Hand over to the dev server ------------------------------------
 # The sidecar is started by Electron; watch its log in this terminal
 # under the "[sidecar]" prefix.
-Write-Host '[start] AlgoForge (Electron + sidecar)...' -ForegroundColor Cyan
+Write-Host '[start] 智能学情反馈 (Electron + sidecar)...' -ForegroundColor Cyan
 Write-Host '[hint]  sidecar 由 Electron 主进程拉起，日志前缀为 [sidecar]' -ForegroundColor DarkGray
 
 Set-Location $DesktopDir
