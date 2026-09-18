@@ -36,7 +36,7 @@ from app.models.base import Base
 from app.models.mistake_book import MistakeBookEntry
 from app.models.problem import Problem
 from app.models.submission import Submission
-from app.records import SubmissionContext, record_submission
+from app.records import SubmissionContext, _analyse_and_annotate, record_submission
 from app.sandbox.judge import JudgeResult, JudgeStatus, TestCaseResult
 
 # A valid P2-2 payload. Kept as a literal so these tests do not depend on
@@ -544,5 +544,83 @@ def test_an_analysis_outage_is_still_announced_as_finished(session, problem):
     assert [event["type"] for event in events] == ["agent_start", "agent_done"]
     assert events[1]["ok"] is False
     assert "LLMConnectionError" in events[1]["error"]
+    # Present and null, not absent: the frontend branches on the value, so
+    # a key that only appeared on success would make "no diagnosis" and
+    # "the field was renamed" look the same to it.
+    assert events[1]["suggestion"] is None
     # And the mistake is still filed, unanalysed.
     assert _entries(session)[0].agent_error_type is None
+
+
+def test_the_stream_carries_the_same_diagnosis_the_entry_stores(session, problem):
+    """The practice page is told what to fix, not only what it is called.
+
+    ``error_type`` is a label: it names the mistake without saying what to
+    do about it. Until this, the practice page showed the label and the
+    tool calls and nothing else, so the one page where the student meets
+    the failure was the one page that could not tell them anything
+    actionable — they had to open the mistake book to find out.
+
+    The event's ``suggestion`` is the stored column verbatim, formatted by
+    one function and used twice, so the two surfaces cannot describe one
+    analysis two ways.
+    """
+    events = []
+
+    with _stub_analysis(VALID_ANALYSIS):
+        record_submission(
+            _wa_result(), _context(), session=session, on_event=events.append
+        )
+
+    done = events[-1]
+
+    assert done["type"] == "agent_done"
+    assert done["suggestion"] == _entries(session)[0].agent_suggestion
+    assert done["suggestion"].startswith("【错在哪】")
+    # All three sections, because a fix with no explanation teaches nothing
+    # and an explanation with no fix is not what the student came for.
+    assert "【提示】看看乘法的操作数是什么类型" in done["suggestion"]
+    assert "【怎么改】让运算前就是 64 位" in done["suggestion"]
+
+
+def test_the_analysis_hands_the_terminal_event_back(session, problem):
+    """``_analyse_and_annotate`` emits progress, and *returns* the terminal event.
+
+    The terminal event is the caller's to send because the caller owns the
+    transaction. ``agent_done`` is a claim that the entry is written, and
+    a client released by it reads the mistake book next — so sending it
+    from inside the analysis, which is where it used to be sent, put it
+    ahead of the commit that makes the claim true. Same reasoning as
+    ``judge_done`` in ``app/api/ws.py``, which is why the two now agree.
+
+    Asserted at the seam rather than through a second connection: this
+    harness shares one SQLite connection between sessions, so "had it
+    committed yet" is not observable here (see the module docstring). What
+    *is* observable, and what this pins, is that the analysis no longer
+    sends the terminal event at all — which is what makes the ordering
+    possible, and the one thing a future edit could quietly undo.
+    """
+    submission = Submission(
+        problem_id=1, status="WA", code="int a, b;", language="cpp"
+    )
+    session.add(submission)
+    session.flush()
+    entry = MistakeBookEntry(
+        submission_id=submission.id, problem_id=1, error_cause=""
+    )
+    session.add(entry)
+    session.flush()
+
+    events: list[dict] = []
+    with _stub_analysis(VALID_ANALYSIS):
+        done = _analyse_and_annotate(
+            entry, _wa_result(), _context(), "两数之积", events.append
+        )
+
+    # Progress only. A client watching this stream still has to be told
+    # when to stop, and that is the caller's line to say.
+    assert [event["type"] for event in events] == ["agent_start"]
+    assert done is not None
+    assert done["type"] == "agent_done"
+    assert done["suggestion"] == entry.agent_suggestion
+    assert entry.analysis_status == "done"

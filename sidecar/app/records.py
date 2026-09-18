@@ -278,7 +278,7 @@ def _analyse_and_annotate(
     context: SubmissionContext,
     statement: str = "",
     on_event: Optional[Callable[[Any], None]] = None,
-) -> None:
+) -> Optional[dict[str, Any]]:
     """Run P2-3's analysis on a failing submission and fill in the entry.
 
     Runs **after** the entry exists, not before, for two reasons:
@@ -306,6 +306,21 @@ def _analyse_and_annotate(
         on_event: Sink for tool-call notifications, so a WebSocket client
             can watch the Agent work (P2-8). ``None`` for the REST route,
             which has no stream to put them on.
+
+    Returns:
+        The ``agent_done`` payload for the caller to send **after it
+        commits**, or ``None`` when no analysis ran at all — a CE, whose
+        entry is filed with nothing to analyse.
+
+        The terminal event is returned rather than sent from here, while
+        ``agent_start`` and ``agent_tool`` *are* sent from here. That
+        split is deliberate: progress events are only useful as they
+        happen, but a terminal event is a claim that the work is
+        finished, and this function does not own the transaction that
+        makes the claim true. A client released by ``agent_done`` reads
+        the mistake book next, and finding the entry it was just told
+        about still on ``pending`` would be the same class of lie that
+        ``app/api/ws.py`` goes out of its way to avoid for ``judge_done``.
     """
     # Imported lazily: this module is imported by the judge routes, and
     # app.agent pulls in app.llm.gateway which pulls in httpx. Keeping the
@@ -328,7 +343,7 @@ def _analyse_and_annotate(
             entry.id,
             result.status.value,
         )
-        return
+        return None
 
     # P2-8's event vocabulary for the analysis phase. Emitted from here
     # rather than from the transport because this function is the only
@@ -365,19 +380,8 @@ def _analyse_and_annotate(
         on_event=_tool_event,
     )
 
-    if on_event is not None:
-        on_event(
-            {
-                "type": "agent_done",
-                "ok": outcome.ok,
-                "error": outcome.error,
-                "error_type": (
-                    str(outcome.result.error_type) if outcome.result else None
-                ),
-                "tools": outcome.tool_names,
-            }
-        )
-
+    # No terminal event here: it is returned to the caller, which sends it
+    # once the entry is committed. See the Returns section.
     if not outcome.ok or outcome.result is None:
         # The entry says so out loud now. Before this it kept
         # ``agent_error_type = None``, which is also what an entry that
@@ -392,12 +396,35 @@ def _analyse_and_annotate(
             outcome.error,
             entry.id,
         )
-        return
+        return {
+            "type": "agent_done",
+            "ok": False,
+            "error": outcome.error,
+            "error_type": None,
+            "tools": outcome.tool_names,
+            # Present and null rather than absent: the frontend branches on
+            # the value, and a key that appears only on success would make
+            # "no diagnosis" and "the field was renamed" look the same.
+            "suggestion": None,
+        }
 
     analysis = outcome.result
+    # Formatted once and used twice. The streamed diagnosis and the stored
+    # column are then the same string by construction, so the practice
+    # page and the mistake book cannot describe one analysis two ways.
+    suggestion = _format_suggestion(analysis)
     entry.agent_error_type = str(analysis.error_type)
-    entry.agent_suggestion = _format_suggestion(analysis)
+    entry.agent_suggestion = suggestion
     entry.analysis_status = ANALYSIS_DONE
+
+    return {
+        "type": "agent_done",
+        "ok": True,
+        "error": None,
+        "error_type": str(analysis.error_type),
+        "tools": outcome.tool_names,
+        "suggestion": suggestion,
+    }
 
 
 def _format_suggestion(analysis: object) -> str:
@@ -621,10 +648,16 @@ def _write(
                 # provider takes to answer.
                 session.commit()
                 if analyse:
-                    _analyse_and_annotate(
+                    done = _analyse_and_annotate(
                         entry, result, context, _assemble_statement(problem), on_event
                     )
                     session.commit()
+                    # Sent only now, so the entry this announces is already
+                    # readable. See the Returns section of
+                    # ``_analyse_and_annotate`` for why it does not send it
+                    # itself.
+                    if done is not None and on_event is not None:
+                        on_event(done)
                 return submission.id
 
     session.commit()
@@ -683,8 +716,12 @@ def analyse_submission(
             if problem is not None:
                 statement = _assemble_statement(problem)
 
-        _analyse_and_annotate(entry, result, context, statement, on_event)
+        done = _analyse_and_annotate(entry, result, context, statement, on_event)
         session.commit()
+        # After the commit, so a client released by ``agent_done`` finds
+        # the entry it names already readable.
+        if done is not None and on_event is not None:
+            on_event(done)
         return True
 
 

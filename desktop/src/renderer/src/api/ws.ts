@@ -74,6 +74,19 @@ export interface JudgeEvent {
   result?: Record<string, unknown>
   /** agent_done: the label the Agent settled on, or null if it failed. */
   error_type?: string | null
+  /**
+   * agent_done: the diagnosis itself — the three labelled prose sections
+   * (`【错在哪】` / `【提示】` / `【怎么改】`) joined into one string, or
+   * `null` when the analysis failed or produced no prose.
+   *
+   * This is byte-for-byte what the mistake book stores in
+   * `agent_suggestion`, so the practice page and the mistake book cannot
+   * describe one analysis two ways. `error_type` alone is a label: it
+   * names the mistake without saying what to do about it, which is why
+   * the practice page used to send the student to another page to learn
+   * anything actionable.
+   */
+  suggestion?: string | null
   /** agent_done: names of the tools called, in order. */
   tools?: string[]
 }

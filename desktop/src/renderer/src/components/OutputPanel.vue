@@ -10,7 +10,7 @@
  *   │  Verdict summary: [AC] 通过 5 / 5                     │
  *   │  Per-case cards: [WA] 用例 2  期望/实际 diff           │
  *   ├───────────────────────────────────────────────────────┤
- *   │  Agent 分析: 调了哪些工具 / 工具返回什么 / 结论         │
+ *   │  Agent 分析: 错因 + 诊断 / 调了哪些工具 / 工具返回什么  │
  *   ├───────────────────────────────────────────────────────┤
  *   │  ▸ 原始事件流 (12)          ← collapsed by default     │
  *   └───────────────────────────────────────────────────────┘
@@ -31,10 +31,12 @@
  *    `statusColor()` switch is gone; see that component for why one copy
  *    of the `JudgeStatus` palette has to exist rather than four.
  *
- * **What P2-8 added.** The Agent now runs *after* the verdict, before the
- * terminal event, and the sidecar streams what it did: `agent_start`,
- * one `agent_tool` per tool call, then `agent_done`. Two consequences
- * shape this file:
+ * **What P2-8 added.** The Agent streams what it did while it works:
+ * `agent_start`, one `agent_tool` per tool call, then `agent_done`. Its
+ * events follow `judge_done` rather than preceding it (9e7911b): the
+ * verdict is ready in milliseconds and the analysis can take minutes, so
+ * holding the verdict behind it was exactly the delay that split exists
+ * to remove. Two consequences shape this file:
  *
  * * The Agent section is the only part of the panel that describes
  *   something other than judging, so it says what the tools *returned*
@@ -44,6 +46,16 @@
  *   full by then, and the old `completedCases < totalCases` guard hid the
  *   phase line at exactly the moment the user most needs to know that
  *   something is still happening.
+ *
+ * **Why the diagnosis arrives on the event.** `agent_done` carries the
+ * analysis prose, which is what lets this page show the *same text* the
+ * mistake book stores rather than a second rendering of the same fields.
+ * Fetching the entry instead would need the submission's mistake-book id
+ * — a second request, a second failure mode, and a window in which the
+ * two pages disagree about what the Agent said. Until this, the practice
+ * page showed only the `error_type` label, so the one page where the
+ * student meets the mistake was the one page that could not tell them
+ * what to do about it.
  *
  * **Why the panel owns no state.** The parent streams events in and owns
  * the run; this component derives everything it shows. What it derives
@@ -391,6 +403,13 @@ function eventLabel(type: string): string {
       </p>
 
       <!--
+        The diagnosis. Kept on one line: a `pre-wrap` element whose
+        mustache has whitespace around it would render that whitespace as
+        indentation on the first line and a trailing space on the last.
+      -->
+      <p v-if="agentDone?.suggestion" class="agent-suggestion">{{ agentDone.suggestion }}</p>
+
+      <!--
         An analysis that used no tools is a normal outcome — the model is
         allowed to answer from the code alone — so it is stated rather
         than left as a blank space the reader has to interpret.
@@ -673,6 +692,23 @@ function eventLabel(type: string): string {
   margin: 0 0 6px;
   font-size: 12px;
   color: var(--af-danger);
+}
+
+/* The diagnosis gets a surface of its own: it is this section's payload —
+ * the answer to the question the per-case diff raises and cannot answer —
+ * not another line of metadata. `pre-wrap` because the sidecar joins three
+ * labelled sections into one string, and their line breaks are the only
+ * thing separating them. */
+.agent-suggestion {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--af-text-primary);
+  background: var(--af-elevated);
+  border-radius: var(--af-radius-sm);
 }
 
 .agent-note {
