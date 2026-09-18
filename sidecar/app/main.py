@@ -8,17 +8,17 @@ feature module owns its own router.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
-from app.api.health import router as health_router
 from app.api.env_check import router as env_check_router
-from app.api.run_code import router as run_code_router
+from app.api.health import router as health_router
 from app.api.judge import router as judge_router
-from app.api.problems import router as problems_router
-from app.api.submissions import router as submissions_router
-from app.api.ws import router as ws_router
 from app.api.mistake_book import router as mistake_book_router
+from app.api.problems import router as problems_router
 from app.api.profile import router as profile_router
 from app.api.review import router as review_router
+from app.api.run_code import router as run_code_router
+from app.api.submissions import router as submissions_router
+from app.api.ws import router as ws_router
+from app.config import settings
 
 app = FastAPI(
     title="AlgoForge Sidecar",

@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from app.models.base import Base
 from app.models.knowledge_stats import (
-    KnowledgeStat,
     compute_knowledge_stats,
     compute_knowledge_stats_for,
 )

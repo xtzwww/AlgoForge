@@ -21,7 +21,9 @@ from app.api import mistake_book as mb_module
 from app.api import profile as profile_module
 from app.main import app
 from app.models.base import Base
-from app.models.mistake_book import MistakeBookEntry  # noqa: F401 — register on Base.metadata
+from app.models.mistake_book import (
+    MistakeBookEntry,  # noqa: F401 — register on Base.metadata
+)
 from app.models.problem import Problem
 from app.models.submission import Submission
 

@@ -21,7 +21,7 @@ from ``LanguageSpec``, which is what lets Java (whose run step is
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -42,8 +42,19 @@ def _emit(on_event: Optional[JudgeEventCallback], msg: dict) -> None:
         on_event(msg)
 
 
-class JudgeStatus(str, Enum):
-    """Possible judge verdicts."""
+class JudgeStatus(StrEnum):
+    """Possible judge verdicts.
+
+    ``StrEnum`` rather than the older ``(str, Enum)`` mixin, for the
+    reason ``app/agent/schemas.py`` already gives about ``ErrorType``:
+    the two differ in ``str()``. With the mixin, ``str(JudgeStatus.WA)``
+    is ``"JudgeStatus.WA"`` while ``f"{JudgeStatus.WA}"`` and
+    ``json.dumps`` produce ``"WA"`` — a split that would silently corrupt
+    the value the moment it is interpolated into a message or a ``Text``
+    column. Nothing depends on the old spelling (every call site reads
+    ``.value`` or compares against the member), and ``StrEnum`` makes
+    every route agree. Ruff's UP042 is what surfaced the inconsistency.
+    """
 
     AC = "AC"  # Accepted
     WA = "WA"  # Wrong Answer

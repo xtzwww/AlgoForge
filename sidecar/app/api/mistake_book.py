@@ -35,7 +35,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_session, reset_engine  # noqa: F401  (re-exported)
-from app.models.base import Base
 from app.models.mistake_book import (
     ANALYSIS_DONE,
     ANALYSIS_PENDING,

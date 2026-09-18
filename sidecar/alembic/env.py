@@ -1,9 +1,7 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
 from app.config import settings
 from app.db import _resolve_sync_url
@@ -34,12 +32,12 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from app.models.base import Base  # noqa: E402
-import app.models.problem  # noqa: E402, F401 — register on Base.metadata
-import app.models.test_case  # noqa: E402, F401 — register on Base.metadata
-import app.models.submission  # noqa: E402, F401 — register on Base.metadata
 import app.models.mistake_book  # noqa: E402, F401 — register on Base.metadata
+import app.models.problem  # noqa: E402, F401 — register on Base.metadata
 import app.models.review  # noqa: E402, F401 — register on Base.metadata
+import app.models.submission  # noqa: E402, F401 — register on Base.metadata
+import app.models.test_case  # noqa: E402, F401 — register on Base.metadata
+from app.models.base import Base  # noqa: E402
 
 target_metadata = Base.metadata
 

@@ -677,7 +677,9 @@ def test_stored_rows_match_the_database(session: Session, seeded: Session) -> No
 # submit.
 
 
-def test_record_false_skips_the_history_write(client: TestClient, seeded: Session) -> None:
+def test_record_false_skips_the_history_write(
+    client: TestClient, seeded: Session
+) -> None:
     """A scratch run computes the verdict but writes no row."""
     events = _judge_via_ws_with(client, _CPP_AC, record=False)
     assert events[-1]["type"] == "judge_done", events[-1]
@@ -702,7 +704,9 @@ def test_record_false_still_sends_the_terminal_event(
     assert [e["type"] for e in events][-1] == "judge_done"
 
 
-def test_record_false_does_not_archive_a_mistake(client: TestClient, seeded: Session) -> None:
+def test_record_false_does_not_archive_a_mistake(
+    client: TestClient, seeded: Session
+) -> None:
     """A wrong scratch run files nothing in the mistake book.
 
     Archiving is scoped to failures, so a scratch run over the visible
@@ -837,7 +841,9 @@ def test_a_scratch_run_says_nothing_follows(
     assert verdict["analysing"] is False
 
 
-def test_record_false_still_runs_every_case(client: TestClient, seeded: Session) -> None:
+def test_record_false_still_runs_every_case(
+    client: TestClient, seeded: Session
+) -> None:
     """A scratch run is not a reduced run — the hidden case still executes.
 
     The page scopes 运行 to the *visible* cases by sending them itself;

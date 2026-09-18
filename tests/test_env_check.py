@@ -83,7 +83,9 @@ def test_env_check_language_entries_match_the_registry() -> None:
 
 def test_missing_compiler_degrades_without_raising() -> None:
     """A nonexistent C++ compiler must yield available=False, not a 500."""
-    with patch.object(env_probe.settings, "cpp_compiler_path", "definitely-not-a-compiler"):
+    with patch.object(
+        env_probe.settings, "cpp_compiler_path", "definitely-not-a-compiler"
+    ):
         result = env_probe.probe_cpp()
 
     assert result.available is False
@@ -167,7 +169,9 @@ def test_probe_all_is_json_serialisable() -> None:
 def test_core_ready_reflects_language_availability() -> None:
     """core_ready is True when at least one language can actually run."""
     report = env_probe.probe_all()
-    assert report["core_ready"] is any(lang["available"] for lang in report["languages"])
+    assert report["core_ready"] is any(
+        lang["available"] for lang in report["languages"]
+    )
 
 
 # ------------------------------------------------- sandbox temp dir

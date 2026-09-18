@@ -38,6 +38,7 @@ from app.models.mistake_book import (
 )
 from app.models.problem import Problem
 from app.models.submission import Submission
+from app.models.test_case import TestCase
 from app.records import (
     SubmissionContext,
     reanalyse_entry,
@@ -46,7 +47,6 @@ from app.records import (
 )
 from app.sandbox.judge import JudgeResult, JudgeStatus, TestCaseResult
 from app.sandbox.judge_input import JudgeInputError, ResolvedJudgeInput
-from app.models.test_case import TestCase
 
 VALID_ANALYSIS = (
     '{"error_type":"overflow","error_detail":"a * b 在 int 内先溢出",'

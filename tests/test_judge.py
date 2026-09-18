@@ -12,10 +12,7 @@ function is built on top of it.
 
 from __future__ import annotations
 
-import pytest
-
 from app.sandbox.judge import JudgeStatus, judge_output, normalize_output
-
 
 # --- normalize_output --------------------------------------------------
 

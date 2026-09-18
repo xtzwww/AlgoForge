@@ -5,18 +5,16 @@ VIBECODING P1-19 验证：pytest 验证不同质量分下的下次复习间隔�
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
 from app.scheduler.sm2 import (
     SrsState,
+    _update_easiness,
     is_due,
     schedule,
-    _next_interval,
-    _update_easiness,
 )
-
 
 NOW = datetime(2026, 9, 7, 12, 0, 0)
 

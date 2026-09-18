@@ -42,7 +42,9 @@ int main() {
 """
 
 
-def _receive_until_done(client: TestClient, timeout: float = 30.0) -> list[dict[str, Any]]:
+def _receive_until_done(
+    client: TestClient, timeout: float = 30.0
+) -> list[dict[str, Any]]:
     """Drain WS messages until a terminal event (judge_done / judge_error)."""
     msgs: list[dict[str, Any]] = []
     while True:
@@ -102,7 +104,7 @@ def test_ws_ac_streams_full_progress_sequence() -> None:
 
 
 def test_ws_ce_short_circuits_to_judge_done_ce() -> None:
-    """A compilation error streams compile_start → compile_done (failed) → judge_done CE."""
+    """A CE short-circuits: compile_start → compile_done(failed) → judge_done."""
     client = TestClient(app)
     with client.websocket_connect("/ws/run-log") as ws:
         ws.send_json(

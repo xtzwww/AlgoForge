@@ -97,7 +97,9 @@ def _next_interval(repetitions: int, prev_interval: int, ef: float) -> int:
     return max(1, round(prev_interval * ef))
 
 
-def schedule(state: SrsState, quality: int, *, now: Optional[datetime] = None) -> SrsState:
+def schedule(
+    state: SrsState, quality: int, *, now: Optional[datetime] = None
+) -> SrsState:
     """Advance SRS state after a review with the given ``quality``.
 
     Args:

@@ -64,6 +64,7 @@ without blocking the event loop.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any, Optional
 
@@ -310,7 +311,10 @@ async def run_log(websocket: WebSocket) -> None:
     finally:
         if not task.done():
             task.cancel()
-            try:
+            # Awaiting a cancelled task is how the cancellation is
+            # delivered; both exception types are expected here and
+            # neither is a failure. ``CancelledError`` is a
+            # ``BaseException`` in 3.8+, so it is not covered by
+            # ``Exception`` and has to be named separately.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
-            except (asyncio.CancelledError, Exception):
-                pass

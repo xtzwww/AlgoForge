@@ -26,7 +26,8 @@ from app.eval_cases import (
     load_eval_cases,
     root_cause_distribution,
 )
-from app.sandbox.judge import JudgeStatus, TestCase as JudgeTestCase, judge
+from app.sandbox.judge import JudgeStatus, judge
+from app.sandbox.judge import TestCase as JudgeTestCase
 
 EXPECTED_CASE_COUNT = 20
 
