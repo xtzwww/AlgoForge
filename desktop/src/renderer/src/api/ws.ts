@@ -42,11 +42,24 @@ export interface JudgeEvent {
   // judge_error
   error?: string
 
+  /**
+   * judge_done: whether an analysis follows this event.
+   *
+   * The sidecar records the verdict first and analyses afterwards, so
+   * `judge_done` means "the verdict is in" rather than "the stream is
+   * over". This flag is the difference. Without it a client would have to
+   * guess, and guessing wrong either closes the socket on events still in
+   * flight or waits forever on events that were never coming.
+   *
+   * False for an accepted run, a scratch run, and a run with no problem
+   * row — every case where no Agent is involved at all.
+   */
+  analysing?: boolean
+
   // --- Agent phase (P2-8) --------------------------------------------
-  // These arrive *before* `judge_done`, because the analysis runs inside
-  // the recording step, which the sidecar completes before announcing the
-  // terminal event. A client that treated the first agent event as the
-  // end would miss the verdict.
+  // These arrive *after* `judge_done`: the analysis runs once the verdict
+  // has been recorded and returned, so a client that stopped reading at
+  // the terminal event would never see them.
   /** agent_start: the judge verdict that triggered the analysis. */
   verdict?: string
   /** agent_tool: which tool ran, and whether it succeeded. */
@@ -209,8 +222,13 @@ export function runCases(
 
 /**
  * Open a WebSocket to /ws/run-log, send the request, and invoke
- * `onEvent` for each streamed event. Resolves when the terminal
- * `judge_done` or `judge_error` event arrives.
+ * `onEvent` for each streamed event.
+ *
+ * Resolves when the *run* is over — which is not the same moment as the
+ * verdict arriving. The sidecar records the verdict, sends `judge_done`,
+ * and only then runs the analysis, whose events follow on this same
+ * socket. When `judge_done` carries `analysing`, that means waiting for
+ * the `agent_done` that follows it.
  *
  * The WS URL is derived from the sidecar base URL (http→ws / https→wss)
  * obtained from the active {@link runtime}. The auth token is passed as
@@ -251,6 +269,20 @@ export async function streamJudge(
       onEvent(msg)
       if (msg.type === 'judge_done' || msg.type === 'judge_error') {
         terminal = msg
+        // The verdict is not necessarily the last thing on this socket.
+        // When an analysis follows, its events arrive *after* this one,
+        // so closing here would cut them off — which is exactly what the
+        // pre-2026-09-18 ordering made safe and this one does not.
+        //
+        // Only the server can tell us which case this is: an accepted run
+        // and a failing one look identical at this point, so the client
+        // has nothing to infer from. `analysing` is that answer.
+        if (msg.analysing !== true) {
+          ws.close()
+        }
+      } else if (msg.type === 'agent_done' && terminal !== null) {
+        // The analysis is over. Close rather than wait for the server to
+        // hang up, so the promise resolves at a moment we can name.
         ws.close()
       }
     }

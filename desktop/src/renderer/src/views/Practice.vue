@@ -577,7 +577,32 @@ async function start(kind: RunKind): Promise<void> {
   const caseResults: TestCaseOut[] = []
 
   try {
-    const terminal = await plan.request((ev: JudgeEvent) => {
+    /**
+     * Turn a terminal event into the panel's state.
+     *
+     * Called from the stream rather than from the awaited result, because
+     * the promise now resolves after the *analysis*: the sidecar records
+     * the verdict, sends `judge_done`, and only then runs the Agent. A
+     * panel that waited for the promise would hold a verdict ready in
+     * milliseconds behind a paid round trip that can take minutes, which
+     * is the delay this split exists to remove.
+     */
+    const applyVerdict = (ev: JudgeEvent): void => {
+      if (ev.type === 'judge_error') {
+        errorMsg.value = ev.error ?? 'unknown error'
+        return
+      }
+      result.value = {
+        status: ev.status ?? 'RE',
+        compile_output: ev.compile_output ?? '',
+        passed: ev.passed ?? 0,
+        total: ev.total ?? 0,
+        problem_id: props.problemId,
+        test_cases: caseResults
+      }
+    }
+
+    await plan.request((ev: JudgeEvent) => {
       events.value.push(ev)
 
       if (ev.type === 'case_done' && ev.index !== undefined) {
@@ -594,19 +619,19 @@ async function start(kind: RunKind): Promise<void> {
           exit_code: ev.exit_code ?? 0
         })
       }
+
+      // Every `case_done` precedes this, so `caseResults` is complete by
+      // the time the verdict arrives.
+      if (ev.type === 'judge_done' || ev.type === 'judge_error') {
+        applyVerdict(ev)
+      }
     })
 
-    if (terminal.type === 'judge_error') {
-      errorMsg.value = terminal.error ?? 'unknown error'
-    } else {
-      result.value = {
-        status: terminal.status ?? 'RE',
-        compile_output: terminal.compile_output ?? '',
-        passed: terminal.passed ?? 0,
-        total: terminal.total ?? 0,
-        problem_id: props.problemId,
-        test_cases: caseResults
-      }
+    // `start` cleared both of these, so reaching here with neither set
+    // means the stream ended without a verdict — a socket that closed
+    // early. Saying so beats leaving the panel blank.
+    if (!result.value && !errorMsg.value) {
+      errorMsg.value = '判题流意外结束，没有收到结果'
     }
   } catch (err) {
     errorMsg.value = (err as Error).message

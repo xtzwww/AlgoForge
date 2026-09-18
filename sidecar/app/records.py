@@ -434,6 +434,7 @@ def record_submission(
     *,
     session: Optional[Session] = None,
     on_event: Optional[Callable[[Any], None]] = None,
+    analyse: bool = True,
 ) -> Optional[int]:
     """Store a finished judge run and return the new submission's id.
 
@@ -447,9 +448,14 @@ def record_submission(
             session from :func:`app.db.get_session`. Tests pass an
             in-memory session; production leaves it out.
         on_event: Sink for the Agent's tool-call notifications (P2-8).
-            The WS route passes one so the client can watch the analysis;
-            the REST route passes nothing and the notifications are simply
-            not made.
+            Only consulted when ``analyse`` is true.
+        analyse: Run the error analysis before returning. ``True`` is the
+            original behaviour. ``False`` stops once the row is committed
+            and leaves the analysis to :func:`analyse_submission`, which
+            is what the judge routes want: the verdict is ready in
+            milliseconds and the analysis can take minutes, so waiting
+            for it inside the response is a delay the student feels and
+            nothing else benefits from.
 
     Returns:
         The id of the stored submission, or ``None`` if nothing could be
@@ -476,6 +482,7 @@ def record_submission(
                 exec_time,
                 memory_used,
                 on_event=on_event,
+                analyse=analyse,
             )
         with get_session() as owned:
             return _write(
@@ -487,6 +494,7 @@ def record_submission(
                 exec_time,
                 memory_used,
                 on_event=on_event,
+                analyse=analyse,
             )
     except Exception:
         logger.exception(
@@ -498,6 +506,32 @@ def record_submission(
         return None
 
 
+def _should_archive(result: JudgeResult, context: SubmissionContext) -> bool:
+    """Whether recording this verdict files a mistake-book entry.
+
+    One definition, used both by the write itself and by
+    :func:`will_analyse`. The stream route needs the same answer *before*
+    the write happens, and two copies of this condition would drift.
+    """
+    return result.status in _ARCHIVABLE and context.problem_id is not None
+
+
+def will_analyse(result: JudgeResult, context: SubmissionContext) -> bool:
+    """Whether recording this verdict will be followed by an analysis.
+
+    The stream route asks this to fill in the ``analysing`` flag on
+    ``judge_done``. The client cannot infer it — an accepted run and a
+    failing one look identical up to that point — and guessing wrong is
+    visible in both directions: a spinner that never stops, or a socket
+    closed on events still in flight.
+
+    Deliberately approximate in one direction: it does not check that the
+    problem row exists, which only the write can know. On the judge routes
+    the problem was resolved moments earlier, so it does.
+    """
+    return _should_archive(result, context)
+
+
 def _write(
     session: Session,
     result: JudgeResult,
@@ -507,6 +541,7 @@ def _write(
     exec_time: Optional[float],
     memory_used: Optional[int],
     on_event: Optional[Callable[[Any], None]] = None,
+    analyse: bool = True,
 ) -> int:
     """Insert the submission and, for a wrong answer, archive the mistake."""
     submission = Submission(
@@ -526,11 +561,7 @@ def _write(
     # committed is the one inconsistency this must not create.
     session.flush()
 
-    if (
-        result.status in _ARCHIVABLE
-        and context.problem_id is not None
-        and submission.id is not None
-    ):
+    if _should_archive(result, context) and submission.id is not None:
         problem = session.get(Problem, context.problem_id)
         if problem is not None:
             entry = _archive_mistake(session, submission, problem)
@@ -541,14 +572,72 @@ def _write(
                 # duration would keep a database lock for as long as the
                 # provider takes to answer.
                 session.commit()
-                _analyse_and_annotate(
-                    entry, result, context, _assemble_statement(problem), on_event
-                )
-                session.commit()
+                if analyse:
+                    _analyse_and_annotate(
+                        entry, result, context, _assemble_statement(problem), on_event
+                    )
+                    session.commit()
                 return submission.id
 
     session.commit()
     return submission.id
+
+
+def analyse_submission(
+    submission_id: int,
+    result: JudgeResult,
+    context: SubmissionContext,
+    *,
+    on_event: Optional[Callable[[Any], None]] = None,
+) -> bool:
+    """Analyse the mistake-book entry archived for a recorded submission.
+
+    The second half of what :func:`record_submission` used to do in one
+    call, split out so the caller can choose *when* to pay for it. The
+    analysis is a network round trip that may take minutes; the verdict it
+    annotates was ready in milliseconds.
+
+    Args:
+        submission_id: The submission whose entry should be annotated. The
+            entry is looked up by it rather than passed in, so a caller
+            holding only the id — a retry endpoint, say — needs nothing
+            else.
+        result: The verdict, for the failing case's I/O. Held in memory
+            because the submission row does not store expected output, so
+            this cannot be reconstructed from the database alone.
+        context: The request details (code, language, problem).
+        on_event: Sink for the Agent's progress events (P2-8).
+
+    Returns:
+        True when an analysis was attempted, False when there was nothing
+        to analyse — an accepted run, a scratch run, or an entry that no
+        longer exists. ``False`` is not a failure; the stream route reads
+        it as "no further events are coming".
+
+    Note:
+        Unlike :func:`record_submission`, this does not swallow
+        exceptions. The row is committed by the time it runs, so there is
+        no user-visible verdict left to protect, and a caller that wants
+        to retry needs to know it failed.
+    """
+    with get_session() as session:
+        entry = session.execute(
+            select(MistakeBookEntry).where(
+                MistakeBookEntry.submission_id == submission_id
+            )
+        ).scalar_one_or_none()
+        if entry is None:
+            return False
+
+        statement = ""
+        if context.problem_id is not None:
+            problem = session.get(Problem, context.problem_id)
+            if problem is not None:
+                statement = _assemble_statement(problem)
+
+        _analyse_and_annotate(entry, result, context, statement, on_event)
+        session.commit()
+        return True
 
 
 def record_submission_quietly(

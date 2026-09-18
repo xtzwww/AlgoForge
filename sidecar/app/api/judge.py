@@ -47,15 +47,23 @@ what tests and simple clients want.
 """
 
 import asyncio
+import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api import LanguageId
-from app.records import SubmissionContext, record_submission_quietly
+from app.records import (
+    SubmissionContext,
+    analyse_submission,
+    record_submission_quietly,
+    will_analyse,
+)
 from app.sandbox.judge import JudgeResult, judge
 from app.sandbox.judge_input import JudgeInputError, resolve
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["judge"])
 
@@ -116,8 +124,28 @@ class JudgeResponse(BaseModel):
     test_cases: list[TestCaseOut]
 
 
+async def _analyse_in_background(
+    submission_id: int,
+    result: JudgeResult,
+    context: SubmissionContext,
+) -> None:
+    """Run the error analysis once the response has been sent.
+
+    On a thread rather than inline because ``analyse_submission`` is
+    synchronous — it opens a session and makes a blocking HTTP request,
+    and either would stall the event loop for every other request for as
+    long as the provider takes to answer.
+    """
+    try:
+        await asyncio.to_thread(analyse_submission, submission_id, result, context)
+    except Exception:
+        logger.exception(
+            "background error analysis failed for submission %s", submission_id
+        )
+
+
 @router.post("/judge", response_model=JudgeResponse)
-async def judge_code(req: JudgeRequest) -> JudgeResponse:
+async def judge_code(req: JudgeRequest, background: BackgroundTasks) -> JudgeResponse:
     """Build and judge the submitted code against the test cases.
 
     The program is built once (P1-11) and reused for every test case
@@ -159,7 +187,7 @@ async def judge_code(req: JudgeRequest) -> JudgeResponse:
     # and recording is blocking database I/O. Both go to a worker thread
     # so this coroutine does not stall the event loop for every other
     # request, which is also what the WS route does.
-    def _judge_and_record() -> JudgeResult:
+    def _judge_and_record() -> tuple[JudgeResult, Optional[int]]:
         outcome = judge(
             req.code,
             resolved.test_cases,
@@ -175,11 +203,23 @@ async def judge_code(req: JudgeRequest) -> JudgeResponse:
         # returned in full, it just does not become history. Skipping
         # rather than writing-and-deleting keeps the mistake book's
         # dedupe window from seeing attempts that never counted.
+        #
+        # ``analyse=False`` leaves the analysis to the background task
+        # below. This response used to wait for it, which meant a verdict
+        # that was ready in milliseconds arrived only after a paid round
+        # trip that can take minutes.
+        submission_id = None
         if req.record:
-            record_judge_outcome(outcome, context)
-        return outcome
+            submission_id = record_judge_outcome(outcome, context, analyse=False)
+        return outcome, submission_id
 
-    result = await asyncio.to_thread(_judge_and_record)
+    result, submission_id = await asyncio.to_thread(_judge_and_record)
+
+    if submission_id is not None and will_analyse(result, context):
+        # Scheduled, not awaited: the student gets the verdict now and
+        # the analysis lands in the mistake book when it lands.
+        background.add_task(_analyse_in_background, submission_id, result, context)
+
     payload = result.to_dict()
     payload["problem_id"] = resolved.problem_id
     return JudgeResponse(**payload)

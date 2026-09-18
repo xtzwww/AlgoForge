@@ -64,13 +64,19 @@ without blocking the event loop.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.api import validate_language_id
-from app.records import SubmissionContext, record_submission_quietly
+from app.records import (
+    SubmissionContext,
+    analyse_submission,
+    record_submission_quietly,
+    will_analyse,
+)
 from app.sandbox.judge import judge
 from app.sandbox.judge_input import (
     JudgeInputError,
@@ -78,6 +84,8 @@ from app.sandbox.judge_input import (
     parse_record_flag,
     resolve,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ws"])
 
@@ -204,7 +212,7 @@ async def run_log(websocket: WebSocket) -> None:
             on_event(msg)
 
     def judge_and_record() -> None:
-        """Judge, optionally store the outcome, then tell the client it is finished.
+        """Judge, store the outcome, tell the client, then analyse.
 
         Recording is deliberately *after* the verdict is complete and
         still on this thread: it needs a synchronous session (see
@@ -213,10 +221,19 @@ async def run_log(websocket: WebSocket) -> None:
         failure cannot break the stream the client is reading.
 
         A scratch run (``record`` false, PU-8) skips the write but not
-        the terminal event. The reader loop treats ``judge_done`` as
-        "stop", so withholding it on the no-record path would hang the
-        client on a stream that had in fact finished — the terminal
-        event is about the *judge* being done, not about a row existing.
+        the terminal event. Withholding it on the no-record path would
+        hang the client on a stream that had in fact finished — the
+        terminal event is about the *judge* being done, not about a row
+        existing.
+
+        **The analysis runs after the terminal event, not before it.**
+        P2-8 originally had it the other way round, which meant the
+        verdict waited on a paid round trip: judging takes milliseconds
+        and the analysis can take minutes, so the student stared at a
+        finished-looking progress bar for the difference. The events the
+        Agent produces still ride this same channel, they just arrive
+        afterwards — and ``analysing`` on ``judge_done`` is what tells
+        the reader loop and the client that the stream is not over yet.
         """
         outcome = judge(
             code,
@@ -226,19 +243,41 @@ async def run_log(websocket: WebSocket) -> None:
             language=language,
             on_event=progress_only,
         )
+
+        submission_id = None
         if record:
-            # The Agent's tool calls ride the same channel as the judge's
-            # progress events (P2-8). They arrive before the terminal
-            # ``judge_done`` below, because the analysis runs inside
-            # ``record_submission``, which is still ahead of it — so a
-            # client watching the stream sees the Agent work and then the
-            # verdict, which is the order they happened in.
-            record_judge_outcome(outcome, context, on_event=on_event)
-        # Terminal event last, so the client cannot observe a finished
-        # run whose history has not landed yet.
+            # ``analyse=False``: commit the rows and return. The analysis
+            # is a separate, slower step below.
+            submission_id = record_judge_outcome(outcome, context, analyse=False)
+
+        analysing = submission_id is not None and will_analyse(outcome, context)
         terminal = outcome.to_dict()
         terminal["type"] = "judge_done"
+        terminal["analysing"] = analysing
         on_event(terminal)
+
+        if analysing and submission_id is not None:
+            try:
+                analyse_submission(
+                    submission_id, outcome, context, on_event=on_event
+                )
+            except Exception as exc:
+                # The socket is still open, so the client is waiting for
+                # agent events that will now never come. ``agent_done`` is
+                # what releases it — see the reader loop — so it has to be
+                # sent even here.
+                logger.exception(
+                    "error analysis raised for submission %s", submission_id
+                )
+                on_event(
+                    {
+                        "type": "agent_done",
+                        "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "error_type": None,
+                        "tools": [],
+                    }
+                )
 
     async def run_judge() -> None:
         try:
@@ -254,7 +293,16 @@ async def run_log(websocket: WebSocket) -> None:
         while True:
             msg = await queue.get()
             await websocket.send_json(msg)
-            if msg.get("type") in ("judge_done", "judge_error"):
+            kind = msg.get("type")
+            if kind == "judge_error":
+                break
+            if kind == "agent_done":
+                # What the client was still waiting for.
+                break
+            if kind == "judge_done" and not msg.get("analysing"):
+                # Verdict in, no analysis follows. ``analysing`` is false
+                # for an accepted run, a scratch run and a run with no
+                # problem row — every case where no Agent is involved.
                 break
     except WebSocketDisconnect:
         # Client went away — let the judge task finish in the background.

@@ -157,23 +157,57 @@ def client(
     the same way — ``record_submission`` opens its own session — so
     sharing one here would test a topology the app never uses.
     """
-    def _record(result: object, context: object, **kwargs: object) -> None:
-        # ``**kwargs`` carries P2-8's ``on_event`` sink from the WS route
-        # down to the real recorder. Naming only the first two arguments
+    def _record(result: object, context: object, **kwargs: object) -> int | None:
+        # ``**kwargs`` carries the route's ``analyse`` / ``on_event``
+        # arguments down to the real recorder. Naming only the first two
         # made the route raise ``TypeError`` mid-judge, which surfaced as a
         # ``judge_error`` event and took out every test that goes through
         # this hook — the recording under test never happened.
+        #
+        # The id is returned rather than discarded: the stream route reads
+        # it to decide whether an analysis follows, so a stub that
+        # swallowed it would tell the client "nothing more is coming".
         SessionLocal = sessionmaker(engine, expire_on_commit=False)
         with SessionLocal() as write_session:
-            record_submission(
+            return record_submission(
                 result,  # type: ignore[arg-type]
                 context,  # type: ignore[arg-type]
                 session=write_session,
                 **kwargs,  # type: ignore[arg-type]
             )
 
+    def _analyse(
+        submission_id: int, result: object, context: object, *, on_event=None
+    ) -> bool:
+        """Stand in for the analysis step.
+
+        The real one opens its own session — against the documented
+        PostgreSQL DSN, which is not running here — and calls a paid
+        provider. Neither belongs in a test about recording.
+
+        It does emit the terminal agent event, because the stream route
+        now waits for one before closing: a stub that stayed silent would
+        hang the client rather than fail the test.
+        """
+        if on_event is not None:
+            on_event(
+                {"type": "agent_start", "verdict": result.status.value}  # type: ignore[attr-defined]
+            )
+            on_event(
+                {
+                    "type": "agent_done",
+                    "ok": False,
+                    "error": None,
+                    "error_type": None,
+                    "tools": [],
+                }
+            )
+        return True
+
     monkeypatch.setattr(judge_module, "record_judge_outcome", _record)
     monkeypatch.setattr(ws_module, "record_judge_outcome", _record)
+    monkeypatch.setattr(judge_module, "analyse_submission", _analyse)
+    monkeypatch.setattr(ws_module, "analyse_submission", _analyse)
 
     # The read side, for the judge's problem lookup plus the
     # mistake-book and submission endpoints. Patch each module's own
@@ -711,6 +745,96 @@ def test_record_must_be_a_boolean_over_ws(client: TestClient, seeded: Session) -
     assert events[-1]["type"] == "judge_error"
     assert "boolean" in events[-1]["error"]
     assert client.get("/api/v1/submissions").json()["total"] == 0
+
+
+# -------------------------------- the analysis follows the verdict
+
+
+def _judge_to_the_end(client: TestClient, code: str) -> list[dict]:
+    """Like :func:`_judge_via_ws`, but reads until the stream really ends.
+
+    The stream no longer ends at ``judge_done``: recording returns as soon
+    as the rows are committed and the analysis runs afterwards, so its
+    events follow on the same socket. A reader that stopped at the verdict
+    would miss them — and would leave the server writing into a connection
+    nobody is reading.
+    """
+    with client.websocket_connect("/ws/run-log") as ws:
+        ws.send_json(
+            {
+                "code": code,
+                "language": "cpp",
+                "problem_id": 1,
+                "time_limit": 15.0,
+                "mem_limit_mb": 256,
+            }
+        )
+        events = []
+        while True:
+            msg = ws.receive_json()
+            events.append(msg)
+            kind = msg.get("type")
+            if kind in ("judge_error", "agent_done"):
+                return events
+            if kind == "judge_done" and not msg.get("analysing"):
+                return events
+
+
+def test_the_verdict_is_sent_before_the_analysis_starts(
+    client: TestClient, seeded: Session
+) -> None:
+    """The ordering is the whole point of splitting recording from analysis.
+
+    The verdict is ready in milliseconds; the analysis is a paid round
+    trip that can take minutes. Sending them in the other order — which is
+    what P2-8 did — holds the answer behind the extra work, and the
+    student watches a finished-looking progress bar for the difference.
+    """
+    kinds = [e["type"] for e in _judge_to_the_end(client, _CPP_WA)]
+
+    assert kinds.index("judge_done") < kinds.index("agent_start")
+    assert kinds[-1] == "agent_done"
+
+
+def test_judge_done_says_an_analysis_is_coming(
+    client: TestClient, seeded: Session
+) -> None:
+    """``analysing`` is what tells the client not to close the socket.
+
+    Without it the client has to guess, and both guesses are visibly
+    wrong: close at the verdict and the agent events are lost; wait at
+    every verdict and an accepted run leaves it hanging.
+    """
+    events = _judge_to_the_end(client, _CPP_WA)
+    verdict = next(e for e in events if e["type"] == "judge_done")
+
+    assert verdict["analysing"] is True
+
+
+def test_an_accepted_run_says_nothing_follows(
+    client: TestClient, seeded: Session
+) -> None:
+    """An accepted run has no mistake to analyse, and must say so.
+
+    A client told to wait here would sit on a socket that has already
+    delivered everything it is going to.
+    """
+    events = _judge_to_the_end(client, _CPP_AC)
+    verdict = next(e for e in events if e["type"] == "judge_done")
+
+    assert verdict["analysing"] is False
+    assert events[-1]["type"] == "judge_done"
+    assert not [e for e in events if e["type"].startswith("agent_")]
+
+
+def test_a_scratch_run_says_nothing_follows(
+    client: TestClient, seeded: Session
+) -> None:
+    """``record=False`` writes nothing, so there is nothing to analyse."""
+    events = _judge_via_ws_with(client, _CPP_WA, record=False)
+    verdict = next(e for e in events if e["type"] == "judge_done")
+
+    assert verdict["analysing"] is False
 
 
 def test_record_false_still_runs_every_case(client: TestClient, seeded: Session) -> None:
