@@ -58,7 +58,7 @@ LangGraph 是 LangChain 团队专为 Agent 设计的产品，属于 LangChain �
 | 前端构建 | electron-vite（vue-ts 模板） |
 | 后端依赖 | uv 或 pip + requirements.txt |
 | 代码规范 | ESLint + Prettier（前端）/ Ruff（后端） |
-| 测试 | Vitest（前端）/ pytest（后端） |
+| 测试 | pytest（后端，677 个用例）/ Vitest（前端，**已定但尚未接入**） |
 
 ## 系统架构
 
@@ -66,7 +66,7 @@ LangGraph 是 LangChain 团队专为 Agent 设计的产品，属于 LangChain �
 ┌─────────────────────── Electron 桌面壳 ───────────────────────┐
 │  Renderer (Vue 3 + TS)                                        │
 │  ├─ Monaco Editor / 输出面板 / ECharts 画像                   │
-│  ├─ Pinia 状态管理 / Vue Router                               │
+│  ├─ Vue Router（状态用 ref，未引入 Pinia）                    │
 │  └─ axios + WebSocket ──┐                                     │
 │  Main 进程: spawn & 守护 sidecar、工具链探测、IPC             │
 └─────────────────────────┼─────────────────────────────────────┘
@@ -91,6 +91,29 @@ LangGraph 是 LangChain 团队专为 Agent 设计的产品，属于 LangChain �
 - **模型可插拔**：LLM Gateway 统一 OpenAI 兼容协议，本地/云端一键切换
 - **检查点可恢复**：LangGraph 检查点存 PostgreSQL，Agent 中断后可恢复执行
 
+### 实现状态（截至 2026-09-18）
+
+⚠️ **上面那张图是目标架构，不等于已实现的部分。** 逐项列出来，免得误读：
+
+| 部分 | 状态 |
+|---|---|
+| 判题沙箱（C++ / Python / Java，超时 + 内存上限） | ✅ 可用 |
+| Monaco 编辑器（自定义主题、语言切换、快捷键） | ✅ 可用 |
+| LLM Gateway（OpenAI 兼容；主路径 DeepSeek，可切 Ollama） | ✅ 可用 |
+| 错因分析 Agent（12 个封闭标签 + 严格 JSON Schema 校验） | ✅ 可用 |
+| Agent 工具调用（`run_code` / `judge`，结果回传模型） | ✅ 可用 |
+| 错题本（自动归档、分析状态可见、失败可重试） | ✅ 可用 |
+| 知识点正确率统计、SM-2 复习调度 | ✅ 已实现 |
+| 业务页面（练习 / 题库 / 错题本 / 画像 / 计划） | ✅ 已实现，⚠️ **未在真实 PostgreSQL 上目视验证过** |
+| LangGraph 状态图编排（S4） | ⬜ 未做——当前是单轮调用 + 工具循环 |
+| RAG / Milvus 向量检索（S5） | ⬜ 未做（`sidecar/app/rag/` 只有 `.gitkeep`） |
+| ReAct 自检循环（S6）、Multi-agent（S7） | ⬜ 未做 |
+| LangGraph 检查点 / 长期记忆 Store（S8） | ⬜ 未做 |
+| LangChain 1.x 中间件护栏（S10） | ⬜ 未做 |
+| 打包（PyInstaller / electron-builder） | ⬜ 未做，目前 dev 模式运行 |
+| 用户体系与鉴权 | ⬜ 未做（全部按「单机单用户」假设） |
+| 前端单元测试（Vitest） | ⬜ 未接入（后端 677 个用例） |
+
 ## 目录结构
 
 ```
@@ -100,11 +123,12 @@ algoforge/
 │     ├─ main/               # 主进程：spawn sidecar、IPC、窗口管理
 │     ├─ preload/            # contextBridge：注入 sidecar 地址与 Token
 │     └─ renderer/src/
-│        ├─ views/           # Practice / Mistakes / Profile / Settings
-│        ├─ components/      # CodeEditor / OutputPanel / RadarChart / HintCard
-│        ├─ stores/          # Pinia: editor / sandbox / agent / profile
-│        ├─ api/sidecar.ts   # axios + WebSocket 封装
-│        └─ composables/     # useRunStream / useLLMStream
+│        ├─ views/           # Practice / ProblemList / ProblemPractice …
+│        ├─ components/      # CodeEditor / OutputPanel / RadarChart / VerdictBadge …
+│        ├─ api/             # judge / ws / problems / languages / mistake_book …
+│        ├─ composables/     # usePageCrumb / useSidecarStatus
+│        ├─ router/          # 路由表
+│        └─ runtime/         # electron / web 两套运行时适配器
 ├─ sidecar/                  # Python FastAPI 服务
 │  └─ app/
 │     ├─ api/                # REST 路由 + WebSocket
@@ -206,9 +230,25 @@ npm run dev
 
 ```bash
 cd sidecar
-python -m pytest ../tests -q                  # 全部（含编译 C++，约 6 分钟）
-python -m pytest ../tests -q -m "not eval_set" # 跳过慢用例，约 1.5 分钟
+
+# 日常用这条：跳过 eval_set，约 9 分钟
+env -u PYTHONPATH python -m pytest ../tests -q -m "not eval_set"
+
+# 只在确实要测真实模型时跑：会调用付费端点、按测试计费、结果不可复现
+env -u PYTHONPATH python -m pytest ../tests -q -m eval_set
 ```
+
+三点说明，都是实测踩过的：
+
+- **`env -u PYTHONPATH` 不能省。** 否则 `sitecustomize.py` 会让清理阶段的
+  `Path.unlink` 抛 `SystemExit(1)`，表现为一大批与本次改动无关的失败。
+- **默认不要跑全量。** `eval_set` 那批（S2 的 20 道真题 + Function Calling 实机测试）
+  会真的请求 LLM 服务，既计费又不可复现——**不要把它当成「跑个全量」的顺手选项**。
+- 慢的是**真实 C++ 编译**（单文件约 88 秒），不是 LLM。当前基线
+  **677 passed / 1 skipped / 8 deselected**。
+
+前端目前没有单元测试（`AGENTS.md` 锁定 Vitest 作为前端测试框架，尚未接入）；
+前端校验目前靠类型检查 + ESLint，见 `.github/workflows/ci.yml`。
 
 ### 评估集校验
 
