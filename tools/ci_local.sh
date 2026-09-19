@@ -27,8 +27,12 @@
 #      所以 pytest 永远带 `-m "not eval_set"`。
 #      ⚠️ 注意 `--full` 里的评估集校验**不是** eval_set：它只编译运行代码、
 #      比对判定，**完全不调 LLM**，所以反复跑不花钱。两件事名字像，别混淆。
-#   2. **跑 Python 必须 `env -u PYTHONPATH`。** 否则 sitecustomize.py 会让清理
+#   2. **跑 Python 必须清掉 PYTHONPATH。** 否则 sitecustomize.py 会让清理
 #      阶段的 `Path.unlink` 抛 SystemExit(1)，表现为一大批与改动无关的假失败。
+#      ⚠️ 实现上用下面的 `py()`（子 shell 里 `unset`），**不要写 `env -u PYTHONPATH`**：
+#      本机 `~/.local/bin/env` 是一个只改 PATH 的空壳脚本，它**忽略全部参数**、
+#      什么都不做、还返回 0。于是 `env -u PYTHONPATH python x.py` 变成彻底的空操作，
+#      本脚本会跳过 pytest 却照样打印「本地 CI 通过」——假绿比不跑更危险。
 #   3. **前端工具直接调 `./node_modules/.bin/*`，不要用 `npm run`。**
 #      本机 `npm run` 会静默 exit 1 且一个字都不输出。
 #
@@ -59,6 +63,10 @@ RUFF="sidecar/.venv/Scripts/ruff.exe"
 failed=0
 step() { echo; echo "=== $1 ==="; }
 
+# 跑 Python 的唯一入口：在子 shell 里清掉 PYTHONPATH 再执行。
+# 不用 `env -u PYTHONPATH` —— 理由见文件头第 2 条（本机 env 是空壳，会假绿）。
+py() { ( unset PYTHONPATH; exec "$PY" "$@" ); }
+
 step "Ruff（后端规范）"
 if [ -n "$RUFF" ]; then
   "$RUFF" check . || failed=1
@@ -76,7 +84,7 @@ fi
 # 语料校验放在这里而不是只留一个脚本：写了校验没人跑，等于没写。
 # 它是纯解析，很快，值得每次提交都过一遍。
 step "知识卡片语料（corpus/knowledge_cards/）"
-env -u PYTHONPATH "$PY" tools/validate_knowledge_cards.py || failed=1
+py tools/validate_knowledge_cards.py || failed=1
 
 # 评估集校验：把 corpus/eval_cases/ 的 20 道用例全部编译运行一遍，确认
 # 「参考解必须 AC」「错误解必须复现标注的失败类型」。实测 4 分 39 秒，所以
@@ -84,7 +92,7 @@ env -u PYTHONPATH "$PY" tools/validate_knowledge_cards.py || failed=1
 # ⚠️ 它**不调 LLM**（与 `-m eval_set` 是两回事），反复跑不花钱。
 if [ "$FULL" = "1" ] && [ "$FAST" = "0" ]; then
   step "评估集校验（离线，不调 LLM；实测约 5 分钟）"
-  env -u PYTHONPATH "$PY" -u tools/validate_eval_cases.py || failed=1
+  py -u tools/validate_eval_cases.py || failed=1
 fi
 
 if [ "$FAST" = "1" ]; then
@@ -94,7 +102,7 @@ if [ "$FAST" = "1" ]; then
 else
   step "pytest（排除 eval_set）"
   echo "提示：全量在本机可能要一二十分钟（真实 C++ 编译慢，进程创建开销高）。"
-  env -u PYTHONPATH "$PY" -u -m pytest -q -m "not eval_set" || failed=1
+  py -u -m pytest -q -m "not eval_set" || failed=1
 fi
 
 echo
