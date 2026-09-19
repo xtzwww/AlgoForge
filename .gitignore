@@ -106,3 +106,7 @@ logs/
 sidecar/build/
 sidecar/dist/
 sidecar/*.spec
+
+# PyInstaller / electron-builder 产物
+dist-desktop/
+sidecar/packaging/*.spec

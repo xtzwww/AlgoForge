@@ -97,22 +97,39 @@ function waitForHealth(url: string, timeoutMs = 15000): Promise<void> {
  * Development: <project>/sidecar/.venv/Scripts/python.exe
  * Production:  <resources>/sidecar/python.exe  (PyInstaller, S10)
  */
-function resolvePythonPaths(): { pythonPath: string; sidecarDir: string } {
+/**
+ * What to spawn, and with which leading arguments.
+ *
+ * Dev and packaged builds differ in the *program* but not in the tail
+ * arguments: both get `--host` / `--port` appended by `startSidecar`, and
+ * both take the token from the environment. Keeping that symmetry is what
+ * lets the packaged build be a drop-in: `packaging/sidecar_main.py`
+ * deliberately speaks uvicorn's flag spellings for exactly this reason.
+ *
+ * The packaged path is a **directory**, not a single file: the sidecar is
+ * frozen with PyInstaller `onedir` (AGENTS.md §一 工具链锁定), so
+ * `resources/sidecar/` holds `algoforge-sidecar/` with the exe and its
+ * `_internal` dependencies inside.
+ */
+function resolveSidecarLaunch(): { program: string; args: string[]; cwd: string } {
   const isDev = !app.isPackaged
 
   if (isDev) {
     // app.getAppPath() points to desktop/ in dev mode
     const projectRoot = join(app.getAppPath(), '..')
     return {
-      pythonPath: join(projectRoot, 'sidecar', '.venv', 'Scripts', 'python.exe'),
-      sidecarDir: join(projectRoot, 'sidecar'),
+      program: join(projectRoot, 'sidecar', '.venv', 'Scripts', 'python.exe'),
+      args: ['-m', 'uvicorn', 'app.main:app'],
+      cwd: join(projectRoot, 'sidecar'),
     }
   }
 
-  // Production (S10 packaging) — placeholder path
+  // Production (阶段 7 · 打包): PyInstaller onedir 产物整目录随包发布。
+  const exeName = process.platform === 'win32' ? 'algoforge-sidecar.exe' : 'algoforge-sidecar'
   return {
-    pythonPath: join(process.resourcesPath, 'sidecar', 'python.exe'),
-    sidecarDir: join(process.resourcesPath, 'sidecar'),
+    program: join(process.resourcesPath, 'sidecar', 'algoforge-sidecar', exeName),
+    args: [],
+    cwd: join(process.resourcesPath, 'sidecar'),
   }
 }
 
@@ -170,19 +187,19 @@ export async function startSidecar(): Promise<SidecarInfo> {
 
   const port = await getAvailablePort()
   const token = crypto.randomBytes(32).toString('hex')
-  const { pythonPath, sidecarDir } = resolvePythonPaths()
+  const { program, args, cwd } = resolveSidecarLaunch()
 
   console.log(`[sidecar] starting on port ${port}`)
-  console.log(`[sidecar] python: ${pythonPath}`)
-  console.log(`[sidecar] cwd: ${sidecarDir}`)
+  console.log(`[sidecar] program: ${program}`)
+  console.log(`[sidecar] cwd: ${cwd}`)
 
   const isWindows = process.platform === 'win32'
 
   sidecarProcess = spawn(
-    pythonPath,
-    ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port)],
+    program,
+    [...args, '--host', '127.0.0.1', '--port', String(port)],
     {
-      cwd: sidecarDir,
+      cwd,
       env: {
         ...process.env,
         SIDECAR_PORT: String(port),

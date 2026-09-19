@@ -1,7 +1,24 @@
-appId: com.electron.app
-productName: app
+# electron-builder 配置（阶段 7 · 打包与交付）。
+#
+# 两处是本项目特有的，模板默认值必须改：
+#
+# 1. `extraResources` 把 **PyInstaller 打好的 sidecar 整目录** 塞进
+#    `resources/sidecar/algoforge-sidecar/`。路径必须与
+#    `src/main/sidecar.ts` 里 `resolveSidecarLaunch()` 的成品分支一致，
+#    否则装完启动会找不到 exe——而 dev 模式完全测不出这个错。
+# 2. `directories.output` 指到 `../dist-desktop`，避开仓库根的 `dist/`
+#    （那是 sidecar 的 PyInstaller 产物，两者混在一起会互相覆盖）。
+#
+# `productName` 用界面短名「智能学情反馈」，`win.executableName` 仍用 ASCII：
+# 中文可执行文件在部分 NSIS / 杀软路径上会有问题，显示名与文件名分开最稳。
+
+appId: com.algoforge.app
+productName: 智能学情反馈
+
 directories:
   buildResources: build
+  output: ../dist-desktop
+
 files:
   - '!**/.vscode/*'
   - '!src/*'
@@ -9,35 +26,44 @@ files:
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-asarUnpack:
-  - 'resources/**'
+
+# 打包版 sidecar（先跑 `bash sidecar/packaging/build_sidecar.sh` 生成）。
+# 目标路径 = process.resourcesPath + 'sidecar/algoforge-sidecar'。
+extraResources:
+  - from: ../dist/algoforge-sidecar
+    to: sidecar/algoforge-sidecar
+    filter:
+      - '**/*'
+
 win:
-  executableName: app
+  executableName: algoforge
+  target:
+    - nsis
+
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  artifactName: 智能学情反馈-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
 mac:
-  entitlementsInherit: build/entitlements.mac.plist
-  extendInfo:
-    - NSCameraUsageDescription: Application requests access to the device's camera.
-    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  target:
+    - dmg
   notarize: false
 dmg:
   artifactName: ${name}-${version}.${ext}
+
 linux:
   target:
     - AppImage
-    - snap
-    - deb
   maintainer: electronjs.org
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
+
+# 侧车是 Python 冻结产物，不需要 electron-builder 重建原生模块。
 npmRebuild: false
-publish:
-  provider: generic
-  url: https://example.com/auto-updates
+asar: true
+publish: null
