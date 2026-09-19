@@ -28,7 +28,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # fall back to their defaults, so a provider configured in ``.env`` looks
 # unconfigured and the error message blames the wrong thing. Anchoring it
 # here makes the setting independent of where the process was started.
-_ENV_FILE = Path(os.environ.get("ALGOFORGE_ENV_FILE") or Path(__file__).resolve().parents[1] / ".env")
+# Split into two statements only to stay inside the 88-column lint limit;
+# behaviour is unchanged — the environment variable still wins.
+_DEFAULT_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+_ENV_FILE = Path(os.environ.get("ALGOFORGE_ENV_FILE") or _DEFAULT_ENV_FILE)
 
 
 class Settings(BaseSettings):

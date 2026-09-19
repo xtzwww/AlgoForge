@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# 提交前钩子：跑本地 CI 的快速档（ruff + eslint）。
+#
+# 不跑 pytest —— 全量在本机要一二十分钟，挂在每次提交上没人受得了。
+# 需要全量时手动跑：bash tools/ci_local.sh
+#
+# 为什么存在：远端是 Gitee，而 Gitee 不执行 `.github/workflows/`，
+# 所以没有平台级 CI 兜底，提交前这一步就是唯一的安全网。
+#
+# 安装：bash tools/install_hooks.sh
+# 临时跳过：git commit --no-verify（请谨慎，等于放弃这次检查）
+#
+# 注意：Git 执行钩子时 cwd 就是仓库根，所以下面的相对路径是对的。
+
+exec bash tools/ci_local.sh --fast
