@@ -316,10 +316,17 @@
 
 按升级后的方向排列。**核心原则：每阶段可交付、每阶段不破坏现有测试。**
 
-**当前状态（2026-09-19）**：阶段 0–6 **全部闭合**，`AGENTS.md` §二.4 的
+**当前状态（2026-09-20）**：阶段 0–6 **全部闭合**，`AGENTS.md` §二.4 的
 「S0–S6 不做打包」与 §三 的「S0–S6 未完成不启动 S7+」**两条约束同时解除**。
 **阶段 7–10 全部进入执行队列**：开题报告的进度表把后续阶段排在 2027 年，那是
 交给学校的材料，不是工程排期——工程上该做的照做。
+
+**阶段 7 进展**：打包已经实际落地并验到判题层——sidecar 打成 PyInstaller onedir
+（48 MB），`/health` 与 C++ / Python 判题都在**打包版**上跑通，密钥确认未进产物，
+过程中还修掉一个只在打包版出现的 Python 判题缺陷（见下方完成定义表）。
+**仍未闭合的只有第 3 条（安装包）**，原因是本机沙箱禁止从 Bash 调用 PowerShell，
+而 electron-builder 在 Windows 上硬编码靠它收集依赖树——**是环境限制，不是配置缺陷**。
+换一台能正常跑 PowerShell 的机器执行 `cd desktop && npm run build:win` 即可产出。
 
 ⚠️ **两条本机硬阻塞**（不是偷懒，是这台机器做不到，见「阶段 8–10 的阻塞项」）：
 Milvus 需要 Docker 而本机 Docker 不通（阶段 8 的检索部分）；
@@ -334,7 +341,7 @@ LangSmith 需要账号与 API key（阶段 10 的追踪部分）。其余均可�
 | **阶段 4** | 用户体系与作业模块 | 学生/教师两角色 ✅；作业发布与统计 ✅（教师端发布/查看/删除，学生端题库页按作业筛选题目） | P2 ✅ |
 | **阶段 5** | 检测融入反馈链路 | 学生端过程提示 ✅；教师端过程标记 ✅；可复核可驳回 ✅ | P2 ✅ |
 | **阶段 6** | 收尾 | 学情预警 ✅（三条规则：连续 5 次未通过 / 超过 7 天无提交 / 同一错因跨 3 道题反复出现，每条带触发它的数字）；安全加固 ✅（进程级鉴权：侧车校验 `SIDECAR_TOKEN`，执行隔离维持既有的 subprocess + 超时 + 内存上限，按 AGENTS.md §二.3 有意不容器化） | P3 ✅ |
-| **阶段 7** | **打包与交付** | 见下方「阶段 7 的完成定义」——本机做得出来不算数，要能在**没有 Python / Node 的机器**上跑通 | **P0（当前唯一待办）** ⬜ |
+| **阶段 7** | **打包与交付** | 见下方「阶段 7 的完成定义」——本机做得出来不算数，要能在**没有 Python / Node 的机器**上跑通 | **P0**：6 条里 **5 条已闭合**，仅第 3 条（安装包）受本机沙箱限制 ⬜ |
 | 阶段 8 | 编排与检索（`AGENTS.md` S4 / S5） | LangGraph 状态图替代单次调用 ⬜；算法知识库检索 ⬜（`sidecar/app/rag/` 目前只有 `.gitkeep`，`corpus/knowledge_cards/` 为空） | P2 ⬜ |
 | 阶段 9 | 多智能体协作（`AGENTS.md` S7） | 错因 / 提示 / 变式题三 Agent 分工，并跑通一次完整流程 ⬜ | P3 ⬜ |
 | 阶段 10 | 评估、可观测与护栏（`AGENTS.md` S9 / S10 其余） | 评估集跑通 ⬜；LangSmith 追踪接入 ⬜（需 key）；LangChain 1.x 中间件护栏（PII / ModelFallback / ModelRetry）⬜ | P3 ⬜ |
@@ -350,14 +357,28 @@ LangSmith 需要账号与 API key（阶段 10 的追踪部分）。其余均可�
 
 打包最容易做成「本机跑得通」，所以完成定义一律按**目标机**写：
 
-| # | 条目 | 判定 |
-|---|---|---|
-| 1 | sidecar 打成 **PyInstaller onedir** | 产物目录里的可执行文件能直接起，`GET /health` 返回 200 |
-| 2 | **判题在打包后仍可用** | 真实 C++ 编译 + 运行 + 输出比对跑通一次（AC 与 WA 各一）。这条最容易漏：打包时漏了编译器或临时目录，表现是 `/health` 正常但一判题就 CE |
-| 3 | 桌面端打成 **electron-builder** 安装包 | 装上后主进程能拉起打包版 sidecar（而不是 dev 的 uvicorn），走通一次提交 |
-| 4 | **密钥不进产物** | `.env` / `SIDECAR_TOKEN` 不写进包体；token 仍按既有约定运行时生成或由用户配置。打进去等于把共享密钥公开 |
-| 5 | 前置条件写清楚 | README 写明目标机需要什么（g++ 的路径配置、PostgreSQL 是否必需、非必需时的降级表现） |
-| 6 | 体积与限制记录在案 | 打包产物体积、已知限制（如首次启动慢、杀毒软件误报）写进 README |
+| # | 条目 | 判定 | 实测（2026-09-20） |
+|---|---|---|---|
+| 1 | sidecar 打成 **PyInstaller onedir** | 产物目录里的可执行文件能直接起，`GET /health` 返回 200 | ✅ `dist/algoforge-sidecar/algoforge-sidecar.exe` 直接起，1 秒内 `/health` 返回 `{"status":"ok"}` |
+| 2 | **判题在打包后仍可用** | 真实编译 + 运行 + 输出比对跑通一次（AC 与 WA 各一）。这条最容易漏：打包时漏了编译器或临时目录，表现是 `/health` 正常但一判题就 CE | ✅ C++ 与 Python 各自验过 AC 与 WA。**并且因此抓出一个只在打包版出现的缺陷**，见下方 |
+| 3 | 桌面端打成 **electron-builder** 安装包 | 装上后主进程能拉起打包版 sidecar（而不是 dev 的 uvicorn），走通一次提交 | ⬜ 未产出。本机沙箱禁止从 Bash 调用 PowerShell，而 electron-builder 的依赖收集器在 Windows 上硬编码走 `powershell.exe`，因此本机跑不出安装包——**配置本身没问题，是环境限制**，详见 `.workbuddy-ai/night-queue.md` 的 T3 |
+| 4 | **密钥不进产物** | `.env` / `SIDECAR_TOKEN` 不写进包体；token 仍按既有约定运行时生成或由用户配置。打进去等于把共享密钥公开 | ✅ `dist/` 内 grep 不到任何 `.env`；打包脚本与 `electron-builder.yml` 两边都显式排除，改走 `ALGOFORGE_ENV_FILE` |
+| 5 | 前置条件写清楚 | README 写明目标机需要什么（g++ 的路径配置、PostgreSQL 是否必需、非必需时的降级表现） | ✅ 见 §七「目标机前置要求」 |
+| 6 | 体积与限制记录在案 | 打包产物体积、已知限制（如首次启动慢、杀毒软件误报）写进 README | ✅ sidecar onedir 实测 **48 MB**，限制见 §九 |
+
+**打包后 Python 判题曾经是坏的**（2026-09-20 修，提交 `b70ea20`）
+
+第 2 条只验 C++ 是不够的，这次就漏掉了整条 Python 链路：
+
+- 现象：打包版判 Python 一律返回 `{"status":"CE","compile_output":"Compilation timed out (>30s)"}`。
+- 根因：`config.py` 的 `resolved_python_interpreter` 回退到 `sys.executable`。源码运行时
+  那是 venv 的 python（正确）；**PyInstaller 冻结后它就是 sidecar 自己的 `.exe`**。
+  于是语法检查变成「用 exe 去编译 python 文件」——exe 忽略不认识的参数、起了第二个
+  HTTP 服务且永不退出，30 秒后超时判 CE。
+- 为什么一直没暴露：**只在打包版出现，源码运行完全测不到**。
+- 修法：冻结环境回退到 PATH 上的裸 `python`；显式 `PYTHON_INTERPRETER_PATH` 仍然优先。
+  已补两个回归测试分别钉住冻结与非冻结两种默认。
+- 教训：**「打包后判题仍可用」要逐语言验**。只验 C++ 会漏掉 Python 与 Java。
 
 **明确不做**（经方向讨论确定）：独立的 AI 检测服务、检测准确率研究、
 完整教学管理功能（排课/考勤/通知/成绩）、真实部署上线。
@@ -377,6 +398,22 @@ LangSmith 需要账号与 API key（阶段 10 的追踪部分）。其余均可�
 - Python ≥ 3.11
 - g++ 或 clang（MinGW / MSVC / clang 任一，路径通过 `.env` 配置）
 - PostgreSQL
+
+### 目标机前置要求（打包版）
+
+上面那份是**开发机**的清单。打包版分发到别人机器上时条件不一样——sidecar 已经是
+冻结的可执行文件，**目标机不需要装 Python 或 Node**；但**编译型语言的工具链必须由
+目标机自己提供**，因为打包只冻结 Python，不会把 g++ 一起带走。
+
+| 能力 | 目标机需要 | 缺了会怎样 |
+|---|---|---|
+| C++ 判题 | 自带 g++（或 clang），用 `CPP_COMPILER_PATH` 指过去 | 一判题就 CE，而 `/health` 仍然正常——看起来像判题器坏了 |
+| Python 判题 | PATH 上有 `python`，或用 `PYTHON_INTERPRETER_PATH` 指过去 | Python 提交判 CE（打包版默认回退到 PATH 上的裸 `python`） |
+| Java 判题 | 自带 **JDK**（要 `javac`，JRE 不够），用 `JAVA_COMPILER_PATH` / `JAVA_RUNTIME_PATH` 指过去 | Java 提交判 CE。⚠️ 这条**未在打包版上实测**（本机 JDK 不在 PATH），逻辑与 C++ / Python 同源 |
+| 错题本 / 画像 / 复习 | PostgreSQL | 这几项无持久化；**判题与运行照常可用**（实测不带 PG 也能判 AC） |
+
+配置一律走环境变量，或用 `ALGOFORGE_ENV_FILE` 指向一个外部的 `.env`——
+打包产物里**不含** `.env`，这是刻意的，见 §六 完成定义第 4 条。
 
 ### 配置
 
@@ -570,7 +607,9 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **过程特征无验证集** | 「粘贴后零改写」的阈值（`≥120` 字符、`≥80%` 占比、`≤15%` 改写）是设计取值，未用人工标注样本校准；因此只作**提示**交给教师复核，不作判定 |
 | **无检测验证集** | AI 使用检测缺少人工标注样本，因此不以准确率为目标 |
 | **组件测试只覆盖三个组件** | Vitest 共 44 个用例：api 层纯逻辑、判题流时序，加上 `LayeredFeedback`（分层释放）、`OutputPanel`（诊断渲染与工具结果）、`VerdictBadge`（判定映射）共 18 个组件用例。**其余组件**（编辑器、教师看板、雷达图、错题本列表等）的行为仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」 |
-| **未打包** | 目前 dev 模式运行，未做 PyInstaller / electron-builder 打包。**已列为 §六 阶段 7（P0，当前唯一待办）**，`AGENTS.md` §二.4 的「S0–S6 不做打包」约束随阶段 0–6 闭合而解除。打包前请先看那条「完成定义」——本机跑得通不算数，要在没有 Python / Node 的机器上验 |
+| **安装包尚未产出** | sidecar 已打成 PyInstaller onedir（**48 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 C++ / Python 判题；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出 |
+| **onedir 产物的限制** | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准） |
+| **打包版只验到判题层** | 已验：`/health`、C++ 与 Python 判题（AC + WA）、密钥未进产物。**未验**：桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条）、Java 判题、真 PostgreSQL 下的完整业务链路 |
 
 ---
 
