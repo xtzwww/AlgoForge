@@ -26,6 +26,7 @@ from app.models.mistake_book import (
 )
 from app.models.problem import Problem
 from app.models.submission import Submission
+from conftest import TEST_SIDECAR_HEADERS
 
 
 @pytest.fixture
@@ -74,7 +75,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
     profile_module.get_session = fake_get_session  # type: ignore[assignment]
 
     try:
-        with TestClient(app) as c:
+        with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
             yield c
     finally:
         mb_module.get_session = real_mb_get_session  # type: ignore[assignment]
@@ -125,7 +126,7 @@ def test_knowledge_stats_empty_db(db_session: Session) -> None:
     mb_module.get_session = fake  # type: ignore[assignment]
     profile_module.get_session = fake  # type: ignore[assignment]
     try:
-        with TestClient(app) as c:
+        with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
             resp = c.get("/api/v1/profile/knowledge-stats")
             assert resp.status_code == 200
             assert resp.json()["stats"] == []

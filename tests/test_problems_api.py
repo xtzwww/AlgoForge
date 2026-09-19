@@ -38,6 +38,7 @@ from app.main import app
 from app.models.base import Base
 from app.models.problem import Problem
 from app.models.test_case import TestCase
+from conftest import TEST_SIDECAR_HEADERS
 
 #: Distinctive strings used as hidden-case payloads. They are unlikely to
 #: appear anywhere else in a response, so "is this in the body?" is an
@@ -86,7 +87,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
 
     problems_module.get_session = fake_get_session  # type: ignore[assignment]
     try:
-        with TestClient(app) as c:
+        with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
             yield c
     finally:
         problems_module.get_session = real_get_session  # type: ignore[assignment]

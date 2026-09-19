@@ -205,7 +205,12 @@ LANGSMITH_PROJECT=algoforge
 
 # Sidecar
 SIDECAR_PORT=                  # 留空则随机
-SIDECAR_TOKEN=                 # 留空则随机生成
+SIDECAR_TOKEN=                 # 留空则随机生成（只生成一次，之后固定）
+
+# 侧车会校验它：HTTP 请求要带 `X-Sidecar-Token` 头，WebSocket 握手要带
+# `?token=`，两者取同一个值；`/health` 与 CORS 预检豁免。所以客户端必须拿到
+# 这个值——Electron 由主进程生成并注入，网页版走 `VITE_SIDECAR_TOKEN`。
+# 它是一个共享密钥，证明「是本应用」，不区分使用者。
 
 # 同时最多跑几个编译/判题（沙箱线程池大小）。留空用默认 4。
 # 这是上限不是目标值：超出的请求会排队等待，不会被拒绝。

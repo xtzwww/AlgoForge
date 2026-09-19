@@ -47,6 +47,7 @@ from app.records import (
 )
 from app.sandbox.judge import JudgeResult, JudgeStatus, TestCaseResult
 from app.sandbox.judge_input import JudgeInputError, ResolvedJudgeInput
+from conftest import TEST_SIDECAR_HEADERS
 
 VALID_ANALYSIS = (
     '{"error_type":"overflow","error_detail":"a * b 在 int 内先溢出",'
@@ -105,7 +106,7 @@ def session(engine, monkeypatch) -> Iterator[Session]:
 
 @pytest.fixture
 def client(session) -> Iterator[TestClient]:
-    with TestClient(app) as c:
+    with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
         yield c
 
 

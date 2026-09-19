@@ -48,6 +48,7 @@ from app.models.submission import Submission
 from app.models.test_case import TestCase
 from app.records import SubmissionContext, record_submission
 from app.sandbox import judge_input as judge_input_module
+from conftest import TEST_SIDECAR_HEADERS, TEST_SIDECAR_TOKEN
 
 # A correct A+B program and a wrong one. Kept minimal so the tests are
 # about the chain, not about the judge.
@@ -222,13 +223,13 @@ def client(
     monkeypatch.setattr(mb_module, "get_session", _test_session)
     monkeypatch.setattr(submissions_module, "get_session", _test_session)
 
-    with TestClient(app) as c:
+    with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
         yield c
 
 
 def _judge_via_ws(client: TestClient, code: str) -> list[dict]:
     """Run a submission over the WebSocket route, returning all events."""
-    with client.websocket_connect("/ws/run-log") as ws:
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json(
             {
                 "code": code,
@@ -270,7 +271,7 @@ def _judge_via_ws_with(
     if extra_raw or record is not ...:
         payload["record"] = record
 
-    with client.websocket_connect("/ws/run-log") as ws:
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json(payload)
         events = []
         while True:
@@ -763,7 +764,7 @@ def _judge_to_the_end(client: TestClient, code: str) -> list[dict]:
     would miss them — and would leave the server writing into a connection
     nobody is reading.
     """
-    with client.websocket_connect("/ws/run-log") as ws:
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json(
             {
                 "code": code,

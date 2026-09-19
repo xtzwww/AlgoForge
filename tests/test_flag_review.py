@@ -44,6 +44,7 @@ from app.models.submission import (
 from app.models.user import ROLE_TEACHER
 from app.records import SubmissionContext, record_submission
 from app.sandbox.judge import JudgeResult, JudgeStatus
+from conftest import TEST_SIDECAR_HEADERS
 
 
 @pytest.fixture
@@ -82,7 +83,7 @@ def client(engine, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setattr(auth_api, "get_session", _test_session)
     monkeypatch.setattr(teacher_api, "get_session", _test_session)
 
-    with TestClient(app) as c:
+    with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
         yield c
 
 

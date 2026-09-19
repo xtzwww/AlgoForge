@@ -20,6 +20,7 @@ import pytest
 
 from app.sandbox.compiler import compile_cpp
 from app.sandbox.runner import ExecutionResult, run_executable
+from conftest import EXEC_TIME_LIMIT
 
 # --- C++ fixtures -------------------------------------------------------
 
@@ -124,7 +125,7 @@ def test_normal_run(echo_binary: Path) -> None:
     result = run_executable(
         echo_binary,
         stdin="hello algoforge",
-        time_limit=5.0,
+        time_limit=EXEC_TIME_LIMIT,
         mem_limit_mb=256,
     )
 
@@ -138,7 +139,9 @@ def test_normal_run(echo_binary: Path) -> None:
 
 def test_normal_run_to_dict(echo_binary: Path) -> None:
     """to_dict() round-trips a successful result into a JSON-safe dict."""
-    result = run_executable(echo_binary, stdin="x", time_limit=5.0, mem_limit_mb=256)
+    result = run_executable(
+        echo_binary, stdin="x", time_limit=EXEC_TIME_LIMIT, mem_limit_mb=256
+    )
     d = result.to_dict()
 
     assert d["success"] is True

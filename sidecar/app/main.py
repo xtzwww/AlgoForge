@@ -22,6 +22,7 @@ from app.api.submissions import router as submissions_router
 from app.api.teacher import router as teacher_router
 from app.api.ws import router as ws_router
 from app.config import settings
+from app.security import SidecarTokenMiddleware
 
 app = FastAPI(
     title="基于 AI Agent 的编程课程学习过程分析与反馈系统",
@@ -45,15 +46,38 @@ app = FastAPI(
 # the user happened to visit. Origins are now configurable via
 # CORS_ALLOW_ORIGINS.
 #
-# NOTE (known gap, PU-5): CORS is a *browser* rule and is therefore the
-# only thing standing between a network peer and this process — the
-# sidecar does not verify `SIDECAR_TOKEN`. No auth middleware is
-# installed here, and app/api/ws.py ignores the `?token=` parameter the
-# client sends, so a request with no credential at all is served. Since
-# the sidecar compiles and runs submitted code, that makes an exposed
-# sidecar an arbitrary-code-execution service. It is safe today only
-# because it binds to 127.0.0.1. Adding token verification is its own
-# slice; until then, do not bind this to 0.0.0.0.
+# Process-level auth. Every request must carry `SIDECAR_TOKEN`
+# (`X-Sidecar-Token`, or `?token=` for the WebSocket); `/health` and CORS
+# preflight are exempt. See app/security.py for the exemptions and for why
+# this is not the `Authorization` header.
+#
+# Added *before* CORS on purpose. `add_middleware` wraps what is already
+# there, so the last one added is the outermost — adding CORS last puts it
+# outside the token check, which is what makes the 401 carry CORS headers
+# (an unannotated 401 is indistinguishable from a network error in a
+# browser) and what lets preflight be answered without a credential.
+app.add_middleware(SidecarTokenMiddleware)
+
+# CORS: the Electron renderer calls the sidecar over localhost. In dev
+# Vite serves the renderer from http://localhost:5173 (preview: 4173),
+# so only those origins are allowed by default. Production loads the
+# renderer from file:// / a custom scheme, which sends no Origin header
+# and therefore needs no CORS entry.
+#
+# The web target (PU-5, `npm run dev:web`) reuses the 5173 entry: unlike
+# Electron it is a real page on a real origin, so its requests do carry
+# an Origin header. A LAN deployment must add that origin explicitly —
+# CORS does not support wildcard hosts.
+#
+# Previously this was allow_origins=["*"] with allow_credentials=True,
+# which browsers reject and which exposed the sidecar to any web page
+# the user happened to visit. Origins are now configurable via
+# CORS_ALLOW_ORIGINS.
+#
+# CORS is a *browser* rule: it stops a web page the user happens to visit
+# from reading the response, but it does nothing about a script, a curl,
+# or another process on the same machine. That is what the credential
+# above is for. Both are needed — neither replaces the other.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.resolved_cors_origins,

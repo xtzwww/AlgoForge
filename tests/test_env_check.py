@@ -14,8 +14,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.sandbox import env_probe
 from app.sandbox.languages import all_languages
+from conftest import TEST_SIDECAR_HEADERS
 
-client = TestClient(app)
+client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
 
 
 # --------------------------------------------------------------- route

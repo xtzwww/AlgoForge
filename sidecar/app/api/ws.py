@@ -106,6 +106,7 @@ from app.sandbox.judge_input import (
     resolve,
 )
 from app.sandbox.pool import run_in_sandbox
+from app.security import websocket_is_authorised
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +203,22 @@ def resolve_user_id(token: object) -> Optional[int]:
 
 @router.websocket("/ws/run-log")
 async def run_log(websocket: WebSocket) -> None:
-    """Stream judge progress events to the connected client."""
+    """Stream judge progress events to the connected client.
+
+    The process credential is the HTTP middleware's job everywhere else,
+    but middleware does not run for a WebSocket handshake that Starlette
+    dispatches straight to the route, so it is checked here. The client
+    has always sent it as ``?token=`` (it cannot set a header); before
+    this it was simply ignored, which made the socket the one door in the
+    process that needed no credential at all.
+    """
+    if not websocket_is_authorised(websocket.scope):
+        # 1008 = policy violation. Refused *before* accept, so the client
+        # sees a failed handshake rather than a socket that opens and
+        # immediately dies — the latter is indistinguishable from a bug.
+        await websocket.close(code=1008, reason="missing or invalid sidecar token")
+        return
+
     await websocket.accept()
     try:
         payload = await websocket.receive_json()

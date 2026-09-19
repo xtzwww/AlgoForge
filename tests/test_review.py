@@ -34,6 +34,7 @@ from app.models.mistake_book import MistakeBookEntry  # noqa: F401
 from app.models.problem import Problem
 from app.models.review import ReviewRecord  # noqa: F401
 from app.models.submission import Submission
+from conftest import TEST_SIDECAR_HEADERS
 
 
 @pytest.fixture
@@ -80,7 +81,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
     review_module.get_session = fake  # type: ignore[assignment]
 
     try:
-        with TestClient(app) as c:
+        with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
             yield c
     finally:
         mb_module.get_session = real_mb  # type: ignore[assignment]

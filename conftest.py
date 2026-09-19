@@ -16,6 +16,54 @@ SIDECAR_DIR = Path(__file__).parent / "sidecar"
 if str(SIDECAR_DIR) not in sys.path:
     sys.path.insert(0, str(SIDECAR_DIR))
 
+#: 测试用的进程凭证（``SIDECAR_TOKEN``）。
+#:
+#: 侧车要求每个请求都带 ``X-Sidecar-Token``（见 ``app/security.py``），所以
+#: 每一个 ``TestClient`` 都必须出示它。凭证值本身无关紧要 —— 测试关心的是
+#: 「带了才放行」，不是某个具体字符串 —— 但所有测试必须用**同一个**值，否则
+#: 每个文件都会去猜别的模块用的是什么。
+#:
+#: 它同时被下面的 autouse fixture 写进 ``settings``，让侧车认这个凭证有效。
+#: 只有这两件事一起做，测试才既过得了守卫又不是在测一个被关掉的守卫。
+TEST_SIDECAR_TOKEN = "test-sidecar-token"
+
+#: 传给 ``TestClient(..., headers=...)`` 的请求头。
+TEST_SIDECAR_HEADERS = {"X-Sidecar-Token": TEST_SIDECAR_TOKEN}
+
+#: 断言「程序是对的」的测试给判题的时间上限。
+#:
+#: **不是** 5 秒，因为在这台机器上**启动一个进程就要 5 秒以上**：
+#: ``subprocess.run(['whoami'])`` 实测 5.2 s，而进程还没开始跑。任何小于这个
+#: 数的上限都会让正确的程序报 TLE —— 判题器没错，是机器慢。2026-09-19 的
+#: 全量运行里 8 个用例就是这样红的（``stderr: Time Limit Exceeded (>5.0s)``，
+#: ``memory_used=6``，``exit_code=-1``：程序根本没起来）。
+#:
+#: 所以这个上限只是**预算**，不是被测对象：断言的是「正确代码判 AC / 错误代码
+#: 判 WA」，而「超时会被杀」由 ``test_timeout`` 和 ``test_judge_tle`` 用 1 秒
+#: 的上限各自覆盖。一个跑不满 30 秒的机器不会因为这里的 30 而变慢 —— 上限只在
+#: 程序真的卡住时才用得上。
+#:
+#: 如果哪天 ``time whoami`` 回到几十毫秒，这个注释就该删掉，上限也能降回去。
+EXEC_TIME_LIMIT = 30.0
+
+
+@pytest.fixture(autouse=True)
+def _fixed_sidecar_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the sidecar a known process credential for the test's duration.
+
+    ``SIDECAR_TOKEN`` is blank in ``.env``, and a blank token means "make
+    one up" — so without this the value the server compares against would
+    differ from anything a test could send, and every route would answer
+    401 regardless of the header. Pinning it is what makes
+    {@link TEST_SIDECAR_HEADERS} worth sending.
+
+    ``autouse`` because the guard is on every route: a module that
+    forgot this would not fail in one place, it would fail in all of them.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "sidecar_token", TEST_SIDECAR_TOKEN)
+
 
 @pytest.fixture(autouse=True)
 def _no_real_submission_writes(monkeypatch: pytest.MonkeyPatch) -> None:

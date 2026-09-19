@@ -39,6 +39,7 @@ from app.sandbox import judge_input as judge_input_module
 from app.sandbox.judge import JudgeStatus, judge
 from app.sandbox.judge import TestCase as JudgeTestCase
 from app.sandbox.languages import UnknownLanguageError
+from conftest import TEST_SIDECAR_HEADERS, TEST_SIDECAR_TOKEN
 
 
 @contextmanager
@@ -408,8 +409,8 @@ def test_ws_language_is_canonicalised() -> None:
 
 def test_ws_rejects_an_unknown_language_as_a_judge_error() -> None:
     """A bad id is a client error, not a crash in the worker thread."""
-    client = TestClient(app)
-    with client.websocket_connect("/ws/run-log") as ws:
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json(
             {
                 "code": _CPP_AC,
@@ -425,7 +426,7 @@ def test_ws_rejects_an_unknown_language_as_a_judge_error() -> None:
 
 def test_rest_judge_rejects_an_unknown_language_with_a_422() -> None:
     """The REST twin validates at the edge too, before spawning anything."""
-    client = TestClient(app)
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
     response = client.post(
         "/api/v1/judge",
         json={
@@ -444,8 +445,8 @@ def test_rest_judge_rejects_an_unknown_language_with_a_422() -> None:
 )
 def test_ws_streams_a_verdict_for_a_non_cpp_language() -> None:
     """Proves the language reaches the worker thread, not just the parser."""
-    client = TestClient(app)
-    with client.websocket_connect("/ws/run-log") as ws:
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json(
             {
                 "code": _PY_AC,
@@ -544,7 +545,7 @@ def test_rest_judge_404s_on_unknown_problem_id() -> None:
     """
     with _patched_judge_session():
         # No rows seeded, so any id is unknown.
-        client = TestClient(app)
+        client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
         response = client.post(
             "/api/v1/judge",
             json={"code": _CPP_AC, "problem_id": 987654321},
@@ -556,14 +557,14 @@ def test_rest_judge_404s_on_unknown_problem_id() -> None:
 
 def test_rest_judge_422s_when_no_input_mode_supplied() -> None:
     """Omitting both ``problem_id`` and ``test_cases`` is a 422."""
-    client = TestClient(app)
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
     response = client.post("/api/v1/judge", json={"code": _CPP_AC})
     assert response.status_code == 422
 
 
 def test_rest_judge_422s_when_both_input_modes_supplied() -> None:
     """Supplying both is a 422 rather than a silent precedence choice."""
-    client = TestClient(app)
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
     response = client.post(
         "/api/v1/judge",
         json={
@@ -578,7 +579,7 @@ def test_rest_judge_422s_when_both_input_modes_supplied() -> None:
 
 def test_rest_judge_inline_mode_still_works() -> None:
     """The self-test path is unchanged by the new mode."""
-    client = TestClient(app)
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
     response = client.post(
         "/api/v1/judge",
         json={
@@ -598,7 +599,7 @@ def test_rest_judge_response_type_is_still_bean_shaped() -> None:
     A response model that *dropped* a field would be a breaking change
     for the existing frontend; this pins the shape.
     """
-    client = TestClient(app)
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
     body = client.post(
         "/api/v1/judge",
         json={

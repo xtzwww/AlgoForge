@@ -37,6 +37,7 @@ from app.models.mistake_book import (
 )
 from app.models.problem import Problem
 from app.models.submission import Submission
+from conftest import TEST_SIDECAR_HEADERS
 
 
 @pytest.fixture
@@ -87,7 +88,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
     # monkeypatch in place it never runs, but silence linters by leaving
     # the override simple.
     try:
-        with TestClient(app) as c:
+        with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
             yield c
     finally:
         mb_module.get_session = real_get_session  # type: ignore[assignment]

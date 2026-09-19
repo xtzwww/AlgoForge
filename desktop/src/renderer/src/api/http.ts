@@ -5,6 +5,20 @@
  * this module has no opinion about whether it is running under Electron
  * or in a browser. Call `initHttpClient()` once during app bootstrap
  * before making any API requests.
+ *
+ * Two credentials, two headers
+ * ----------------------------
+ * `X-Sidecar-Token` is set here and never replaced: it authenticates the
+ * *app* to the sidecar and is the same for every user. `Authorization`
+ * carries the logged-in *person*'s session token, and `session.ts`
+ * overwrites it whenever somebody is signed in.
+ *
+ * They must not share a header. `Authorization` can hold exactly one
+ * bearer credential, and the server reads it with one dependency
+ * (`app.api.auth.current_user`); if the user token overwrote a shared
+ * header, a teacher's request would arrive with a valid person
+ * credential and no process credential at all — and would be refused for
+ * the wrong reason.
  */
 
 import axios, { type AxiosInstance } from 'axios'
@@ -31,19 +45,17 @@ export async function initHttpClient(): Promise<void> {
   }
 
   http.defaults.baseURL = info.url
+  // Shared by every user and never overwritten — see the module docstring.
+  http.defaults.headers.common['X-Sidecar-Token'] = info.token
+  // Also sent as `Authorization` so that routes written before the process
+  // credential existed keep working. The sidecar's token check reads
+  // `X-Sidecar-Token`; `session.ts` replaces this one on login.
   http.defaults.headers.common['Authorization'] = `Bearer ${info.token}`
 
   console.log(`[http] client configured (${runtime.kind}): baseURL=${info.url}`)
 }
 
-// Request interceptor: ensure Authorization header is always present
-http.interceptors.request.use(
-  (config) => {
-    // The token is already set in defaults; this is a safety net.
-    return config
-  },
-  (error) => Promise.reject(error)
-)
+// Response interceptor: unwrap response data or surface errors cleanly
 
 // Response interceptor: unwrap response data or surface errors cleanly
 http.interceptors.response.use(

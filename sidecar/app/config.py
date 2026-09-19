@@ -315,10 +315,18 @@ class Settings(BaseSettings):
         """Return the sidecar auth token.
 
         If ``sidecar_token`` is not set, generate a cryptographically
-        random URL-safe token.
+        random URL-safe token **once** and keep it.
+
+        The generation used to be per-call, which is harmless for a
+        launcher that reads this once and passes it to the child process
+        -- but it makes the value unusable as a credential to *compare
+        against*: two calls would disagree, so a request could never
+        match. Writing it back rather than returning a fresh value each
+        time is what makes ``SIDECAR_TOKEN=`` (blank = "make one up") and
+        the token check in :mod:`app.security` able to coexist.
         """
         if not self.sidecar_token:
-            return secrets.token_urlsafe(32)
+            self.sidecar_token = secrets.token_urlsafe(32)
         return self.sidecar_token
 
 

@@ -42,6 +42,7 @@ from app.models.mistake_book import (
 from app.models.problem import Problem
 from app.models.submission import Submission
 from app.records import _SUGGESTION_LABELS, _format_suggestion, split_suggestion
+from conftest import TEST_SIDECAR_HEADERS
 
 # --- The parser --------------------------------------------------------
 
@@ -272,7 +273,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
 
     mb_module.get_session = fake_get_session  # type: ignore[assignment]
     try:
-        with TestClient(app) as c:
+        with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
             yield c
     finally:
         mb_module.get_session = real_get_session  # type: ignore[assignment]

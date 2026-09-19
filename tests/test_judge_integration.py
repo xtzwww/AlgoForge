@@ -26,6 +26,7 @@ import pytest
 
 from app.sandbox import judge as judge_module
 from app.sandbox.judge import JudgeResult, JudgeStatus, TestCase, judge
+from conftest import EXEC_TIME_LIMIT
 
 # --- C++ fixtures ------------------------------------------------------
 
@@ -96,7 +97,7 @@ def test_judge_ac() -> None:
         TestCase(input="-5 5\n", expected_output="0\n"),
     ]
 
-    result = judge(code, cases, time_limit=5.0, mem_limit_mb=256)
+    result = judge(code, cases, time_limit=EXEC_TIME_LIMIT, mem_limit_mb=256)
 
     assert isinstance(result, JudgeResult)
     assert result.status is JudgeStatus.AC
@@ -117,7 +118,7 @@ def test_judge_wa() -> None:
         TestCase(input="3 4\n", expected_output="7\n"),  # actual: 12
     ]
 
-    result = judge(code, cases, time_limit=5.0, mem_limit_mb=256)
+    result = judge(code, cases, time_limit=EXEC_TIME_LIMIT, mem_limit_mb=256)
 
     assert result.status is JudgeStatus.WA
     assert result.passed_count == 0
@@ -173,7 +174,7 @@ def test_judge_mixed_ac_and_wa() -> None:
         TestCase(input="3 4\n", expected_output="100\n"),  # WA (actual 7)
     ]
 
-    result = judge(code, cases, time_limit=5.0, mem_limit_mb=256)
+    result = judge(code, cases, time_limit=EXEC_TIME_LIMIT, mem_limit_mb=256)
 
     assert result.status is JudgeStatus.WA
     assert result.passed_count == 1
@@ -198,7 +199,7 @@ def test_judge_to_dict_round_trip() -> None:
     """to_dict() produces a JSON-safe structure with all expected keys."""
     code = _SUM_AC_CODE
     cases = [TestCase(input="1 2\n", expected_output="3\n")]
-    result = judge(code, cases, time_limit=5.0, mem_limit_mb=256)
+    result = judge(code, cases, time_limit=EXEC_TIME_LIMIT, mem_limit_mb=256)
     d = result.to_dict()
 
     assert d["status"] == "AC"

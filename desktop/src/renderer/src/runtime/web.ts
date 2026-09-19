@@ -12,16 +12,18 @@
  * on the developer's own machine or a trusted LAN, talking to a sidecar
  * that is likewise local.
  *
- * Note what is *not* protecting this deployment: the sidecar does not
- * currently verify the token. `app/main.py` installs no auth middleware
- * and `app/api/ws.py` ignores the `?token=` parameter sent below, so a
- * request carrying no credential is served (a pre-existing gap, not one
- * this module introduces). The real barriers are that the sidecar binds
- * to 127.0.0.1 and that the CORS allowlist is narrow — and CORS is a
- * browser rule, which anything that is not a browser simply ignores.
- * Since the sidecar executes submitted code, do not expose it to a
- * network until token verification exists. See `.env.web.example` for
- * the full note.
+ * The sidecar *does* verify the token (`app/security.py`): every request
+ * needs `X-Sidecar-Token`, and the WebSocket handshake needs `?token=`,
+ * which is what this module supplies below. That covers "is the caller
+ * our app", which is why an exposed sidecar is no longer an open
+ * code-execution service.
+ *
+ * It does **not** make this deployment safe to expose publicly. `VITE_`
+ * variables are in the bundle, so anyone who loads the page can read the
+ * token — the credential stops *strangers*, not *readers*. The barriers
+ * that matter for a public deployment are still missing: TLS, and a
+ * token that is issued per user rather than baked into a bundle. See
+ * `.env.web.example` for the full note.
  *
  * This module deliberately does **not** touch `window.algoforge`. A web
  * build aliases the electron implementation away (see `runtime/index.ts`),

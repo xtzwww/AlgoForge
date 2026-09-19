@@ -20,6 +20,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.main import app
+from conftest import EXEC_TIME_LIMIT, TEST_SIDECAR_HEADERS, TEST_SIDECAR_TOKEN
 
 # A correct sum solution: reads a b, prints a+b.
 _SUM_AC_CODE = """\
@@ -57,8 +58,8 @@ def _receive_until_done(
 
 def test_ws_ac_streams_full_progress_sequence() -> None:
     """A correct submission streams compile + case events → judge_done AC."""
-    client = TestClient(app)
-    with client.websocket_connect("/ws/run-log") as ws:
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json(
             {
                 "code": _SUM_AC_CODE,
@@ -66,7 +67,7 @@ def test_ws_ac_streams_full_progress_sequence() -> None:
                     {"input": "1 2\n", "expected_output": "3\n"},
                     {"input": "10 20\n", "expected_output": "30\n"},
                 ],
-                "time_limit": 5.0,
+                "time_limit": EXEC_TIME_LIMIT,
                 "mem_limit_mb": 256,
             }
         )
@@ -105,8 +106,8 @@ def test_ws_ac_streams_full_progress_sequence() -> None:
 
 def test_ws_ce_short_circuits_to_judge_done_ce() -> None:
     """A CE short-circuits: compile_start → compile_done(failed) → judge_done."""
-    client = TestClient(app)
-    with client.websocket_connect("/ws/run-log") as ws:
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json(
             {
                 "code": _CE_CODE,
@@ -134,8 +135,8 @@ def test_ws_ce_short_circuits_to_judge_done_ce() -> None:
 
 def test_ws_missing_code_returns_judge_error() -> None:
     """A request without 'code' yields judge_error and closes."""
-    client = TestClient(app)
-    with client.websocket_connect("/ws/run-log") as ws:
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json({"test_cases": [{"input": "", "expected_output": ""}]})
         msgs = _receive_until_done(ws)
 
@@ -146,8 +147,8 @@ def test_ws_missing_code_returns_judge_error() -> None:
 
 def test_ws_empty_test_cases_returns_judge_error() -> None:
     """A request with no test cases yields judge_error."""
-    client = TestClient(app)
-    with client.websocket_connect("/ws/run-log") as ws:
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json({"code": _SUM_AC_CODE, "test_cases": []})
         msgs = _receive_until_done(ws)
 
@@ -168,13 +169,13 @@ int main() {
     return 0;
 }
 """
-    client = TestClient(app)
-    with client.websocket_connect("/ws/run-log") as ws:
+    client = TestClient(app, headers=TEST_SIDECAR_HEADERS)
+    with client.websocket_connect(f"/ws/run-log?token={TEST_SIDECAR_TOKEN}") as ws:
         ws.send_json(
             {
                 "code": wa_code,
                 "test_cases": [{"input": "1 2\n", "expected_output": "3\n"}],
-                "time_limit": 5.0,
+                "time_limit": EXEC_TIME_LIMIT,
                 "mem_limit_mb": 256,
             }
         )
