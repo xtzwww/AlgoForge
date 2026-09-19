@@ -160,6 +160,34 @@ class Settings(BaseSettings):
     # 而且 429 本来就是退避重试的经典场景。
     llm_retry_attempts: int = Field(default=1, ge=0)
 
+    # ------------------------------------------------- 编排器选择（S4/S7 接线）
+    # 判题主路径用哪个编排器做错因分析。取值由
+    # ``app.agent.pipeline.resolved_pipeline()`` 解析：
+    #
+    #   ``direct``（**默认**）—— 直接调 ``analyzer.analyze_error``，即 S2 的
+    #     单次调用路径。默认值刻意保持不动：见下面「为什么默认不换」。
+    #   ``graph`` —— 走 S4 的 LangGraph 状态图（read_code → retrieve →
+    #     analyse → self_check，自检不满意时带一条回边重来），检索到的知识
+    #     卡片自动拼进 prompt。
+    #
+    # 为什么默认不换
+    # --------------
+    # 两个原因，都不是「图不好」：
+    #
+    # 1. **成本与延迟翻倍**。图每轮调用 ``analyze_error`` 用的还是它自己的
+    #    ``max_attempts=2``，再叠上 ``DEFAULT_MAX_RETRIES=1`` 的自检回边，
+    #    最坏情况一次分析 **4 次模型调用**，而 direct 是 2 次。这段代码跑在
+    #    学生等 ``judge_done`` 的路上，预算既是钱也是延迟。
+    # 2. **换掉就验证不了**。S2 的「20 道真题准确率 ≥ 60%」是 AGENTS.md 定的
+    #    生死线，而验证它要跑 ``pytest -m eval_set``（真打付费端点、按量计费），
+    #    日常与夜间都不跑。也就是说：换了编排器，**没人能回答准确率有没有退**。
+    #    所以这里只提供开关，把「换」留成一次有人在场、能当场跑评估集的改动。
+    #
+    # 非法取值（拼错、写成 ``langgraph``）一律回退到 ``direct`` 并记一条警告，
+    # 不抛异常：这条路径的契约是「分析失败要降级，不能把判题带崩」，
+    # 见 ``app/agent/pipeline.py``。
+    analysis_pipeline: str = Field(default="direct")
+
     # ----------------------------------------------------------- LangSmith
     langsmith_api_key: str = Field(default="")
     langsmith_project: str = Field(default="algoforge")

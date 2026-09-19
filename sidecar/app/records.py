@@ -341,7 +341,13 @@ def _analyse_and_annotate(
     # import inside the function means a deployment that never reaches
     # this branch does not pay for importing the LLM stack... and, more
     # practically, keeps the import graph acyclic while P2-4 is landing.
-    from app.agent.analyzer import analyze_error
+    #
+    # ``pipeline`` rather than ``analyzer`` since the S4/S7 wiring: it
+    # picks the orchestrator from ``ANALYSIS_PIPELINE`` and returns the
+    # same ``AnalysisOutcome`` either way, so nothing below this line has
+    # to know which one ran. The default is ``direct``, which is
+    # ``analyzer.analyze_error`` unchanged — the graph is opt-in.
+    from app.agent import pipeline
 
     failing = _first_failing_case(result)
     if failing is None:
@@ -380,7 +386,7 @@ def _analyse_and_annotate(
     if on_event is not None:
         on_event({"type": "agent_start", "verdict": result.status.value})
 
-    outcome = analyze_error(
+    outcome = pipeline.analyse(
         code=context.code,
         stdin=failing.input,
         expected=failing.expected_output,

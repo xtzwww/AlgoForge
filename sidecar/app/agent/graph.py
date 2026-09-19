@@ -68,7 +68,7 @@ import logging
 import operator
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Optional, TypedDict
+from typing import Annotated, Any, Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -232,6 +232,7 @@ def build_analysis_graph(
     *,
     max_retries: int = DEFAULT_MAX_RETRIES,
     use_tools: bool = False,
+    on_event: Optional[Callable[[Any], None]] = None,
 ) -> Any:
     """Build the compiled read → retrieve → analyse → check graph.
 
@@ -244,6 +245,11 @@ def build_analysis_graph(
         use_tools: Offer the model P2-6's ``run_code`` / ``judge`` tools.
             Off by default, matching ``analyze_error``: the tool path costs
             several round trips per analysis.
+        on_event: Sink for tool-call notifications, so a WebSocket client
+            can watch the Agent work (P2-8). Passed straight through to
+            ``analyze_error``; without it the graph would be the one
+            orchestrator that silently drops the stream, and a caller
+            switching between them would lose its progress events.
 
     Returns:
         A compiled graph. ``invoke`` takes an :class:`AnalysisState`; the
@@ -362,12 +368,15 @@ def run_analysis_graph(
     retriever: Retriever | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     use_tools: bool = False,
+    on_event: Optional[Callable[[Any], None]] = None,
 ) -> GraphOutcome:
     """Analyse one submission through the graph.
 
     Takes the same arguments as
     :func:`app.agent.analyzer.analyze_error` plus *tags* for retrieval, so
     a caller can switch orchestrators by changing the function it calls.
+    ``app.agent.pipeline`` is that caller, and it is what decides between
+    the two — see its docstring for why the default is the single call.
 
     Never raises for a model-side failure, for the same reason
     ``analyze_error`` does not: this runs inside the judging path, and a
@@ -375,7 +384,10 @@ def run_analysis_graph(
     submission that was judged successfully.
     """
     graph = build_analysis_graph(
-        retriever, max_retries=max_retries, use_tools=use_tools
+        retriever,
+        max_retries=max_retries,
+        use_tools=use_tools,
+        on_event=on_event,
     )
     final: AnalysisState = graph.invoke(
         {
