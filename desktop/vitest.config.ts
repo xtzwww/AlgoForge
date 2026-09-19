@@ -11,9 +11,11 @@
  *
  * 其余两点是刻意的克制：
  *
- * - **环境是 `node` 而不是 `jsdom`。** 首批测试覆盖的是 api 层的纯逻辑
- *   与判题流的事件时序，都不需要 DOM。等真要测组件时再装 jsdom 并配
- *   `environmentMatchGlobs`，而不是现在就把每个测试都拖进 DOM 环境里。
+ * - **环境默认是 `node`，组件测试自己 opt-in 到 `jsdom`。** api 层的纯逻辑
+ *   与判题流的事件时序都不需要 DOM；给它们套上 DOM 只是白付一份启动开销。
+ *   需要 DOM 的 spec 在文件第一行写 `// @vitest-environment jsdom` 即可
+ *   （jsdom 与 @vue/test-utils 已装）。比全局 `environmentMatchGlobs`
+ *   好的地方是：环境写在被测文件旁边，不用回头来看这份配置才知道。
  * - **不开 `globals`。** 每个 spec 显式 `import { it, expect } from
  *   'vitest'`，于是 `tsconfig.web.json`（`src/renderer/src/**`）的类型
  *   检查天然覆盖测试文件，不需要给渲染进程额外加 `types: ["vitest/globals"]`。
@@ -27,10 +29,14 @@
 
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
+import vue from '@vitejs/plugin-vue'
 
 const renderer = new URL('src/renderer/src/', import.meta.url)
 
 export default defineConfig({
+  // `.vue` 不是 JS：没有这个插件，任何 import 组件的 spec 都会把
+  // `<template>` 当成语法错误报出来。构建配置里它是默认的，测试配置里不是。
+  plugins: [vue()],
   resolve: {
     alias: {
       '@renderer': fileURLToPath(renderer),
