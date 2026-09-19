@@ -384,7 +384,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 | # | 条目 | 判定 | 实测（2026-09-20） |
 |---|---|---|---|
 | 1 | sidecar 打成 **PyInstaller onedir** | 产物目录里的可执行文件能直接起，`GET /health` 返回 200 | ✅ `dist/algoforge-sidecar/algoforge-sidecar.exe` 直接起，1 秒内 `/health` 返回 `{"status":"ok"}` |
-| 2 | **判题在打包后仍可用** | 真实编译 + 运行 + 输出比对跑通一次（AC 与 WA 各一）。这条最容易漏：打包时漏了编译器或临时目录，表现是 `/health` 正常但一判题就 CE | ✅ C++ 与 Python 各自验过 AC 与 WA。**并且因此抓出一个只在打包版出现的缺陷**，见下方 |
+| 2 | **判题在打包后仍可用** | 真实编译 + 运行 + 输出比对跑通一次（AC 与 WA 各一）。这条最容易漏：打包时漏了编译器或临时目录，表现是 `/health` 正常但一判题就 CE | ✅ **三种语言都验过**：C++ / Python 各验 AC 与 WA；**Java 于 2026-09-20 补验，AC / CE / TLE 三条都在打包版上跑对**。一条命令可复现：`sidecar/.venv/Scripts/python.exe -u tools/verify_packaged_sidecar.py`。**并且因此抓出一个只在打包版出现的缺陷**，见下方 |
 | 3 | 桌面端打成 **electron-builder** 安装包 | 装上后主进程能拉起打包版 sidecar（而不是 dev 的 uvicorn），走通一次提交 | ⬜ 未产出。本机沙箱禁止从 Bash 调用 PowerShell，而 electron-builder 的依赖收集器在 Windows 上硬编码走 `powershell.exe`，因此本机跑不出安装包——**配置本身没问题，是环境限制**，详见 `.workbuddy-ai/night-queue.md` 的 T3 |
 | 4 | **密钥不进产物** | `.env` / `SIDECAR_TOKEN` 不写进包体；token 仍按既有约定运行时生成或由用户配置。打进去等于把共享密钥公开 | ✅ `dist/` 内 grep 不到任何 `.env`；打包脚本与 `electron-builder.yml` 两边都显式排除，改走 `ALGOFORGE_ENV_FILE` |
 | 5 | 前置条件写清楚 | README 写明目标机需要什么（g++ 的路径配置、PostgreSQL 是否必需、非必需时的降级表现） | ✅ 见 §七「目标机前置要求」 |
@@ -404,6 +404,21 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
   已补两个回归测试分别钉住冻结与非冻结两种默认。
 - 教训：**「打包后判题仍可用」要逐语言验**。只验 C++ 会漏掉 Python 与 Java。
 
+**打包版 Java 判题已补验**（2026-09-20）
+
+上面那条教训原先只兑现了一半：C++ 与 Python 验过，**Java 一直挂着「未在打包版上
+实测」**。现已在打包版上补齐三条：
+
+- 起法：直接起 `dist/algoforge-sidecar/algoforge-sidecar.exe`，显式给
+  `JAVA_COMPILER_PATH` / `JAVA_RUNTIME_PATH`（本机 JDK 8 不在 PATH 上）、
+  `CPP_COMPILER_PATH`，`DATABASE_URL` 指向 SQLite，判题走 `record=false`
+  所以**不需要 PostgreSQL**。
+- 结果：`GET /api/v1/env-check` 报 `java available=true`、`javac 1.8.0_291`；
+  `POST /api/v1/judge` 上 Java 三条分别判 **AC（2/2 用例）/ CE / TLE**。
+- 已固定成脚本 `tools/verify_packaged_sidecar.py`（`--language java` 可单跑一种），
+  三种语言 × AC/CE/TLE 共 9 条，一条命令跑完。**以后改打包脚本先跑它。**
+- 顺带发现的真实缺陷：**Java 的 CE 输出是乱码**，见 §九。
+
 **明确不做**（经方向讨论确定）：独立的 AI 检测服务、检测准确率研究、
 完整教学管理功能（排课/考勤/通知/成绩）、真实部署上线。
 
@@ -421,6 +436,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 - Node.js ≥ 20
 - Python ≥ 3.11
 - g++ 或 clang（MinGW / MSVC / clang 任一，路径通过 `.env` 配置）
+- JDK（可选：**只在要判 Java 提交时**才需要，且必须是 JDK 而不是 JRE——`javac` 是判题用的那个工具；路径用 `JAVA_COMPILER_PATH` / `JAVA_RUNTIME_PATH` 配置）
 - PostgreSQL
 
 ### 目标机前置要求（打包版）
@@ -433,7 +449,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 |---|---|---|
 | C++ 判题 | 自带 g++（或 clang），用 `CPP_COMPILER_PATH` 指过去 | 一判题就 CE，而 `/health` 仍然正常——看起来像判题器坏了 |
 | Python 判题 | PATH 上有 `python`，或用 `PYTHON_INTERPRETER_PATH` 指过去 | Python 提交判 CE（打包版默认回退到 PATH 上的裸 `python`） |
-| Java 判题 | 自带 **JDK**（要 `javac`，JRE 不够），用 `JAVA_COMPILER_PATH` / `JAVA_RUNTIME_PATH` 指过去 | Java 提交判 CE。⚠️ 这条**未在打包版上实测**（本机 JDK 不在 PATH），逻辑与 C++ / Python 同源 |
+| Java 判题 | 自带 **JDK**（要 `javac`，JRE 不够），用 `JAVA_COMPILER_PATH` / `JAVA_RUNTIME_PATH` 指过去 | Java 提交判 CE。✅ **已在打包版上实测**（2026-09-20：AC / CE / TLE 三条跑对）。注意本机 JDK 不在 PATH 上，**两个路径都要显式配置** |
 | 错题本 / 画像 / 复习 | PostgreSQL | 这几项无持久化；**判题与运行照常可用**（实测不带 PG 也能判 AC） |
 
 配置一律走环境变量，或用 `ALGOFORGE_ENV_FILE` 指向一个外部的 `.env`——
@@ -633,7 +649,8 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **组件测试只覆盖三个组件** | Vitest 共 44 个用例：api 层纯逻辑、判题流时序，加上 `LayeredFeedback`（分层释放）、`OutputPanel`（诊断渲染与工具结果）、`VerdictBadge`（判定映射）共 18 个组件用例。**其余组件**（编辑器、教师看板、雷达图、错题本列表等）的行为仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」 |
 | **安装包尚未产出** | sidecar 已打成 PyInstaller onedir（**48 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 C++ / Python 判题；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出 |
 | **onedir 产物的限制** | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准） |
-| **打包版只验到判题层** | 已验：`/health`、C++ 与 Python 判题（AC + WA）、密钥未进产物。**未验**：桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条）、Java 判题、真 PostgreSQL 下的完整业务链路 |
+| **打包版只验到判题层** | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（C++ 与 Python 验 AC + WA；Java 验 AC / CE / TLE，2026-09-20）、密钥未进产物。脚本 `tools/verify_packaged_sidecar.py` 可复现。**未验**：桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条）、真 PostgreSQL 下的完整业务链路 |
+| **Java 编译错误的输出是乱码** | `javac` 在中文 Windows 上按控制台代码页（GBK）输出**本地化**诊断，而沙箱统一按 UTF-8 解码（`compiler.py` 的 `encoding="utf-8" / errors="replace"`），于是学生看到的 CE 信息形如 `Main.java:2: ����: �Ƿ��ı���ʽ��ʼ`。**判定本身是对的**（该判 CE 仍判 CE，用例数 0/0），坏的只是信息可读性——但这正是学生最需要读的那段。`_build_env` 只给 Python 设了 `PYTHONIOENCODING`，对 `javac` 无效。**尚未修**，见队列 T17 |
 
 ---
 
