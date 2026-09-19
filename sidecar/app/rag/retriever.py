@@ -41,9 +41,11 @@ live instance — see ``.workbuddy-ai/night-queue.md`` T7.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
+
+from app.rag.schema import OUTPUT_FIELDS, Embedder
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +57,6 @@ DEFAULT_COLLECTION = "algoforge_knowledge_cards"
 #: Default number of cards handed to the model. ``AGENTS.md`` §三 S5 sets the
 #: acceptance bar at "Top-3 contains at least one relevant card".
 DEFAULT_LIMIT = 3
-
-#: Minimal shape of an embedder. Matches LangChain's ``Embeddings`` interface
-#: (``AGENTS.md`` §一 locks embedding to it) without importing it.
-Embedder = Callable[[str], Sequence[float]]
 
 
 @dataclass(frozen=True)
@@ -183,7 +181,7 @@ class MilvusRetriever:
                 collection_name=self.collection,
                 data=[vector],
                 limit=limit,
-                output_fields=["card_id", "title", "text", "knowledge_tags"],
+                output_fields=list(OUTPUT_FIELDS),
             )
         except Exception as exc:  # noqa: BLE001 — degradation is the contract
             logger.warning(

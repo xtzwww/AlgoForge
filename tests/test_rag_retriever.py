@@ -32,6 +32,7 @@ from app.rag.retriever import (
     build_retriever,
     format_context,
 )
+from app.rag.schema import OUTPUT_FIELDS
 
 
 class StubMilvus:
@@ -166,6 +167,23 @@ def test_search_asks_milvus_for_the_tags_too() -> None:
     retriever.search("二分")
 
     assert "knowledge_tags" in client.calls[0]["output_fields"]  # type: ignore[operator]
+
+
+def test_search_requests_exactly_the_shared_output_fields() -> None:
+    """Pins the indexer/retriever agreement.
+
+    These two drifted once already: the indexer declared field-name constants
+    precisely so the pair could not disagree, while the retriever kept passing
+    its own hardcoded list. A field the retriever asks for but the indexer
+    never writes raises nothing — Milvus returns empty for it, and retrieval
+    quietly degrades to no context.
+    """
+    client = StubMilvus(_entity_hits(("card", "标题", "正文", [])))
+    retriever = MilvusRetriever(client=client, collection="c", embedder=_embedder)
+
+    retriever.search("任意")
+
+    assert client.calls[0]["output_fields"] == list(OUTPUT_FIELDS)  # type: ignore[operator]
 
 
 def test_search_accepts_a_flat_payload() -> None:
