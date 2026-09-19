@@ -429,9 +429,15 @@ env -u PYTHONPATH python -m pytest ../tests -q -m eval_set
 
 ```bash
 cd desktop
-./node_modules/.bin/vitest run   # 单次，等价于 npm run test
+./node_modules/.bin/vitest run   # 单次
 ./node_modules/.bin/vitest       # 监听
 ```
+
+⚠️ **本机请直接调 `./node_modules/.bin/vitest`，不要用 `npm run test`。**
+2026-09-19 实测：`npm run test` 在这台机器上**静默失败**——退出码 1，且
+**一个字都不输出**（连 vitest 的启动横幅都没有）。项目其它 `npm run` 脚本
+同样如此，所以是本机 npm 的问题，不是命令写错了。`package.json` 里的
+`test` / `test:watch` 留给 CI 和其它机器用。
 
 覆盖两件事：
 
