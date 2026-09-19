@@ -125,10 +125,17 @@ def _no_real_llm_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     ``patch.object(analyzer, "chat_completion", ...)`` calls in
     ``tests/test_analyzer.py``).
 
+    S7's team module is patched too, and it is the one that would bite:
+    it imports ``chat_completion`` into its own namespace, so patching
+    ``analyzer``'s copy does not reach it, and its two worker agents make
+    a call each. A test that exercised the team without patching would go
+    to a real hosted endpoint — which is precisely the failure this
+    fixture exists to make impossible rather than merely unlikely.
+
     ``autouse`` because a module that forgets it does not fail — it just
     gets slower and flakier, and that is the failure mode nobody notices.
     """
-    from app.agent import analyzer, tool_caller
+    from app.agent import analyzer, team, tool_caller
     from app.llm.gateway import LLMConfigError
 
     def _refuse(*args: object, **kwargs: object) -> None:
@@ -138,6 +145,7 @@ def _no_real_llm_calls(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(analyzer, "chat_completion", _refuse)
+    monkeypatch.setattr(team, "chat_completion", _refuse)
     monkeypatch.setattr(tool_caller, "complete", _refuse)
 
 

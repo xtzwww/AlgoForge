@@ -148,6 +148,16 @@ _TOOL_GUIDANCE_WITHOUT_TOOLS = """\
 本次你没有可用工具，只能根据上面给出的代码、输入和输出推断。不要描述你
 「将会」运行什么——直接给出结论。"""
 
+# Substituted for a missing statement. An empty block reads to the model as
+# "the statement is blank", which is a different and misleading claim — so
+# the absence is stated outright. Module-level rather than inline because
+# S7's worker agents take the same statement through their own templates
+# and must say the same thing about a missing one.
+NO_STATEMENT_NOTE = (
+    "（题面未提供。请只根据输入、期望输出、实际输出和代码本身推断，"
+    "并在 error_detail 中说明你缺少题面。）"
+)
+
 
 def _render_prompt(
     *,
@@ -185,10 +195,7 @@ def _render_prompt(
     # an empty block reads to the model as "the statement is blank",
     # which is a different and misleading claim.
     if not (statement or "").strip():
-        variables["statement"] = (
-            "（题面未提供。请只根据输入、期望输出、实际输出和代码本身推断，"
-            "并在 error_detail 中说明你缺少题面。）"
-        )
+        variables["statement"] = NO_STATEMENT_NOTE
 
     if extra_context:
         # Retrieval results land here from P2-17. Appended rather than

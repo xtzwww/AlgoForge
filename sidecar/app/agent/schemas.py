@@ -58,6 +58,18 @@ ErrorType = StrEnum(  # type: ignore[misc,assignment]
 )
 
 
+def _require_non_blank(value: str) -> str:
+    """Reject the obvious "model gave up" strings.
+
+    ``min_length=1`` alone accepts ``"N/A"``. These values are shown
+    directly to the student, so an empty-ish string is worse than an
+    outright failure: it looks like an answer.
+    """
+    if not value.strip():
+        raise ValueError("must not be blank")
+    return value
+
+
 class ErrorAnalysisResult(BaseModel):
     """One structured root-cause analysis of a failing submission.
 
@@ -134,9 +146,7 @@ class ErrorAnalysisResult(BaseModel):
         directly to the student, so an empty-ish string is worse than an
         outright failure: it looks like an answer.
         """
-        if not value.strip():
-            raise ValueError("must not be blank")
-        return value
+        return _require_non_blank(value)
 
     @model_validator(mode="after")
     def _hint_must_not_leak_the_fix(self) -> ErrorAnalysisResult:
@@ -166,6 +176,147 @@ class ErrorAnalysisResult(BaseModel):
         return ROOT_CAUSE_DESCRIPTIONS.get(str(self.error_type), "")
 
 
+#: Rungs in a hint ladder. Three is the smallest number that can be
+#: *graded* rather than merely ordered: one rung is an answer, two are a
+#: direction plus an answer, three are direction → location → check.
+HINT_LEVELS = 3
+
+
+class HintLevel(BaseModel):
+    """One rung of the hint ladder.
+
+    Attributes:
+        level: 1-based rung, and the schema pins the set to
+            ``1..HINT_LEVELS``: a model that labels its rungs 0-based, or
+            repeats a number, has produced a ladder whose order is not
+            recoverable from the data.
+        text: Chinese. What the student should look at *at this rung*.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    level: int = Field(ge=1, le=HINT_LEVELS)
+    text: str = Field(min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def _reject_placeholder_text(cls, value: str) -> str:
+        return _require_non_blank(value)
+
+
+class HintLadderResult(BaseModel):
+    """A graded hint for one diagnosed bug (S7's 提示 agent).
+
+    Why a ladder rather than the single ``hint`` already on
+    :class:`ErrorAnalysisResult`
+        The diagnosis's ``hint`` is written in the same breath as the
+        cause and the fix, so it drifts toward whichever of the three the
+        model found easiest to phrase. A separate agent is asked for the
+        *sequence*: what to look at, then where, then how to check. The
+        two are not duplicates — one is a nudge attached to a diagnosis,
+        this is a study aid that survives it.
+
+    What this schema can and cannot check
+        Ordering, distinctness and non-emptiness are structural and are
+        enforced here. *Increasing specificity* is the pedagogical point
+        of a ladder and is not: "is rung 2 vaguer than rung 1" is a
+        question about meaning, not about shape. The prompt is where that
+        instruction lives, and the self-check is what catches a ladder
+        that is merely thin.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    levels: list[HintLevel] = Field(
+        min_length=HINT_LEVELS,
+        max_length=HINT_LEVELS,
+        description="Exactly HINT_LEVELS rungs, shallowest first.",
+    )
+    self_check: list[str] = Field(
+        min_length=2,
+        max_length=5,
+        description=(
+            "Chinese. 2-5 yes/no questions the student answers after "
+            "fixing the code, to confirm the bug is actually gone."
+        ),
+    )
+
+    @field_validator("self_check")
+    @classmethod
+    def _reject_blank_items(cls, value: list[str]) -> list[str]:
+        for item in value:
+            _require_non_blank(item)
+        return value
+
+    @model_validator(mode="after")
+    def _rungs_are_ordered_and_distinct(self) -> HintLadderResult:
+        """A ladder whose rungs are out of order, or repeated, is not a
+        ladder — and neither defect is visible from any single field.
+        """
+        numbers = [rung.level for rung in self.levels]
+        expected = list(range(1, HINT_LEVELS + 1))
+        if numbers != expected:
+            raise ValueError(f"levels must be {expected} in order, got {numbers}")
+
+        texts = [rung.text for rung in self.levels]
+        if len(set(texts)) != len(texts):
+            raise ValueError("each rung must say something different")
+        return self
+
+
+class VariantResult(BaseModel):
+    """A practice problem targeting the same bug (S7's 变式题 agent).
+
+    The point of a variant is transfer: the student met the trap once in
+    the original problem, and meets it again in a setting where the old
+    code cannot be copied across. That is why ``difference`` is a required
+    field rather than a nicety — a variant that does not say what changed
+    is indistinguishable from a reprint of the original, and a reprint
+    teaches nothing.
+
+    ``sample_input`` / ``sample_output`` are plain strings rather than
+    parsed structures: they are shown to the student verbatim, and the
+    judge's own test-case format is a different contract that this module
+    has no business coupling to.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    statement: str = Field(
+        min_length=1,
+        description=(
+            "Chinese. Self-contained: background, input format, output "
+            "format, limits."
+        ),
+    )
+    sample_input: str = Field(min_length=1)
+    sample_output: str = Field(min_length=1)
+    knowledge_points: list[str] = Field(
+        min_length=1,
+        max_length=5,
+        description="Chinese phrases naming the concepts the variant drills.",
+    )
+    difference: str = Field(
+        min_length=1,
+        description=(
+            "Chinese. How the variant differs from the original, and why "
+            "the original's bug would recur here."
+        ),
+    )
+
+    @field_validator("statement", "sample_input", "sample_output", "difference")
+    @classmethod
+    def _reject_placeholder_text(cls, value: str) -> str:
+        return _require_non_blank(value)
+
+    @field_validator("knowledge_points")
+    @classmethod
+    def _reject_blank_points(cls, value: list[str]) -> list[str]:
+        for point in value:
+            _require_non_blank(point)
+        return value
+
+
 def _strip_code_fence(text: str) -> str:
     """Remove a markdown code fence wrapping the whole payload.
 
@@ -188,17 +339,73 @@ def _strip_code_fence(text: str) -> str:
     return "\n".join(lines).strip()
 
 
-class ErrorAnalysisParseError(ValueError):
-    """Raw model output could not be turned into an :class:`ErrorAnalysisResult`.
+class StructuredOutputParseError(ValueError):
+    """Raw model output could not be turned into a validated model.
 
     Carries the raw text so the caller (P2-3's retry) can show the model
     what it actually produced, and so a failure can be diagnosed without
     reproducing the call.
+
+    Shared by every parser in this module. S7 added two more structured
+    outputs, and a parser that raised a differently-named error for each
+    would force every caller to know which of the three it was holding —
+    the worker agents, which only want to record "this reply was unusable"
+    and carry on, would have to import all of them.
     """
 
     def __init__(self, message: str, raw: str = "") -> None:
         super().__init__(message)
         self.raw = raw
+
+
+class ErrorAnalysisParseError(StructuredOutputParseError):
+    """The specific failure :func:`parse_error_analysis` raises.
+
+    Kept as its own name because P2-3's retry catches it by name and
+    because the eval harness reports it; it is now a subclass so a caller
+    that only cares about "the reply was unusable" can catch the base.
+    """
+
+
+def _load_json_object(raw: str) -> dict[str, Any]:
+    """Parse raw model output into a JSON object, or explain why not.
+
+    The three failure modes are kept distinct — no content, not JSON, not
+    an object — because they call for different retry prompts: "you
+    emitted prose around the JSON" reads very differently to "your label
+    was not in the list".
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise StructuredOutputParseError("model returned no content", raw=raw or "")
+
+    text = _strip_code_fence(raw)
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise StructuredOutputParseError(
+            f"model output is not valid JSON ({exc.msg} at position {exc.pos})",
+            raw=raw,
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise StructuredOutputParseError(
+            f"model output must be a JSON object, got {type(data).__name__}",
+            raw=raw,
+        )
+
+    return data
+
+
+def _validate_into(raw: str, model: type[Any]) -> Any:
+    """Run ``_load_json_object`` and then ``model.model_validate``."""
+    data = _load_json_object(raw)
+    try:
+        return model.model_validate(data)
+    except Exception as exc:  # pydantic.ValidationError
+        raise StructuredOutputParseError(
+            f"model output failed schema validation: {exc}", raw=raw
+        ) from exc
 
 
 def parse_error_analysis(raw: str) -> ErrorAnalysisResult:
@@ -217,31 +424,31 @@ def parse_error_analysis(raw: str) -> ErrorAnalysisResult:
             prose around the JSON" reads very differently to "your label
             was not in the list".
     """
-    if not isinstance(raw, str) or not raw.strip():
-        raise ErrorAnalysisParseError("model returned no content", raw=raw or "")
-
-    text = _strip_code_fence(raw)
-
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ErrorAnalysisParseError(
-            f"model output is not valid JSON ({exc.msg} at position {exc.pos})",
-            raw=raw,
-        ) from exc
+        return _validate_into(raw, ErrorAnalysisResult)
+    except StructuredOutputParseError as exc:
+        raise ErrorAnalysisParseError(str(exc), raw=exc.raw) from exc
 
-    if not isinstance(data, dict):
-        raise ErrorAnalysisParseError(
-            f"model output must be a JSON object, got {type(data).__name__}",
-            raw=raw,
-        )
 
-    try:
-        return ErrorAnalysisResult.model_validate(data)
-    except Exception as exc:  # pydantic.ValidationError
-        raise ErrorAnalysisParseError(
-            f"model output failed schema validation: {exc}", raw=raw
-        ) from exc
+def parse_hint_ladder(raw: str) -> HintLadderResult:
+    """Parse raw model output into a validated :class:`HintLadderResult`.
+
+    Raises:
+        StructuredOutputParseError: not JSON, not an object, or fails
+            validation (wrong number of rungs, out-of-order levels, a
+            repeated rung).
+    """
+    return _validate_into(raw, HintLadderResult)
+
+
+def parse_variant(raw: str) -> VariantResult:
+    """Parse raw model output into a validated :class:`VariantResult`.
+
+    Raises:
+        StructuredOutputParseError: not JSON, not an object, or fails
+            validation (a missing field, or a blank one).
+    """
+    return _validate_into(raw, VariantResult)
 
 
 def error_analysis_json_schema() -> dict[str, Any]:
