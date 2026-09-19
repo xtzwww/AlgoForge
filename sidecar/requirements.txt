@@ -44,3 +44,16 @@ asyncpg>=0.29.0
 # 跑在 localhost，握手会以 `HTTP proxy returned response code 502` 失败，
 # 看起来像「Milvus 没起」。跑 RAG 之前先清掉代理变量。
 pymilvus>=2.4.0
+
+# ------------------------------------------------- 编排（阶段 8 · AGENTS.md S4/S7）
+# AGENTS.md §一 把 Agent 编排锁定为 LangGraph + LangChain 1.x。app/agent/graph.py
+# 在**模块顶层** `from langgraph.graph import ...`，所以缺了它连 import 都会炸
+# ——与 pymilvus 的「静默降级」不同，这里是硬失败。
+#
+# 版本下限按本机实测可用的一组钉：langgraph 1.2.11 / langchain 1.4.2 /
+# langchain_core 1.6.3。1.x 的 API 与 0.x 差别很大（`StateGraph`、条件边、
+# `Annotated` 归约器都变过），所以写 `>=1.0` 而不是留空。
+#
+# langchain_core 不单独列：它是 langgraph 与 langchain 的共同依赖，由它们带进来。
+langgraph>=1.0.0
+langchain>=1.0.0
