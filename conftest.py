@@ -132,10 +132,16 @@ def _no_real_llm_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     to a real hosted endpoint — which is precisely the failure this
     fixture exists to make impossible rather than merely unlikely.
 
+    S10's ``guardrails`` holds ``complete`` for the same reason, and it is
+    the *second* module with that shape: its whole job is to call the
+    gateway, so a guardrail test that forgot to inject a fake caller would
+    otherwise make a real, billed request — and with a retry policy
+    attached it would make several.
+
     ``autouse`` because a module that forgets it does not fail — it just
     gets slower and flakier, and that is the failure mode nobody notices.
     """
-    from app.agent import analyzer, team, tool_caller
+    from app.agent import analyzer, guardrails, team, tool_caller
     from app.llm.gateway import LLMConfigError
 
     def _refuse(*args: object, **kwargs: object) -> None:
@@ -147,6 +153,7 @@ def _no_real_llm_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(analyzer, "chat_completion", _refuse)
     monkeypatch.setattr(team, "chat_completion", _refuse)
     monkeypatch.setattr(tool_caller, "complete", _refuse)
+    monkeypatch.setattr(guardrails, "complete", _refuse)
 
 
 @pytest.fixture

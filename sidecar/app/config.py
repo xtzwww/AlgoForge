@@ -132,6 +132,34 @@ class Settings(BaseSettings):
     # that the whole go/no-go decision rests on.
     llm_timeout: float = Field(default=60.0)
 
+    # ------------------------------------------------------ LLM 护栏（S10）
+    # 这三个设置由 ``app.agent.guardrails.guardrail_policy()`` 读取，护栏
+    # 本身默认**没有**接进判题主路径（``analyzer`` / ``team`` 仍直调网关），
+    # 所以改这里不会立刻改变系统行为——要生效还得把调用点换成
+    # ``guarded_chat_completion``。这一点在 S10 的收尾里是刻意的：
+    # 打开护栏会改变「每次提交发出去什么」和「每次失败花多少钱」，
+    # 值得作为一次单独的、有人看过 diff 的改动。
+    #
+    # 发送前是否脱敏邮箱与卡号。默认开——学生代码的注释里可能带着个人
+    # 信息，而提示词是要发给第三方端点的。**不包含** IP / MAC / URL：
+    # 那三种在这个领域里是题目本身（IP 地址转换、URL 解析），脱掉就等于
+    # 把要分析的东西删了。
+    llm_pii_redaction: bool = Field(default=True)
+
+    # 兜底 provider 链，逗号分隔，写在**主路径之后**。留空表示只用
+    # LLM_PROVIDER 那一个。例如 ``ollama`` 表示「DeepSeek 不行就用 Ollama」
+    # —— AGENTS.md §一 的「主路径 DeepSeek API，兜底 Ollama」。
+    # 名字必须是网关认识的 provider，写错会在构建策略时直接报错。
+    llm_fallback_providers: str = Field(default="")
+
+    # 每个 provider 的瞬时故障重试次数（不含首次调用）。0 表示不重试。
+    #
+    # 默认 1，且**默认不重试超时**（见 guardrails.should_retry）：一次超时
+    # 已经耗掉整个 LLM_TIMEOUT，再重试一次就是让学生在 judge_done 前面
+    # 多等一个超时周期。真正值得重试的是 5xx 与 429 —— 它们立刻返回，
+    # 而且 429 本来就是退避重试的经典场景。
+    llm_retry_attempts: int = Field(default=1, ge=0)
+
     # ----------------------------------------------------------- LangSmith
     langsmith_api_key: str = Field(default="")
     langsmith_project: str = Field(default="algoforge")
