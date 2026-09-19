@@ -1,4 +1,4 @@
-"""基于 AI Agent 的编程课程学习过程分析与反馈系统 — FastAPI 后端入口。
+"""基于智能体的编程课程学习过程分析与反馈系统 — FastAPI 后端入口。
 
 Minimal skeleton (Phase 1, slice P1-1). The app exposes a /health
 endpoint. Business routes are registered via include_router so each
@@ -25,7 +25,7 @@ from app.config import settings
 from app.security import SidecarTokenMiddleware
 
 app = FastAPI(
-    title="基于 AI Agent 的编程课程学习过程分析与反馈系统",
+    title="基于智能体的编程课程学习过程分析与反馈系统",
     version="0.1.0",
     description="智能体驱动的编程学习过程分析与分层反馈后端服务",
 )
