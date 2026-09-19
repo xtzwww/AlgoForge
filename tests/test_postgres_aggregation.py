@@ -8,13 +8,19 @@ dialects, which is what the bug was. This file goes one step further and
 because compiling the right SQL and running the right SQL are different
 claims and only the second one is the product working.
 
-It is the automated form of two items that were otherwise blocked on this
-machine: ``docs/项目欠缺清单.md`` §5.2 ("migrations were only ever
-verified on SQLite") and the first step of ``docs/升级方案.md`` 阶段 0
-("verify ``func.json_each`` actually works on real PostgreSQL"). Neither
-could be done locally — there is no PostgreSQL here and the Docker route
-is unavailable (``wsl.exe`` is blocked by policy), so CI is the only place
-this project can reach a real server.
+It is the automated form of two claims this project could not check for a
+long time: that the migrations really run on the database `AGENTS.md`
+mandates (they had only ever been exercised on SQLite), and that
+`compute_knowledge_stats` really executes there.
+
+Neither could be done locally for most of this project's life — there was
+no PostgreSQL on this machine and the Docker route is unavailable
+(`wsl.exe` is blocked by policy), so CI was the only place that could
+reach a real server. **That changed on 2026-09-19**: there is now a
+zip-build PostgreSQL 17.6 at `D:\\pg` (no installer, no service, no admin
+rights), so this file can be run by hand. See `README.md` §测试 — the one
+thing to know is that the server must be started *and* used inside a
+single shell invocation, because it does not survive between them.
 
 **Skipped, loudly, when no server is configured.** The skip reason says
 the thing has *not* been measured, rather than reading as a pass — the
@@ -63,11 +69,20 @@ def pg_session() -> Iterator[Session]:
     try:
         Base.metadata.create_all(engine)
         with Session(engine) as session:
-            # The server is a shared service container that outlives this
-            # process, so start from a known-empty slate instead of
-            # assuming one. Children before parents for the foreign keys.
-            session.execute(delete(Submission))
-            session.execute(delete(Problem))
+            # The server is a shared instance that outlives this process —
+            # a CI service container, or the local zip-build PostgreSQL —
+            # so start from a known-empty slate instead of assuming one.
+            #
+            # Emptied through `sorted_tables` reversed rather than by
+            # naming the tables, because naming them is how `test_cases`
+            # came to be missing: it holds a foreign key on `problems.id`
+            # too, and PostgreSQL enforces it while SQLite does not
+            # (SQLite needs `PRAGMA foreign_keys=ON`, which nothing here
+            # sets). A hand-written list therefore passes everywhere this
+            # suite normally runs and fails only on the one server that
+            # actually checks — which is the whole reason this file exists.
+            for table in reversed(Base.metadata.sorted_tables):
+                session.execute(delete(table))
             session.commit()
             yield session
     finally:

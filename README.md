@@ -469,7 +469,18 @@ python tools/generate_eval_cases.py    # 需要时重新生成用例
 API 路由是同步的，`app/db.py` 会把 asyncpg URL 自动改写为
 `psycopg` 同步驱动——所以**不会**再静默降级到 SQLite。
 同步路由需要指向另一个 DSN 时，用 `DATABASE_URL_SYNC` 覆盖。
-测试通过 monkeypatch `get_session` 使用 SQLite，无需真实 PG。
+测试通过 monkeypatch `get_session` 使用 SQLite，无需真实 PG——**但这也意味着
+SQLite 不会替你发现方言问题**（它默认不强制外键，函数名也不同）。
+
+要跑真 PostgreSQL：
+
+```bash
+./tools/pg_verify.sh   # 起 PG → 迁移到 head → 跑聚合 SQL → 干净停止
+```
+
+需要 `D:\pg` 的 zip 版 PostgreSQL 17.6（免安装、无服务、无管理员）。脚本头部
+写了三个必知的坑，其中最容易踩的是：**PG 不跨 shell 调用存活**，所以启动与
+使用必须在同一次调用内完成——脚本就是那一次调用，别拆开手工跑。
 
 ---
 
@@ -493,7 +504,7 @@ API 路由是同步的，`app/db.py` 会把 asyncpg URL 自动改写为
 
 | 局限 | 说明 |
 |---|---|
-| **尚未在真实 PostgreSQL 上验证** | 迁移与聚合 SQL 仅在 SQLite 上通过；界面未在真实数据库下目视走查过 |
+| **界面未在真实 PostgreSQL 上走查** | 迁移与聚合 SQL **已在真 PG 17.6 上验证通过**（2026-09-19：4 个迁移一次跑到 head、`compute_knowledge_stats` 正常执行、标签以字符串而非 JSON 片段返回；`./tools/pg_verify.sh` 可复现）。但**页面**仍只在 SQLite 下目视走查过 |
 | **评估集统计功效不足** | 20 道用例无法在统计上区分 50% 与 60% 的正确率（置信区间几乎完全重叠） |
 | **进程凭证是共享密钥，不是每用户凭证** | 侧车已校验 `SIDECAR_TOKEN`（`app/security.py`：HTTP 要 `X-Sidecar-Token`，WebSocket 握手要 `?token=`，`/health` 与 CORS 预检豁免），所以「没凭证的请求」已被拒。但它是**一个**共享密钥：知道它即等于「是本应用」，无法区分两个使用者，**且不抗读取**——网页版把它编进 bundle，任何人打开页面都能读到。公开部署还缺 TLS 与按用户签发的凭证。另有：学生可不登录使用（未登录提交无归属）；执行隔离仍是 subprocess + 超时 + 内存上限，按 AGENTS.md §二.3 有意不容器化 |
 | **复核结论尚未回流** | 教师的确认/驳回目前只改变队列与计数，**没有**反过来调整 `process_trace` 的阈值或影响学生端提示。要做自动校准，得先积累足够复核样本——这是「阈值有证据可依」的前提，不是漏实现的功能 |

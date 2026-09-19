@@ -63,8 +63,8 @@ jobs:
         run: ruff check .
 
       - name: 迁移可执行性（空库 SQLite）
-        # 只证明「迁移能从头执行到 head」。真实 PostgreSQL 上的行为仍需人工验证
-        # （本机没有 PG，真实 PostgreSQL 上的行为仍需人工验证）。
+        # 只证明「迁移能从头执行到 head」（空 SQLite）。真 PostgreSQL 上的行为
+        # 由下面的 postgres job 覆盖；本机也能用 `tools/pg_verify.sh` 直接验。
         working-directory: sidecar
         run: |
           python -m alembic -x db_url=sqlite:///${{ runner.temp }}/algoforge-ci.sqlite upgrade head
@@ -110,17 +110,18 @@ jobs:
   postgres:
     name: 真实 PostgreSQL（迁移 + 聚合 SQL）
     runs-on: ubuntu-latest
-    # ⚠️ 这一项**故意不阻塞**（continue-on-error）：它至今没有一次绿色基线，
-    # 因为它存在的理由正是「不知道在真 PG 上能不能跑」。第一次推送后请去看它的
-    # 日志——**它红着说明发现了真问题，不是 workflow 写坏了**。跑绿一次之后
-    # 就把 `continue-on-error` 去掉，让它变成门。
+    # 它为什么必须存在：`compute_knowledge_stats` 和题库的知识点筛选曾用了
+    # `func.json_each`，而展开 JSON 数组在两种库上写法不同。全部测试都跑在
+    # SQLite 上（conftest 把 get_session 换成内存库），所以这类 bug 在「画像页」
+    # 和「题库标签筛选」上活到了被人读代码发现为止。
     #
-    # 它为什么必须存在：`compute_knowledge_stats` 和题库的知识点筛选都用了
-    # `func.json_each`——那是 SQLite 的函数名，**PostgreSQL 根本没有**。全部测试
-    # 都跑在 SQLite 上（conftest 把 get_session 换成内存库），所以这个 bug 在
-    # 「画像页」和「题库标签筛选」上活到了被人读代码发现为止。本机没有
-    # PostgreSQL，Docker 路线也不通（`wsl.exe` 被安全策略拉黑）——**CI 是这个
-    # 项目唯一能碰到真实 PostgreSQL 的地方**。
+    # ⚠️ 2026-09-19 更新：本机**已经有真 PostgreSQL 了**（zip 版 17.6，
+    # 见 `tools/pg_verify.sh`），迁移与聚合 SQL 已在本机真 PG 上跑绿。这里因此
+    # 不再是「唯一能碰到真 PG 的地方」，而是在干净环境里每次自动验一遍。
+    #
+    # `continue-on-error` 先留着：这个 workflow **从未在任何 CI 平台真跑过**——
+    # 远端是 Gitee，而 Gitee 不执行 `.github/workflows/`。所以第一次它真的跑起来
+    # 之前，红色既可能是真问题也可能是配置问题，别急着删它。
     continue-on-error: true
     services:
       postgres:
