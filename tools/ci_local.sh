@@ -60,6 +60,11 @@ else
   echo "跳过：desktop/node_modules 未安装"
 fi
 
+# 语料校验放在这里而不是只留一个脚本：写了校验没人跑，等于没写。
+# 它是纯解析，很快，值得每次提交都过一遍。
+step "知识卡片语料（corpus/knowledge_cards/）"
+env -u PYTHONPATH "$PY" tools/validate_knowledge_cards.py || failed=1
+
 if [ "$FAST" = "1" ]; then
   echo
   echo "（--fast 模式跳过 pytest。提交前想跑全量：bash tools/ci_local.sh）"
