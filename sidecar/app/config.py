@@ -292,8 +292,24 @@ class Settings(BaseSettings):
         sidecar's own venv is the only interpreter we can be certain
         exists, and it keeps the Python toolchain identical between the
         application and any code it executes.
+
+        That reasoning stops holding once the sidecar is frozen. Under
+        PyInstaller ``sys.executable`` is the sidecar's own ``.exe``, so
+        the default would ask the sidecar to syntax-check Python
+        submissions *with itself*: the unknown arguments are ignored, a
+        second HTTP server starts and never exits, and the sandbox reports
+        the result as ``Compilation timed out (>30s)`` — a CE that says
+        nothing about the student's code and looks like a broken judge
+        rather than a misconfigured interpreter. A frozen build therefore
+        falls back to a bare ``python`` resolved through PATH, and a
+        machine whose interpreter is not on PATH points
+        ``PYTHON_INTERPRETER_PATH`` at it.
         """
-        return self.python_interpreter_path or sys.executable
+        if self.python_interpreter_path:
+            return self.python_interpreter_path
+        if getattr(sys, "frozen", False):
+            return "python"
+        return sys.executable
 
     @property
     def resolved_java_bin_dir(self) -> str:

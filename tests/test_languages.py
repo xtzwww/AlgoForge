@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -184,6 +185,33 @@ def test_python_interpreter_setting_is_honoured() -> None:
         argv = PYTHON_SPEC.run_cmd(WORK)
 
     assert argv[0] == r"C:\py\python.exe"
+
+
+def test_unfrozen_python_default_is_the_running_interpreter() -> None:
+    """Source runs keep the venv's own interpreter; only frozen builds differ."""
+    with patch.object(settings, "python_interpreter_path", None):
+        assert settings.resolved_python_interpreter == sys.executable
+
+
+def test_frozen_python_default_is_not_the_sidecar_exe() -> None:
+    """Regression: PyInstaller turns ``sys.executable`` into the sidecar's exe.
+
+    The frozen build used to hand that exe to ``python -m py_compile``, so a
+    Python submission started a *second* sidecar that ignored the unknown
+    arguments, served HTTP and never exited. The sandbox then reported
+    ``Compilation timed out (>30s)`` — a CE that blamed the student's code for
+    what was really a wrong interpreter. Falling back to a bare ``python``
+    keeps the failure honest: a missing interpreter is now a missing-command
+    error, and ``PYTHON_INTERPRETER_PATH`` remains the documented escape.
+    """
+    with (
+        patch.object(settings, "python_interpreter_path", None),
+        patch.object(sys, "frozen", True, create=True),
+    ):
+        interpreter = settings.resolved_python_interpreter
+
+    assert interpreter == "python"
+    assert interpreter != sys.executable
 
 
 def test_java_compile_command_pins_the_output_directory() -> None:
