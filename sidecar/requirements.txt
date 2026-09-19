@@ -32,13 +32,15 @@ psycopg[binary]>=3.1.0
 asyncpg>=0.29.0
 
 # ------------------------------------------------------------ RAG（阶段 8）
-# AGENTS.md §二.2 把向量库锁定为 Milvus，对应的客户端是 pymilvus。它**故意
-# 没有列在这里**：
-#   1. 语料（corpus/knowledge_cards/，12 张卡片）已经就位，但**索引器还没写**
-#      ——没有任何东西能把卡片写进 collection，装上也只是白拉一个 grpcio
-#      （30 MB+）。
-#   2. app/rag/retriever.py 对 pymilvus 是**懒导入**：缺它时检索降级成
-#      「没有上下文」，而不是让错因分析跟着挂掉。这是有意的设计，见该模块
-#      文档字符串。
-# 索引器落地时，取消下面这行的注释，并同步更新 README 的安装说明：
-# pymilvus>=2.4.0
+# AGENTS.md §二.2 把向量库锁定为 Milvus，对应的客户端是 pymilvus。
+#
+# 它是**可选**依赖，但列在这里：app/rag/ 的索引器（indexer.py）与检索器
+# （retriever.py）都已实现，缺了 pymilvus 的话部署环境里的 RAG 永远不会生效
+# ——而且**不会报错**，检索只是静静地降级成「没有上下文」（见 retriever.py
+# 的降级设计）。那种沉默正是它该被显式列出来的理由。
+# 本地开发若暂时不需要 RAG，可以不装：代码对它是懒导入，缺了照样跑。
+#
+# ⚠️ 本机实测的坑：Milvus 客户端会继承 HTTP(S)_PROXY。若本机设了代理而 Milvus
+# 跑在 localhost，握手会以 `HTTP proxy returned response code 502` 失败，
+# 看起来像「Milvus 没起」。跑 RAG 之前先清掉代理变量。
+pymilvus>=2.4.0
