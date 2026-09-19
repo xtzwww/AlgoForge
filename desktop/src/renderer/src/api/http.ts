@@ -56,8 +56,6 @@ export async function initHttpClient(): Promise<void> {
 }
 
 // Response interceptor: unwrap response data or surface errors cleanly
-
-// Response interceptor: unwrap response data or surface errors cleanly
 http.interceptors.response.use(
   (response) => response,
   (error) => {

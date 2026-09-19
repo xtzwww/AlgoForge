@@ -1,5 +1,5 @@
 # ============================================================
-# 基于 AI Agent 的编程课程学习过程分析与反馈系统 CI
+# 基于智能体的编程课程学习过程分析与反馈系统 CI
 #
 # 目的：把「记得跑的时候才跑」的校验变成每次推送都跑，作为升级改造期的安全网。
 #
@@ -10,8 +10,10 @@
 #      `-m "not eval_set"`。
 #   2. **不需要 PostgreSQL。** 测试通过 monkeypatch 把 `get_session` 换成
 #      内存 SQLite（`StaticPool`），所以 runner 上不用起数据库服务。
-#   3. **前端没有单元测试。** `AGENTS.md` 锁定 Vitest 作为前端测试框架但尚未
-#      接入，所以前端这边只能做类型检查 + ESLint。补上 Vitest 后在这里加一步。
+#   3. **前端有单元测试了**（2026-09-19 接入 Vitest，`npm run test`）。但目前
+#      只覆盖 api 层的纯逻辑与判题流的事件时序——**环境是 node，没有 jsdom**，
+#      所以还没有真正的组件测试。要加组件测试，先装 jsdom 并在
+#      `vitest.config.ts` 里配环境，不要把现有测试一起拖进 DOM 环境。
 #
 # ⚠️ 本文件是**照着本机实测结果**写的，但从未在 GitHub Actions 上真跑过
 # （本机没有 CI 环境）。第一次推上去若变红，先看是哪一步，不要直接删。
@@ -98,6 +100,12 @@ jobs:
 
       - name: ESLint
         run: ./node_modules/.bin/eslint src --no-cache
+
+      - name: Vitest（前端单元测试）
+        # 判题流那条时序测试是有来历的：客户端曾把 `judge_done` 当成「流结束」
+        # 直接关掉 WebSocket，而智能体分析的事件走同一条连接，于是 WA 之后
+        # 永远看不到错因。现在由 `judge_done.analysing` 决定何时关，这里钉住它。
+        run: ./node_modules/.bin/vitest run
 
   postgres:
     name: 真实 PostgreSQL（迁移 + 聚合 SQL）
