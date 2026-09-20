@@ -46,6 +46,7 @@
  */
 
 import { computed, onMounted, ref, watch } from 'vue'
+import AttentionAlerts from '../components/AttentionAlerts.vue'
 import PageHeader from '../components/PageHeader.vue'
 import { masteryColorFor } from '../assets/tokens'
 import { isLoggedIn, isTeacher, login, logout, sessionReady, sessionUser } from '../api/session'
@@ -571,14 +572,15 @@ onMounted(() => {
               每条都写明了触发它的依据。这不是评分——没有「风险 87%」这种数字，
               因为没法追问的数字你也不会信。
             </p>
-            <ul class="alert-list">
-              <li v-for="(alert, index) in alerts" :key="`${alert.user_id}-${index}`">
-                <button type="button" class="alert-who" @click="openAlertStudent(alert)">
-                  {{ alert.display_name }}
-                </button>
-                <span class="alert-reason">{{ alert.reason }}</span>
-              </li>
-            </ul>
+            <!--
+              The list lives in its own component so it can be tested
+              without the 1600-line view: it owns no state and issues no
+              requests, it only renders what it is handed. The section
+              wrapper and its heading stay here — "nothing to show" is
+              decided by `v-if` above, and rendering an empty "需要关注"
+              heading would be noise.
+            -->
+            <AttentionAlerts :alerts="alerts" @select="openAlertStudent" />
           </section>
 
           <!-- --- 下节课讲什么 --- -->
@@ -1468,47 +1470,13 @@ onMounted(() => {
 }
 
 /* --- The attention list (阶段 6) --- */
-
-.alert-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.alert-list li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 10px;
-  padding: 8px 0;
-  font-size: 13px;
-  border-bottom: 1px solid var(--af-border);
-}
-
-.alert-list li:last-child {
-  border-bottom: none;
-}
-
-.alert-who {
-  padding: 0;
-  font-size: 13px;
-  font-family: inherit;
-  font-weight: 600;
-  color: var(--af-accent);
-  background: none;
-  border: none;
-  cursor: pointer;
-}
-
-.alert-who:hover {
-  text-decoration: underline;
-}
-
-/* The reason is the point of the row, so it gets the room. */
-.alert-reason {
-  flex: 1 1 260px;
-  color: var(--af-text-secondary);
-}
+/*
+  The markup and these rules now live in `components/AttentionAlerts.vue`.
+  They had to move together: this file is `<style scoped>`, and a scoped
+  rule reaches only a child component's **root** element — leaving
+  `.alert-who` / `.alert-reason` here would have cost them their styling
+  silently, with nothing in the build or the tests complaining.
+*/
 
 /* --- The review (阶段 5) --- */
 

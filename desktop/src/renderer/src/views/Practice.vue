@@ -60,6 +60,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import OutputPanel from '../components/OutputPanel.vue'
+import ProblemStatement from '../components/ProblemStatement.vue'
 import VerdictBadge from '../components/VerdictBadge.vue'
 import { runCases, submitCases, submitProblem, type JudgeEvent } from '../api/ws'
 import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
@@ -785,42 +786,23 @@ function submit(): Promise<void> {
           </div>
 
           <template v-else>
-            <pre v-if="problemDescription" class="prose">{{ problemDescription }}</pre>
-
-            <template v-if="problem?.input_format">
-              <h2>输入格式</h2>
-              <pre class="prose">{{ problem.input_format }}</pre>
-            </template>
-            <template v-if="problem?.output_format">
-              <h2>输出格式</h2>
-              <pre class="prose">{{ problem.output_format }}</pre>
-            </template>
-
-            <div v-if="problem && problem.knowledge_tags.length" class="tag-row">
-              <span v-for="tag in problem.knowledge_tags" :key="tag" class="tag">
-                {{ tag }}
-              </span>
-            </div>
-
-            <h2>{{ isProblemMode ? '样例' : '测试用例' }}</h2>
-            <div v-for="(tc, i) in displayCases" :key="i" class="sample">
-              <div class="sample-label">{{ isProblemMode ? '样例' : '用例' }} {{ i + 1 }}</div>
-              <div class="sample-row">
-                <span class="sample-key">输入</span>
-                <code>{{ tc.input || '(无)' }}</code>
-              </div>
-              <div class="sample-row">
-                <span class="sample-key">输出</span>
-                <code>{{ tc.expected_output }}</code>
-              </div>
-            </div>
-
-            <p v-if="isProblemMode" class="hint">
-              隐藏用例由后端持有，<strong>提交</strong>时会一并执行；<strong>运行</strong>只跑上面的公开样例。
-            </p>
-            <p v-if="problem" class="hint">
-              时限 {{ problem.time_limit }}s · 内存 {{ problem.memory_limit }} MB
-            </p>
+            <!--
+              The whole statement block lives in its own component so it
+              can be rendered and asserted without the editor, the
+              WebSocket stream and the rest of this 1200-line view: it
+              owns no state and issues no requests. Loading and error
+              placeholders stay here because they *are* view state.
+            -->
+            <ProblemStatement
+              :description="problemDescription"
+              :input-format="problem?.input_format ?? ''"
+              :output-format="problem?.output_format ?? ''"
+              :knowledge-tags="problem?.knowledge_tags ?? []"
+              :cases="displayCases"
+              :is-problem-mode="isProblemMode"
+              :time-limit="problem?.time_limit ?? null"
+              :memory-limit="problem?.memory_limit ?? null"
+            />
           </template>
         </div>
       </section>
@@ -1102,80 +1084,13 @@ function submit(): Promise<void> {
   color: var(--af-text-secondary);
 }
 
-.prose {
-  margin: 0;
-  padding: 10px;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--af-text-primary);
-  background: var(--af-elevated);
-  border-radius: var(--af-radius-sm);
-}
-
-.tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.tag {
-  padding: 1px 8px;
-  font-size: 11px;
-  color: var(--af-accent);
-  background: var(--af-accent-subtle);
-  border-radius: 999px;
-}
-
-.sample {
-  padding: 10px;
-  margin-bottom: 8px;
-  background: var(--af-elevated);
-  border: 1px solid var(--af-border);
-  border-radius: var(--af-radius-sm);
-}
-
-.sample-label {
-  margin-bottom: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--af-text-secondary);
-}
-
-.sample-row {
-  display: flex;
-  gap: 8px;
-  margin: 3px 0;
-  font-size: 12px;
-}
-
-.sample-key {
-  flex-shrink: 0;
-  width: 32px;
-  color: var(--af-text-muted);
-}
-
-.sample-row code {
-  padding: 1px 5px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: var(--af-text-primary);
-  background: var(--af-canvas);
-  border-radius: 3px;
-}
-
-.hint {
-  margin: 12px 0 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--af-text-muted);
-}
-
-.hint strong {
-  color: var(--af-text-secondary);
-}
+/*
+  The statement's markup and these rules now live in
+  `components/ProblemStatement.vue`. They had to move together: this file
+  is `<style scoped>`, and a scoped rule reaches only a child component's
+  **root** element, so every one of them would have silently stopped
+  applying to the inner nodes if they had stayed here.
+*/
 
 .placeholder {
   padding: 16px 4px;
