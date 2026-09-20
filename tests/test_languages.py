@@ -244,6 +244,47 @@ def test_java_run_command_includes_heap_cap() -> None:
         assert "-Xmx512m" in JAVA_SPEC.run_cmd(WORK)
 
 
+# ------------------------------------------------ Java locale (T17)
+#
+# Java is the only toolchain that localises its diagnostics, and it reads
+# its locale from the host rather than from the environment, so the fix has
+# to be on the command line. Without these flags a Chinese Windows emits
+# GBK bytes that the sandbox decodes as UTF-8: the student's CE reads
+# `Main.java:3: ����: ...`. See ``languages._JAVA_LOCALE_FLAGS`` for why the
+# locale is pinned instead of the charset — that choice is load-bearing.
+
+
+def test_java_compile_command_pins_the_jvm_locale() -> None:
+    """``-J`` is required: javac rejects a bare ``-Duser.language``."""
+    argv = JAVA_SPEC.compile_cmd(JAVA_SPEC.source_path(WORK), WORK)
+
+    assert "-J-Duser.language=en" in argv
+    assert "-J-Duser.country=US" in argv
+    # The prefix is the whole point — an unprefixed flag would make javac
+    # exit non-zero with "invalid flag", turning every Java build into CE.
+    assert "-Duser.language=en" not in argv
+
+
+def test_java_run_command_pins_the_jvm_locale() -> None:
+    """The launcher's own errors are localised too, and it takes them bare."""
+    argv = JAVA_SPEC.run_cmd(WORK)
+
+    assert "-Duser.language=en" in argv
+    assert "-Duser.country=US" in argv
+    assert "-J-Duser.language=en" not in argv
+    # Locale flags must not displace the contract the run step depends on.
+    assert argv[-1] == Path(JAVA_SPEC.source_filename).stem
+    assert argv[argv.index("-cp") + 1] == str(WORK)
+
+
+def test_only_java_gets_locale_flags() -> None:
+    """g++ and CPython were measured to emit pure ASCII; leave them alone."""
+    for spec in (CPP_SPEC, PYTHON_SPEC):
+        argv = spec.compile_cmd(spec.source_path(WORK), WORK)
+        assert not [a for a in argv if "user.language" in a], spec.id
+        assert not [a for a in spec.run_cmd(WORK) if "user.language" in a], spec.id
+
+
 def test_commands_are_functions_not_frozen_lists() -> None:
     """Config must be read at call time, not at import time.
 
@@ -374,6 +415,100 @@ def test_java_template_compiles(ascii_tmp_path: Path) -> None:
 
     assert proc.returncode == 0, f"Java template failed to compile:\n{proc.stderr}"
     assert (ascii_tmp_path / "Main.class").exists(), "-d did not take effect"
+
+
+# The CE diagnostic is the only thing a student reads after a failed build,
+# so "decodable" is what gets asserted — not javac's exact wording, which
+# changes between JDK releases.
+_JAVA_MISSING_SEMICOLON = """\
+public class Main {
+    public static void main(String[] args) {
+        int a = 1
+    }
+}
+"""
+
+_JAVA_PRINTS_CHINESE = """\
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("\u4f60\u597d\u4e16\u754c");
+    }
+}
+"""
+
+
+@pytest.mark.skipif(
+    not _tool_available(settings.java_compiler_path),
+    reason="configured JDK (javac) is not available",
+)
+def test_java_ce_diagnostics_decode_to_ascii(ascii_tmp_path: Path) -> None:
+    """Regression (T17): a CE used to read ``Main.java:3: ����: ...``.
+
+    javac localises its diagnostics from the *host* locale, so a Chinese
+    Windows emits GBK bytes while the sandbox decodes UTF-8. Asserting the
+    whole message is ASCII is deliberately stronger than checking that it
+    says "error": one surviving GBK byte is enough to make the message
+    unreadable, and ``errors="replace"`` would hide it as U+FFFD rather
+    than fail loudly.
+    """
+    source = JAVA_SPEC.source_path(ascii_tmp_path)
+    source.write_text(_JAVA_MISSING_SEMICOLON, encoding="utf-8")
+
+    proc = subprocess.run(
+        JAVA_SPEC.compile_cmd(source, ascii_tmp_path),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=_TEMPLATE_COMPILE_TIMEOUT,
+    )
+
+    assert proc.returncode != 0, "this source is meant to fail to compile"
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    assert "\ufffd" not in output, f"undecodable bytes in CE output: {output!r}"
+    assert output.isascii(), f"CE output is not ASCII: {output!r}"
+    assert "error" in output, output
+
+
+@pytest.mark.skipif(
+    not (
+        _tool_available(settings.java_compiler_path)
+        and _tool_available(settings.java_runtime_path)
+    ),
+    reason="configured JDK (javac + java) is not available",
+)
+def test_java_chinese_stdout_still_decodes_as_utf8(ascii_tmp_path: Path) -> None:
+    """Tripwire: the locale flags must never become *charset* flags.
+
+    A Java submission that prints Chinese round-trips correctly today, but
+    only by accident on this host — javac reads the UTF-8 source as GBK and
+    the runtime writes those same bytes back out, so the sandbox's UTF-8
+    decode recovers the original text. ``-J-Dfile.encoding=UTF-8``, the
+    obvious-looking way to fix the CE mojibake, breaks exactly this: the
+    program then writes real GBK (``c4e3bac3cac0bde7``) and a correct
+    answer is judged WA. Measured, not hypothesised.
+    """
+    source = JAVA_SPEC.source_path(ascii_tmp_path)
+    source.write_text(_JAVA_PRINTS_CHINESE, encoding="utf-8")
+
+    build = subprocess.run(
+        JAVA_SPEC.compile_cmd(source, ascii_tmp_path),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=_TEMPLATE_COMPILE_TIMEOUT,
+    )
+    assert build.returncode == 0, build.stderr
+
+    run = subprocess.run(
+        JAVA_SPEC.run_cmd(ascii_tmp_path),
+        capture_output=True,
+        timeout=_TEMPLATE_COMPILE_TIMEOUT,
+    )
+    assert run.returncode == 0, run.stderr
+    # Decoded strictly, the same way the sandbox decodes it.
+    assert run.stdout.decode("utf-8").strip() == "\u4f60\u597d\u4e16\u754c"
 
 
 def test_python_template_passes_py_compile(ascii_tmp_path: Path) -> None:

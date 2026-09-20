@@ -177,7 +177,11 @@ def _build_env(spec: Optional[LanguageSpec] = None) -> dict:
        submission printing Chinese would emit GBK bytes that the runner
        decodes as UTF-8, producing mojibake and turning a correct answer
        into a WA. The variable is inert for every other toolchain: only
-       the Python interpreter reads it.
+       the Python interpreter reads it. Java has the same class of problem
+       but cannot be reached from the environment, so its answer is a pair
+       of ``-D`` flags on the descriptor's commands instead (see
+       ``languages._JAVA_LOCALE_FLAGS``) — and note those deliberately pin
+       the *locale*, not the charset.
     3. Everything already in ``os.environ``, so the toolchain keeps any
        environment the operator configured.
 
@@ -245,8 +249,14 @@ def compile_source(
             spec.compile_cmd(src, work_dir),
             capture_output=True,
             text=True,
-            # g++/javac under a Chinese-locale Windows emit GBK diagnostics;
-            # decode permissively so we never end up with None stdout/stderr.
+            # Every toolchain here is expected to emit ASCII or UTF-8: g++
+            # and CPython diagnostics were measured to be pure ASCII, and
+            # javac's locale is pinned to en_US by its descriptor (see
+            # ``languages._JAVA_LOCALE_FLAGS``) precisely so its diagnostics
+            # are too. Decoding permissively is the last-resort net for the
+            # cases that remain — a CJK character in a path, or a toolchain
+            # the descriptor does not cover — so we never end up with None
+            # stdout/stderr.
             encoding="utf-8",
             errors="replace",
             env=_build_env(spec),

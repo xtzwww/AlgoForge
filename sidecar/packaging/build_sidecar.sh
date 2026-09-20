@@ -29,6 +29,18 @@ cd "$REPO/sidecar"
 VENV_PY="${VENV_PY:-./.venv/Scripts/python.exe}"
 WORKPATH="${WORKPATH:-C:/Windows/Temp/pyinstaller_work}"
 
+# 跑 Python 的唯一入口：在子 shell 里清掉 PYTHONPATH 再 exec。
+#
+# ⚠️ **不要写成 `env -u PYTHONPATH ...`**。本机 `~/.local/bin/env` 覆盖了
+# `/usr/bin/env`，而它是个只往 PATH 里加 `~/.local/bin` 的空壳脚本：**忽略
+# 全部参数、什么都不执行、还返回 0**。于是整条 PyInstaller 命令变成空操作，
+# 脚本照样打印「产物：…」并退出 0 —— 构建根本没发生，`set -e` 也抓不住。
+# `tools/ci_local.sh` 踩过同一个坑（见其文件头第 2 条），这里是同一个修法。
+#
+# PYTHONPATH 又**必须**清掉：sitecustomize.py 会让 PyInstaller 的清理阶段
+# 抛 SystemExit。
+py() { ( unset PYTHONPATH; exec "$VENV_PY" "$@" ); }
+
 echo "[1/2] 清理上一次的产物"
 rm -rf "$REPO/dist/algoforge-sidecar" "$WORKPATH"
 
@@ -42,7 +54,7 @@ done
 echo "      打包数据文件：${#ADD_DATA[@]} 个提示模板"
 
 echo "[2/2] PyInstaller 构建（约数分钟）"
-env -u PYTHONPATH "$VENV_PY" -m PyInstaller \
+py -m PyInstaller \
   --noconfirm --clean --onedir \
   --name algoforge-sidecar \
   --distpath "$REPO/dist" \

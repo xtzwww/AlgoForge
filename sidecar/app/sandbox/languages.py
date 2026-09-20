@@ -231,6 +231,40 @@ public class Main {
 
 # ------------------------------------------------------------- spec builders
 
+#: JVM locale flags, forced to en_US on both the compiler and the runtime.
+#:
+#: Java is the one toolchain here that *translates its own messages*: the
+#: JVM derives its locale from the host, and on this machine's Chinese
+#: Windows that makes ``javac`` report ``Main.java:3: 错误: 需要';'`` and the
+#: ``java`` launcher report ``错误: 找不到或无法加载主类``. The sandbox
+#: decodes every toolchain's output as UTF-8 (see ``compiler._build_env``),
+#: so those GBK bytes reached the student as ``Main.java:3: ����: ...`` —
+#: unreadable, and the diagnostic is the only thing they get to read after a
+#: CE. g++ and CPython need no equivalent: both were measured to emit pure
+#: ASCII here.
+#:
+#: Why en_US rather than decoding javac's output with the platform encoding:
+#:
+#: 1. English diagnostics are ASCII, so no decode heuristic is needed and
+#:    nothing changes when the sandbox moves to a UTF-8 host. Option 2 in
+#:    the ticket (``-J-Dfile.encoding=UTF-8``) was **measured and rejected**:
+#:    it fixes the diagnostics, but it also makes javac read the *source* as
+#:    UTF-8, and a Java submission printing Chinese currently round-trips
+#:    correctly only by accident — javac misreads the UTF-8 source as GBK
+#:    and the runtime writes those same GBK bytes back out. Pinning the
+#:    compiler to UTF-8 breaks the round trip: ``你好世界`` came out as
+#:    ``c4e3bac3cac0bde7``, which the runner then fails to decode — a
+#:    correct answer turning into WA. Do not "improve" this by adding
+#:    ``-J-Dfile.encoding=UTF-8``.
+#: 2. It matches g++ and CPython, which are English regardless.
+#:
+#: The two spellings differ only in the prefix: ``-J`` passes the property
+#: to the JVM *running* javac, while the launcher takes it directly.
+#: Deliberately no effect on program output: measured against
+#: ``String.format`` / ``DecimalFormat`` with the usual separators, every
+#: byte of stdout was identical under zh_CN and en_US.
+_JAVA_LOCALE_FLAGS = ("-Duser.language=en", "-Duser.country=US")
+
 
 def _compile_cpp(source: Path, work_dir: Path) -> list[str]:
     """``g++ main.cpp -o main.exe -std=c++17``.
@@ -279,27 +313,45 @@ def _run_python(work_dir: Path) -> list[str]:
 
 
 def _compile_java(source: Path, work_dir: Path) -> list[str]:
-    """``javac -d <work_dir> Main.java``.
+    """``javac -d <work_dir> Main.java``, with the JVM pinned to en_US.
 
     ``-d`` is explicit rather than omitted: without it ``javac`` drops the
     ``.class`` files beside the source, and the run step would then depend
     on an implicit layout. Pinning the output directory keeps compile and
     run in agreement through one variable.
+
+    The ``-J``-prefixed locale flags are what keep a CE readable — see
+    :data:`_JAVA_LOCALE_FLAGS`. They go immediately after the compiler
+    path, which is where the launcher documents ``-J`` to be.
     """
-    return [settings.java_compiler_path, "-d", str(work_dir), str(source)]
+    return [
+        settings.java_compiler_path,
+        *(f"-J{flag}" for flag in _JAVA_LOCALE_FLAGS),
+        "-d",
+        str(work_dir),
+        str(source),
+    ]
 
 
 def _run_java(work_dir: Path) -> list[str]:
-    """``java -Xmx<heap>m -cp <work_dir> Main``.
+    """``java -Xmx<heap>m -cp <work_dir> Main``, with the JVM pinned to en_US.
 
     The heap cap matters for MLE: the runner measures resident memory of
     the process it spawned, but a JVM reserves tens of megabytes before the
     program does anything, so the OS-level ceiling is a poor signal. A
     bounded heap makes the JVM itself fail with ``OutOfMemoryError`` at a
     predictable point instead.
+
+    The locale flags cover the launcher's own messages, which are
+    localised on a Chinese Windows too (``错误: 找不到或无法加载主类``);
+    they are not ``-J``-prefixed here because this *is* the launcher. They
+    cannot affect a verdict: the only observable difference measured was
+    ``Locale.getDefault()`` itself — every formatted number and string came
+    out byte-identical.
     """
     argv = [
         settings.java_runtime_path,
+        *_JAVA_LOCALE_FLAGS,
         f"-Xmx{settings.java_max_heap_mb}m",
         "-cp",
         str(work_dir),

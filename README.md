@@ -345,8 +345,9 @@
 交给学校的材料，不是工程排期——工程上该做的照做。
 
 **阶段 7 进展**：打包已经实际落地并验到判题层——sidecar 打成 PyInstaller onedir
-（48 MB），`/health` 与 C++ / Python 判题都在**打包版**上跑通，密钥确认未进产物，
-过程中还修掉一个只在打包版出现的 Python 判题缺陷（见下方完成定义表）。
+（**113 MB**），`/health` 与 **C++ / Python / Java 三种语言的判题**都在**打包版**上跑通，
+密钥确认未进产物，过程中还修掉两个只在打包版出现的缺陷（Python 判题整条链路、
+Java 的 CE 输出乱码，见下方完成定义表）。
 **仍未闭合的只有第 3 条（安装包）**，原因是本机沙箱禁止从 Bash 调用 PowerShell，
 而 electron-builder 在 Windows 上硬编码靠它收集依赖树——**是环境限制，不是配置缺陷**。
 换一台能正常跑 PowerShell 的机器执行 `cd desktop && npm run build:win` 即可产出。
@@ -388,7 +389,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 | 3 | 桌面端打成 **electron-builder** 安装包 | 装上后主进程能拉起打包版 sidecar（而不是 dev 的 uvicorn），走通一次提交 | ⬜ 未产出。本机沙箱禁止从 Bash 调用 PowerShell，而 electron-builder 的依赖收集器在 Windows 上硬编码走 `powershell.exe`，因此本机跑不出安装包——**配置本身没问题，是环境限制**，详见 `.workbuddy-ai/night-queue.md` 的 T3 |
 | 4 | **密钥不进产物** | `.env` / `SIDECAR_TOKEN` 不写进包体；token 仍按既有约定运行时生成或由用户配置。打进去等于把共享密钥公开 | ✅ `dist/` 内 grep 不到任何 `.env`；打包脚本与 `electron-builder.yml` 两边都显式排除，改走 `ALGOFORGE_ENV_FILE` |
 | 5 | 前置条件写清楚 | README 写明目标机需要什么（g++ 的路径配置、PostgreSQL 是否必需、非必需时的降级表现） | ✅ 见 §七「目标机前置要求」 |
-| 6 | 体积与限制记录在案 | 打包产物体积、已知限制（如首次启动慢、杀毒软件误报）写进 README | ✅ sidecar onedir 实测 **48 MB**，限制见 §九 |
+| 6 | 体积与限制记录在案 | 打包产物体积、已知限制（如首次启动慢、杀毒软件误报）写进 README | ✅ sidecar onedir 实测 **113 MB**（2026-09-20 重建后；此前的 48 MB 是**缺 Agent 依赖**的旧产物，见下方「重建打包产物」），限制见 §九 |
 
 **打包后 Python 判题曾经是坏的**（2026-09-20 修，提交 `b70ea20`）
 
@@ -417,7 +418,45 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
   `POST /api/v1/judge` 上 Java 三条分别判 **AC（2/2 用例）/ CE / TLE**。
 - 已固定成脚本 `tools/verify_packaged_sidecar.py`（`--language java` 可单跑一种），
   三种语言 × AC/CE/TLE 共 9 条，一条命令跑完。**以后改打包脚本先跑它。**
-- 顺带发现的真实缺陷：**Java 的 CE 输出是乱码**，见 §九。
+- 顺带发现的真实缺陷：**Java 的 CE 输出是乱码** —— 已修，见下一节。
+
+**Java 编译错误的乱码**（2026-09-20 修）
+
+- 现象：Java 提交判 CE 时，学生看到的是
+  `Main.java:2: ����: �Ƿ��ı���ʽ��ʼ`。**判定本身是对的**（该判 CE 仍判 CE），
+  坏的只是可读性——但那正是学生唯一能读的报错。C++ 与 Python 不受影响。
+- 根因：`javac` 按**宿主区域**输出本地化诊断，中文 Windows 上是 GBK；而沙箱统一
+  按 UTF-8 解码（`compiler.py` 的 `encoding="utf-8" / errors="replace"`）。
+  `_build_env` 只给 Python 设了 `PYTHONIOENCODING`，JVM 不读这个变量。
+- 修法：给 Java 的两条命令都钉上 `-Duser.language=en -Duser.country=US`
+  （javac 侧要带 `-J` 前缀），报错变英文 ASCII，与 g++ / CPython 一致。
+  实现在 `languages._JAVA_LOCALE_FLAGS`。
+- **票里给的另一个候选修法被实测否决**：`-J-Dfile.encoding=UTF-8` 也能消掉乱码，
+  但它会连带让 `javac` 按 UTF-8 读**源码**，而「Java 提交打印中文」目前能正确
+  往返**只因为** javac 把 UTF-8 源码误读成 GBK、运行期又把同样的字节写回来。
+  钉成 UTF-8 会打断这个往返：`你好世界` 变成 `c4e3bac3cac0bde7`，
+  **正确解被判 WA**。已加回归测试钉住这一点。
+- 验证：源码路径与**打包版**（`tools/verify_packaged_sidecar.py`，Java CE 首行
+  现为 `Main.java:2: error: illegal start of expression`）双双通过；
+  三种语言 × 三条判定 9/9 仍符合预期。
+
+**重建打包产物：`build_sidecar.sh` 一直是空操作**（2026-09-20 修）
+
+修完乱码要重新打包，才发现 `sidecar/packaging/build_sidecar.sh` **从来没有真正构建过**：
+
+- 它用 `env -u PYTHONPATH "$VENV_PY" -m PyInstaller ...` 调 PyInstaller，而本机
+  `~/.local/bin/env` 是个只改 PATH 的**空壳脚本**——忽略全部参数、什么都不执行、
+  还返回 0。于是整条命令是空操作，脚本照样打印「产物：…」并退出 0，`set -e` 也抓不住。
+  （`tools/ci_local.sh` 早已踩过同一个坑并修好，见其文件头第 2 条；这个脚本当时漏了。）
+- 修法与 `ci_local.sh` 一致：子 shell 里 `unset PYTHONPATH` 再 `exec`。
+- **顺带纠正一个数字**：仓库里那份 48 MB 的产物里，**既没有 `langchain` 也没有
+  `pymilvus` 的包体**（逐目录查过）。真正跑通构建后的产物是 **113 MB**——
+  所以 48 MB 从来不代表「能跑完整应用的体积」，别拿它当基线。
+- 仍未打包进去的：`langgraph` 与 `pymilvus` 的**包体**。两者都是**懒导入**
+  （`pipeline.py` 只在 `ANALYSIS_PIPELINE=graph` 分支里 import 图、`retriever.py`
+  懒导入 `pymilvus`），PyInstaller 只跟静态 import，所以跟不到。
+  影响面：打包版走**默认的 `direct` 路径判题完全正常**（本次 9 条实测即是证明），
+  但把 `ANALYSIS_PIPELINE=graph` 打开会 ImportError。已记入队列。
 
 **明确不做**（经方向讨论确定）：独立的 AI 检测服务、检测准确率研究、
 完整教学管理功能（排课/考勤/通知/成绩）、真实部署上线。
@@ -647,10 +686,10 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **过程特征无验证集** | 「粘贴后零改写」的阈值（`≥120` 字符、`≥80%` 占比、`≤15%` 改写）是设计取值，未用人工标注样本校准；因此只作**提示**交给教师复核，不作判定 |
 | **无检测验证集** | AI 使用检测缺少人工标注样本，因此不以准确率为目标 |
 | **组件测试只覆盖三个组件** | Vitest 共 44 个用例：api 层纯逻辑、判题流时序，加上 `LayeredFeedback`（分层释放）、`OutputPanel`（诊断渲染与工具结果）、`VerdictBadge`（判定映射）共 18 个组件用例。**其余组件**（编辑器、教师看板、雷达图、错题本列表等）的行为仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」 |
-| **安装包尚未产出** | sidecar 已打成 PyInstaller onedir（**48 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 C++ / Python 判题；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出 |
+| **安装包尚未产出** | sidecar 已打成 PyInstaller onedir（**113 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 **C++ / Python / Java 三种语言的判题**；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出 |
 | **onedir 产物的限制** | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准） |
 | **打包版只验到判题层** | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（C++ 与 Python 验 AC + WA；Java 验 AC / CE / TLE，2026-09-20）、密钥未进产物。脚本 `tools/verify_packaged_sidecar.py` 可复现。**未验**：桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条）、真 PostgreSQL 下的完整业务链路 |
-| **Java 编译错误的输出是乱码** | `javac` 在中文 Windows 上按控制台代码页（GBK）输出**本地化**诊断，而沙箱统一按 UTF-8 解码（`compiler.py` 的 `encoding="utf-8" / errors="replace"`），于是学生看到的 CE 信息形如 `Main.java:2: ����: �Ƿ��ı���ʽ��ʼ`。**判定本身是对的**（该判 CE 仍判 CE，用例数 0/0），坏的只是信息可读性——但这正是学生最需要读的那段。`_build_env` 只给 Python 设了 `PYTHONIOENCODING`，对 `javac` 无效。**尚未修**，见队列 T17 |
+| **打包版缺 Agent 依赖的包体** | `langgraph` 与 `pymilvus` 的**包体**不在产物里（`langchain` 在）。原因是两者都是**懒导入**（`pipeline.py` 只在 `ANALYSIS_PIPELINE=graph` 分支 import 图；`retriever.py` 懒导入 `pymilvus`），PyInstaller 只跟静态 import。**影响面**：打包版按默认 `direct` 路径判题完全正常（三种语言 9 条判定实测通过），但打开 `ANALYSIS_PIPELINE=graph`、或让检索层真的去连 Milvus，会 `ImportError`。要修就得给 PyInstaller 加 `--hidden-import`（或在打包入口里显式 import 一次），代价是体积继续涨 |
 
 ---
 
