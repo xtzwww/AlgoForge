@@ -50,8 +50,10 @@ pymilvus>=2.4.0
 #
 # 故意**不**列进依赖：它会带进 faiss-cpu 与 pyarrow（上百 MB），而打包版
 # sidecar 走的是 Milvus **服务**（MILVUS_URI），永远不该把它们打进产物。
-# 已在 sidecar/packaging/algoforge-sidecar.spec 的 excludes 里显式排除，
-# 这样产物体积就不会取决于某个开发者有没有跑过那条测试。
+# 已在 sidecar/packaging/build_sidecar.sh 里用 --exclude-module 显式排除
+# （**不是**改 packaging/*.spec：那是每次构建重新生成的，而且被 .gitignore
+# 排除了，改了不进版本库）。这样产物体积就不会取决于某个开发者有没有跑过
+# 那条测试。
 #
 # 要跑那 6 条测试：sidecar/.venv/Scripts/python.exe -m pip install milvus-lite
 # 没装时该测试文件整体 skip，套件照绿。
