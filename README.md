@@ -197,7 +197,7 @@
 | 前端构建 | electron-vite（vue-ts 模板） |
 | 后端依赖 | pip + requirements.txt |
 | 代码规范 | ESLint + Prettier（前端）/ Ruff（后端） |
-| 测试 | pytest（后端，860 用例）/ Vitest（前端，2026-09-19 接入，44 用例） |
+| 测试 | pytest（后端，860 用例）/ Vitest（前端，2026-09-19 接入，56 用例） |
 | CI | GitHub Actions（`.github/workflows/ci.yml`） |
 
 ---
@@ -261,7 +261,7 @@
 | **用户体系与鉴权** | ✅ 已实现（学生/教师两角色、PBKDF2 口令、12 小时会话、教师端服务端守卫）；⬜ **学生仍可不登录使用**，未登录提交无归属（历史数据同理），这是有意保留的降级而非缺陷 |
 | **进程级鉴权** | ✅ 已实现（`app/security.py`：HTTP 要 `X-Sidecar-Token`、WebSocket 握手要 `?token=`，`/health` 与 CORS 预检豁免，定长比较）。⚠️ 它是**一个共享密钥**：证明「是本应用」，不区分使用者，也不抗读取（网页版把 token 编进 bundle） |
 | 高并发安全加固 | ✅ 三处已修：`create_all` 移出请求路径（`_ensure_engine` 只建一次）、`run_code` 改走工作线程、判题改用**有上限的沙箱线程池**（`app/sandbox/pool.py`，默认 4，`SANDBOX_CONCURRENCY` 可调；用线程池而非 `asyncio.Semaphore`，因为后者会绑定到第一个事件循环，而本进程会创建多个循环）。⚠️ 队列无上界：超出并发的请求会**排队等待**而不是被拒绝（有意为之——判题返回 503 比让学生多等两秒更糟） |
-| 前端单元测试（Vitest） | ✅ 已接入（2026-09-19，44 个用例：判题流事件时序 + api 层聚合规则 + **三个组件的界面行为**）；⚠️ 组件测试覆盖 `LayeredFeedback` / `OutputPanel` / `VerdictBadge`，其余组件仍只有人眼走查，见下 |
+| 前端单元测试（Vitest） | ✅ 已接入（2026-09-19，**56 个用例**：判题流事件时序 + api 层聚合规则 + **五个组件的界面行为**）；⚠️ 组件测试覆盖 `LayeredFeedback` / `OutputPanel` / `VerdictBadge` / `AttentionAlerts` / `ProblemStatement`，其余组件仍只有人眼走查，见下 |
 | **LangGraph 状态图编排（S4）** | ✅ **已实现并测试**（`app/agent/graph.py`：读代码 → 检索 → 分析 → 自检，带条件回边；实测编译产物是 `CompiledStateGraph`）；✅ **已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选编排器，`graph` 分支已用真实模型端到端跑通）；⚠️ **默认仍是 `direct`（单次调用）**，且图分支**未在 20 题评估集上重测准确率** |
 | **知识库检索层（RAG，S5）** | ✅ **已实现并测试**（`app/rag/` 四模块：卡片读取 / 索引器 / 检索器 / 字段契约；12 张知识卡片覆盖 32 个知识点）；⚠️ **未在真实向量库上验证**（Milvus 三个调用从未对着真实服务执行过），连不上时降级为 `NullRetriever` |
 | **多智能体协作（S7）** | ✅ **已实现并测试**（`app/agent/team.py`：诊断子图 + 提示 / 变式题两工作者并行 + 汇总节点；用真实模型端到端跑通过一次）；⚠️ **未接入判题主路径** |
@@ -574,7 +574,9 @@ env -u PYTHONPATH python -m pytest ../tests -q -m eval_set
   用 `conftest.EXEC_TIME_LIMIT`（30 秒）作为预算；「超时会被杀」由
   `test_timeout` / `test_judge_tle` 用 1 秒上限各自覆盖，不受影响。
 
-前端单元测试 2026-09-19 接入 Vitest（`AGENTS.md` 锁定的框架），44 个用例：
+前端单元测试 2026-09-19 接入 Vitest（`AGENTS.md` 锁定的框架），**56 个用例**
+（2026-09-20 由 44 增至 56：抽 `AttentionAlerts` / `ProblemStatement` 两个子组件后
+补的 12 个）：
 
 ```bash
 cd desktop
@@ -612,12 +614,20 @@ cd desktop
   字符串，后端将来加一个判定（或打错字）时，徽章要渲染成中性灰并**原样显示
   那个字符串**——空白比错颜色更糟，因为它读起来像「这次没有结果」。
 
-⚠️ 组件测试**只覆盖三个组件**：`LayeredFeedback`（分层释放）、`OutputPanel`
-（诊断与工具结果怎么呈现）、`VerdictBadge`（判定到颜色的映射）。其余组件
-（编辑器、教师看板、雷达图等）依旧只有人眼走查过，类型检查 + 单测都证明不了
-「页面长得对不对、点了有没有反应」。
+⚠️ 组件测试**只覆盖五个组件**：`LayeredFeedback`（分层释放）、`OutputPanel`
+（诊断与工具结果怎么呈现）、`VerdictBadge`（判定到颜色的映射）、
+`AttentionAlerts`（教师端「需要关注」预警）、`ProblemStatement`（题面）。
+后两个是 2026-09-20 从 1605 行的 `TeacherView.vue` 与 1247 行的 `Practice.vue`
+里**抽出来的**——那两个视图因为既持有状态又直接发请求而测不动，抽出纯展示的
+子组件才测得到（做法见下）。**其余组件**（编辑器、教师看板、雷达图等）依旧
+只有人眼走查过，类型检查 + 单测都证明不了「页面长得对不对、点了有没有反应」。
 
-写组件测试时的两个坑（都实测踩过）：
+写组件测试时的三个坑（都实测踩过）：
+
+- ⚠️ **样式必须跟着标记一起搬进子组件。** 两个父组件都是 `<style scoped>`，而
+  scoped 规则只作用到子组件的**根元素**，穿透不到内部的 `li` / `button` / `pre`。
+  留在父组件里就是**静默失效**——构建不报、测试不报，只有眼睛能发现。这是本次
+  抽取里唯一一个「不做就必然出错且不会报警」的点。
 
 - **必须 `attachTo: document.body`。** 组件用 `v-show` 控制分层，断言要看
   **可见性**而不是元素存不存在；而 `isVisible()` 读 computed style，jsdom
@@ -685,7 +695,7 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **复核结论尚未回流** | 教师的确认/驳回目前只改变队列与计数，**没有**反过来调整 `process_trace` 的阈值或影响学生端提示。要做自动校准，得先积累足够复核样本——这是「阈值有证据可依」的前提，不是漏实现的功能 |
 | **过程特征无验证集** | 「粘贴后零改写」的阈值（`≥120` 字符、`≥80%` 占比、`≤15%` 改写）是设计取值，未用人工标注样本校准；因此只作**提示**交给教师复核，不作判定 |
 | **无检测验证集** | AI 使用检测缺少人工标注样本，因此不以准确率为目标 |
-| **组件测试只覆盖三个组件** | Vitest 共 44 个用例：api 层纯逻辑、判题流时序，加上 `LayeredFeedback`（分层释放）、`OutputPanel`（诊断渲染与工具结果）、`VerdictBadge`（判定映射）共 18 个组件用例。**其余组件**（编辑器、教师看板、雷达图、错题本列表等）的行为仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」 |
+| **组件测试只覆盖五个组件** | Vitest 共 **56 个用例**：api 层纯逻辑、判题流时序，加上 `LayeredFeedback`（分层释放）、`OutputPanel`（诊断渲染与工具结果）、`VerdictBadge`（判定映射）、`AttentionAlerts`（学情预警）、`ProblemStatement`（题面）共 30 个组件用例。后两个是 2026-09-20 从 1605 / 1247 行的两个视图里抽出来的纯展示子组件。**其余组件**（编辑器、教师看板雷达图、错题本列表等）的行为仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」 |
 | **安装包尚未产出** | sidecar 已打成 PyInstaller onedir（**113 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 **C++ / Python / Java 三种语言的判题**；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出 |
 | **onedir 产物的限制** | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准） |
 | **打包版只验到判题层** | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（C++ 与 Python 验 AC + WA；Java 验 AC / CE / TLE，2026-09-20）、密钥未进产物。脚本 `tools/verify_packaged_sidecar.py` 可复现。**未验**：桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条）、真 PostgreSQL 下的完整业务链路 |
