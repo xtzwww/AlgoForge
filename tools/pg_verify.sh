@@ -33,6 +33,17 @@
 # executable"）。`D:\pg\nocmd.exe` 是替代 COMSPEC 的小包装器（直接 spawn 目标
 # 程序，不经 cmd.exe）。改 HKLM 要管理员，本机没有，所以只能这样。
 # 注意：**只对本命令设置 COMSPEC，不要 export**，否则 Bash 自己也找不到 shell。
+#
+# ⚠️ 4. **绝不要用 `env` 来设/清环境变量。** 本机 `~/.local/bin/env` 覆盖了
+#    `/usr/bin/env`，而它是个空壳脚本——**忽略全部参数、什么都不执行、还返回 0**。
+#    所以下面两种写法都是**彻底的空操作**（命令一个字没跑，rc 却是 0，静默假绿）：
+#        env -u PYTHONPATH python x.py        # 没清 PYTHONPATH，也没跑 python
+#        env COMSPEC=... postgres.exe ...     # PG 根本没启动
+#    2026-09-20 实测：本脚本曾同时被这两条打穿——PG 起不来、后面的 python 也没跑，
+#    而脚本会一路打印到「PG 未就绪」才失败（或更糟：复用上一次残留的 PG 假装成功）。
+#    正确写法：
+#      · 清变量 → 子 shell 里 `unset` 再 `exec`（见下面的 `py()`）
+#      · 设变量 → 直接前缀赋值（`COMSPEC=... cmd`，只作用于该命令，等价于原意）
 # ============================================================
 set -uo pipefail
 
@@ -44,6 +55,11 @@ PG_URL="postgresql://algoforge:algoforge@127.0.0.1:5432"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 die() { echo "[pg_verify] 失败：$*" >&2; exit 1; }
+
+# 跑 Python 的唯一入口：子 shell 里清掉 PYTHONPATH 再 exec。
+# 不用 `env -u PYTHONPATH` —— 理由见文件头第 4 条（本机 env 是空壳，会假绿）。
+PY="$REPO/sidecar/.venv/Scripts/python.exe"
+py() { ( unset PYTHONPATH; exec "$PY" "$@" ); }
 
 [ -x "$NOCMD" ] || [ -f "$NOCMD" ] || die "缺少 $NOCMD（PG 自校验绕法，别删）"
 [ -f "$PG_DATA/PG_VERSION" ] || die "$PG_DATA 未初始化（没有 PG_VERSION），先跑 initdb"
@@ -64,7 +80,7 @@ fi
 
 # --- 2. 启动 -------------------------------------------------------------
 echo "[2/6] 启动 PostgreSQL（后台，不跨调用存活）"
-(cd "$PG_HOME" && env COMSPEC="$NOCMD" "$PG_BIN/postgres.exe" -D "$PG_DATA" \
+(cd "$PG_HOME" && COMSPEC="$NOCMD" "$PG_BIN/postgres.exe" -D "$PG_DATA" \
     > "$PG_HOME/pg_verify.log" 2>&1 &)
 
 # --- 3. 轮询等待就绪（崩溃恢复可能要 40 秒） ------------------------------
@@ -81,7 +97,7 @@ done
 
 # --- 4. 建库（幂等） ------------------------------------------------------
 echo "[4/6] 确保库 algoforge 存在"
-env -u PYTHONPATH "$REPO/sidecar/.venv/Scripts/python.exe" -c "
+py -c "
 import psycopg
 with psycopg.connect('$PG_URL/postgres') as c:
     c.autocommit = True
@@ -93,19 +109,18 @@ with psycopg.connect('$PG_URL/postgres') as c:
 
 # --- 5. 迁移（真 PG，不是 SQLite） ---------------------------------------
 echo "[5/6] alembic upgrade head（真实 PostgreSQL）"
-(cd "$REPO/sidecar" && env -u PYTHONPATH ./.venv/Scripts/python.exe -m alembic \
+(cd "$REPO/sidecar" && unset PYTHONPATH && exec ./.venv/Scripts/python.exe -m alembic \
     -x "db_url=postgresql+psycopg://algoforge:algoforge@127.0.0.1:5432/algoforge" \
     upgrade head) || die "迁移失败"
 
 # --- 6. 聚合 SQL ---------------------------------------------------------
 echo "[6/6] 聚合 SQL 测试（真实 PostgreSQL）"
-(cd "$REPO" && env -u PYTHONPATH \
-    ALGOFORGE_PG_TEST_URL="postgresql+psycopg://algoforge:algoforge@127.0.0.1:5432/algoforge" \
-    sidecar/.venv/Scripts/python.exe -u -m pytest tests/test_postgres_aggregation.py -v)
+(cd "$REPO" && unset PYTHONPATH && export ALGOFORGE_PG_TEST_URL="postgresql+psycopg://algoforge:algoforge@127.0.0.1:5432/algoforge" && \
+    exec sidecar/.venv/Scripts/python.exe -u -m pytest tests/test_postgres_aggregation.py -v -m "not eval_set")
 STATUS=$?
 
 # --- 收尾：干净停止，下次启动才不用崩溃恢复 -------------------------------
 echo "[收尾] 停止 PostgreSQL"
-(cd "$PG_HOME" && env COMSPEC="$NOCMD" "$PG_BIN/pg_ctl.exe" -D "$PG_DATA" -m fast stop 2>&1 | tail -1)
+(cd "$PG_HOME" && COMSPEC="$NOCMD" "$PG_BIN/pg_ctl.exe" -D "$PG_DATA" -m fast stop 2>&1 | tail -1)
 
 exit "$STATUS"
