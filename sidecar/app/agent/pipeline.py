@@ -62,8 +62,12 @@ DIRECT = "direct"
 #: S4's LangGraph state machine, with retrieval folded in.
 GRAPH = "graph"
 
+#: S7's three-agent team: diagnosis, then hint and variant workers in
+#: parallel.
+TEAM = "team"
+
 #: Everything :func:`resolved_pipeline` accepts. Ordered.
-PIPELINES = (DIRECT, GRAPH)
+PIPELINES = (DIRECT, GRAPH, TEAM)
 
 #: What an unset or unrecognised ``ANALYSIS_PIPELINE`` means.
 DEFAULT_PIPELINE = DIRECT
@@ -151,7 +155,21 @@ def analyse(
         An :class:`AnalysisOutcome`; ``ok`` is False when no analysis
         could be produced. Never raises for a model-side failure.
     """
-    if resolved_pipeline() == GRAPH:
+    chosen = resolved_pipeline()
+    if chosen == TEAM:
+        return _via_team(
+            code,
+            stdin,
+            expected,
+            actual,
+            statement=statement,
+            verdict=verdict,
+            use_tools=use_tools,
+            on_event=on_event,
+            tags=tags,
+        )
+
+    if chosen == GRAPH:
         return _via_graph(
             code,
             stdin,
@@ -237,4 +255,85 @@ def _via_graph(
         error=outcome.error,
         attempts=outcome.attempts,
         tool_calls=list(outcome.tool_calls),
+    )
+
+
+def _via_team(
+    code: str,
+    stdin: str,
+    expected: str,
+    actual: str,
+    *,
+    statement: str = "",
+    verdict: str = "WA",
+    use_tools: bool = False,
+    on_event: Optional[Callable[[Any], None]] = None,
+    tags: Sequence[str] = (),
+) -> AnalysisOutcome:
+    """S7's three agents, exposed through the same switch as S4's graph.
+
+    Same promise as :func:`_via_graph`: never raises for a model-side
+    failure, and returns the same :class:`AnalysisOutcome`, so the write
+    path does not know which orchestrator ran.
+
+    ⚠️ **Only the diagnosis survives.** The team also returns a hint ladder
+    and a variant problem, and neither has a home: ``AnalysisOutcome``
+    carries ``result`` / ``error`` / ``attempts`` / ``tool_calls`` and
+    nothing else, and the mistake-book schema has no column for a variant
+    statement. They are logged and dropped rather than half-stored —
+    putting a variant in the student's face needs a column, an API field
+    and a place in the UI, and that is a product decision, not wiring.
+
+    The practical consequence: ``ANALYSIS_PIPELINE=team`` today buys a
+    better diagnosis at roughly three times the model calls of ``direct``.
+    It does **not** buy the hint ladder or the variant until those have
+    somewhere to go.
+    """
+    # Lazy for the same reason as the graph: `app.agent.team` pulls in
+    # langgraph, and the default pipeline never needs it.
+    from app.agent.team import run_team
+
+    try:
+        outcome = run_team(
+            code,
+            stdin,
+            expected,
+            actual,
+            statement=statement,
+            verdict=verdict,
+            tags=tags,
+            use_tools=use_tools,
+        )
+    except Exception as exc:  # noqa: BLE001 — degradation is the contract
+        logger.exception("agent team raised; treating analysis as unavailable")
+        return AnalysisOutcome(error=f"{type(exc).__name__}: {exc}", attempts=0)
+
+    if outcome.notes:
+        logger.info(
+            "team diagnosis self-check raised %d note(s): %s",
+            len(outcome.notes),
+            "; ".join(outcome.notes),
+        )
+
+    # Logged, not dropped silently: this is the only record that the hint
+    # and variant workers ran and what they cost.
+    if outcome.hint is not None or outcome.variant is not None:
+        logger.info(
+            "team produced extra output (workers=%s produced=%s, %d calls) — "
+            "the hint ladder and variant are not persisted: no column for them",
+            ",".join(outcome.workers) or "-",
+            ",".join(outcome.produced) or "-",
+            outcome.attempts,
+        )
+    for label, err in (
+        ("hint", outcome.hint_error),
+        ("variant", outcome.variant_error),
+    ):
+        if err:
+            logger.warning("team %s worker produced nothing: %s", label, err)
+
+    return AnalysisOutcome(
+        result=outcome.diagnosis,
+        error=outcome.error,
+        attempts=outcome.attempts,
     )

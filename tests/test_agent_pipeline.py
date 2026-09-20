@@ -29,10 +29,18 @@ from typing import Any
 
 import pytest
 
+from app.agent import graph as graph_module
 from app.agent import pipeline
+from app.agent import team as team_module
 from app.agent.analyzer import AnalysisOutcome
 from app.agent.graph import GraphOutcome
-from app.agent.schemas import parse_error_analysis
+from app.agent.schemas import (
+    HintLadderResult,
+    HintLevel,
+    VariantResult,
+    parse_error_analysis,
+)
+from app.agent.team import TeamOutcome
 from app.config import settings
 
 VALID_ANALYSIS = (
@@ -468,3 +476,116 @@ def test_the_graph_entry_point_is_not_bound_at_module_scope() -> None:
     purpose, this test is the note saying the laziness was deliberate.
     """
     assert "run_analysis_graph" not in vars(pipeline)
+
+
+# ------------------------------------------------------------- S7: team
+
+
+def _team_outcome(**overrides: Any) -> TeamOutcome:
+    """A successful team run, with any field overridable per test."""
+    fields: dict[str, Any] = {
+        "diagnosis": parse_error_analysis(VALID_ANALYSIS),
+        "hint": None,
+        "variant": None,
+        "error": None,
+        "hint_error": None,
+        "variant_error": None,
+        "retrieved": [],
+        "context": "",
+        "notes": [],
+        "attempts": 3,
+        "workers": ["diagnose", "hint", "variant"],
+        "produced": ["diagnose", "hint", "variant"],
+    }
+    fields.update(overrides)
+    return TeamOutcome(**fields)
+
+
+@pytest.mark.parametrize("written", ["team", "TEAM", " team "])
+def test_team_is_selected_however_it_is_spelled(
+    written: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "analysis_pipeline", written)
+    assert pipeline.resolved_pipeline() == pipeline.TEAM
+
+
+def test_team_branch_runs_run_team(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``ANALYSIS_PIPELINE=team`` actually reaches the three agents.
+
+    Patched at ``team.run_team``, not at ``pipeline._via_team``: replacing
+    the branch would skip the very conversion this is about (TeamOutcome
+    in, AnalysisOutcome out) and the test would pass on a branch that
+    returns the wrong type.
+    """
+    monkeypatch.setattr(settings, "analysis_pipeline", "team")
+    team = _Recorder(returns=_team_outcome())
+    graph = _Recorder(returns=_graph_outcome())
+    monkeypatch.setattr(team_module, "run_team", team)
+    monkeypatch.setattr(graph_module, "run_analysis_graph", graph)
+
+    out = pipeline.analyse(*ARGS, statement="读入两个整数。")
+
+    assert isinstance(out, AnalysisOutcome)
+    assert out.ok
+    assert out.result is not None and out.result.error_type == "overflow"
+    assert team.calls and graph.calls == []
+    assert team.call["kwargs"]["statement"] == "读入两个整数。"
+
+
+def test_team_carries_only_the_diagnosis(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The hint ladder and the variant are logged, not silently dropped.
+
+    There is no column for either, so an implementation that quietly threw
+    them away would look identical to this one from the outside. Asserting
+    the log line is what makes "we know they ran and we chose not to store
+    them" different from "we forgot".
+    """
+    monkeypatch.setattr(settings, "analysis_pipeline", "team")
+    monkeypatch.setattr(
+        team_module,
+        "run_team",
+        _Recorder(
+            returns=_team_outcome(
+                attempts=3,
+                hint=HintLadderResult(
+                    levels=[
+                        HintLevel(level=1, text="看看 a * b 的类型"),
+                        HintLevel(level=2, text="int 装得下吗"),
+                        HintLevel(level=3, text="先把一边转 long long"),
+                    ],
+                    self_check=["三级都提到了类型", "最后一级才给改法"],
+                ),
+                variant=VariantResult(
+                    statement="换成矩阵乘法，同样会溢出吗？",
+                    sample_input="2 3",
+                    sample_output="6",
+                    knowledge_points=["整数溢出"],
+                    difference="操作数来自矩阵规模，不是直接输入",
+                ),
+            )
+        ),
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.agent.pipeline"):
+        out = pipeline.analyse(*ARGS)
+
+    assert out.ok
+    assert out.attempts == 3
+    assert any("not persisted" in record.getMessage() for record in caplog.records)
+
+
+def test_team_degrades_instead_of_raising(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A raise from the team must not turn a judged submission into a 500."""
+    monkeypatch.setattr(settings, "analysis_pipeline", "team")
+    monkeypatch.setattr(
+        team_module, "run_team", _Recorder(raises=RuntimeError("boom"))
+    )
+
+    out = pipeline.analyse(*ARGS)
+
+    assert isinstance(out, AnalysisOutcome)
+    assert not out.ok
+    assert "RuntimeError" in (out.error or "")
