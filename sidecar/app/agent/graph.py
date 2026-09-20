@@ -72,6 +72,7 @@ from typing import Annotated, Any, Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agent import memory
 from app.agent.analyzer import AnalysisOutcome, analyze_error
 from app.agent.schemas import ErrorAnalysisResult
 from app.rag.retriever import (
@@ -93,6 +94,17 @@ DEFAULT_MAX_RETRIES = 1
 #: is a "did the model actually answer" floor, not a style rule, and a
 #: high bar here would turn a terse-but-correct analysis into a retry.
 MIN_PROSE_CHARS = 8
+
+#: What each node is called when its progress is reported (S8). Keyed by
+#: node name; a node added without an entry here would be announced under
+#: its internal name, so a test asserts the two sets match rather than
+#: trusting them to drift together.
+NODE_LABELS: dict[str, str] = {
+    "read_code": "读取提交内容",
+    "retrieve": "检索知识点",
+    "analyse": "分析错因",
+    "self_check": "复核结论",
+}
 
 #: Values :func:`build_analysis_graph`'s router maps to a destination.
 #: Constants rather than bare strings so the router and the edge map
@@ -175,6 +187,11 @@ class GraphOutcome:
     #: mean the run failed — the last round may have fixed it.
     notes: list[str] = field(default_factory=list)
     tool_calls: list[Any] = field(default_factory=list)
+    #: S8: the checkpoint key this run was recorded under. Published
+    #: rather than kept private so a caller can walk the run's node
+    #: history afterwards; empty only for outcomes built outside this
+    #: module.
+    thread_id: str = ""
 
     @property
     def ok(self) -> bool:
@@ -233,6 +250,8 @@ def build_analysis_graph(
     max_retries: int = DEFAULT_MAX_RETRIES,
     use_tools: bool = False,
     on_event: Optional[Callable[[Any], None]] = None,
+    checkpointer: Any = None,
+    store: Any = None,
 ) -> Any:
     """Build the compiled read → retrieve → analyse → check graph.
 
@@ -250,11 +269,25 @@ def build_analysis_graph(
             ``analyze_error``; without it the graph would be the one
             orchestrator that silently drops the stream, and a caller
             switching between them would lose its progress events.
+        checkpointer: Short-term, per-thread state (S8). ``None`` disables
+            checkpointing, which is the pre-S8 behaviour;
+            :func:`app.agent.memory.shared_checkpointer` is the intended
+            source. See that module on why the thread it is keyed by is
+            per *run*.
+        store: Long-term, cross-thread state (S8), reachable from a node
+            as ``runtime.store``. Nothing reads it yet; it is threaded
+            through so the first consumer does not have to re-plumb this
+            signature.
 
     Returns:
         A compiled graph. ``invoke`` takes an :class:`AnalysisState`; the
         accumulating keys need no seeding, so ``invoke({"code": ...})`` is
         a valid call.
+
+        With a *checkpointer*, ``invoke`` also needs
+        ``config={"configurable": {"thread_id": ...}}`` — LangGraph raises
+        without it, because which thread the state belongs to is exactly
+        the question it can no longer answer on its own.
     """
     if max_retries < 0:
         raise ValueError("max_retries must not be negative")
@@ -298,6 +331,7 @@ def build_analysis_graph(
             verdict=state.get("verdict", "WA"),
             extra_context=extra or None,
             use_tools=use_tools,
+            on_event=on_event,
         )
         return {
             "analysis": outcome.result,
@@ -353,7 +387,7 @@ def build_analysis_graph(
         {ACCEPT: END, RETRY: "analyse", GIVE_UP: END},
     )
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer, store=store)
 
 
 def run_analysis_graph(
@@ -369,6 +403,10 @@ def run_analysis_graph(
     max_retries: int = DEFAULT_MAX_RETRIES,
     use_tools: bool = False,
     on_event: Optional[Callable[[Any], None]] = None,
+    submission_id: Optional[int] = None,
+    checkpointer: Any = None,
+    store: Any = None,
+    on_step: Optional[Callable[[str, str], None]] = None,
 ) -> GraphOutcome:
     """Analyse one submission through the graph.
 
@@ -378,28 +416,71 @@ def run_analysis_graph(
     ``app.agent.pipeline`` is that caller, and it is what decides between
     the two — see its docstring for why the default is the single call.
 
+    Args:
+        submission_id: Which submission this is, for the checkpoint key
+            (S8). ``None`` for an unrecorded run. It names the thread's
+            namespace; it does **not** make the thread reusable — see
+            :mod:`app.agent.memory`.
+        checkpointer: Overrides the shared one from
+            :func:`app.agent.memory.shared_checkpointer`. ``None`` means
+            "take the shared one" — there is no way to ask this function
+            for an uncheckpointed run, because every run it performs is
+            one a caller may want to look back at; call
+            :func:`build_analysis_graph` directly for that.
+        store: Overrides :func:`app.agent.memory.shared_store`, same rule.
+        on_step: Called with ``(node_name, label)`` as each node finishes
+            (S8 streaming). This is node-level, not token-level: the LLM
+            gateway has no streaming call, so "the model is 40% through a
+            sentence" is not something this program can observe — but
+            "the model has been asked" is, and that is the difference
+            between a student watching a spinner and watching progress.
+
     Never raises for a model-side failure, for the same reason
     ``analyze_error`` does not: this runs inside the judging path, and a
     missing analysis is an enrichment gap, not a reason to fail a
     submission that was judged successfully.
     """
+    if checkpointer is None:
+        checkpointer = memory.shared_checkpointer()
+    if store is None:
+        store = memory.shared_store()
+
     graph = build_analysis_graph(
         retriever,
         max_retries=max_retries,
         use_tools=use_tools,
         on_event=on_event,
+        checkpointer=checkpointer,
+        store=store,
     )
-    final: AnalysisState = graph.invoke(
-        {
-            "code": code,
-            "stdin": stdin,
-            "expected": expected,
-            "actual": actual,
-            "statement": statement,
-            "verdict": verdict,
-            "tags": list(tags),
-        }
-    )
+    thread_id = memory.thread_id_for(submission_id, memory.new_run_token())
+    config = {"configurable": {"thread_id": thread_id}}
+    state: AnalysisState = {
+        "code": code,
+        "stdin": stdin,
+        "expected": expected,
+        "actual": actual,
+        "statement": statement,
+        "verdict": verdict,
+        "tags": list(tags),
+    }
+
+    # ``stream`` rather than ``invoke`` so the caller hears about each node
+    # as it lands. Two modes at once because they carry different halves of
+    # what is needed: ``updates`` says *which* node ran (that is the
+    # progress), ``values`` carries the whole state (that is the answer).
+    # Keeping only the last ``values`` chunk is the final state, which is
+    # what ``invoke`` would have returned.
+    final: AnalysisState = {}
+    for mode, payload in graph.stream(
+        state, config=config, stream_mode=["updates", "values"]
+    ):
+        if mode == "updates":
+            for name in payload:
+                if on_step is not None:
+                    on_step(name, NODE_LABELS.get(name, name))
+        else:
+            final = payload
 
     return GraphOutcome(
         analysis=final.get("analysis"),
@@ -410,4 +491,5 @@ def run_analysis_graph(
         context=final.get("context", ""),
         notes=list(final.get("notes") or []),
         tool_calls=list(final.get("tool_calls") or []),
+        thread_id=thread_id,
     )

@@ -18,6 +18,7 @@ export type JudgeEventType =
   | 'case_start'
   | 'case_done'
   | 'agent_start'
+  | 'agent_step'
   | 'agent_tool'
   | 'agent_done'
   | 'judge_done'
@@ -75,6 +76,24 @@ export interface JudgeEvent {
   // the terminal event would never see them.
   /** agent_start: the judge verdict that triggered the analysis. */
   verdict?: string
+  /**
+   * agent_step: which stage of the analysis just finished (S8).
+   *
+   * The backend's internal node name, not shown to anyone — `label` is
+   * what gets rendered. Kept because a log line saying 「正在检索知识点」
+   * cannot be traced back to the node that emitted it, and the two do not
+   * correspond one-to-one in prose.
+   */
+  step?: string
+  /**
+   * agent_step: that stage in student-facing Chinese, e.g. 「检索知识点」.
+   *
+   * Only the graph pipeline emits these. The default pipeline is a single
+   * model call with nothing observable between its start and its end, so
+   * a client sees `agent_start` and then `agent_done` — which is honest,
+   * where a fabricated step would not be.
+   */
+  label?: string
   /** agent_tool: which tool ran, and whether it succeeded. */
   name?: string
   ok?: boolean

@@ -26,6 +26,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.agent import analyzer
+from app.agent import graph as graph_module
 from app.agent.graph import GraphOutcome, build_analysis_graph, run_analysis_graph
 from app.llm.gateway import LLMConnectionError
 from app.rag.retriever import RetrievedCard
@@ -397,6 +398,133 @@ def test_blank_code_costs_no_model_call() -> None:
     assert not outcome.ok
     assert outcome.attempts == 0
     assert mock.call_count == 0
+
+
+# ---------------------------------------------------------- S8: memory
+
+
+def test_a_second_run_does_not_inherit_the_first_ones_state() -> None:
+    """The reason :func:`~app.agent.memory.thread_id_for` takes a run token.
+
+    LangGraph loads a thread's last checkpoint and applies the new input on
+    top of it, so two runs sharing a thread would share state — and the
+    accumulating keys (``attempts``, ``notes``) would keep growing. With a
+    per-run token each run starts clean.
+    """
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    checkpointer = InMemorySaver()
+
+    with _stub_llm(VALID, VALID):
+        first = _run(checkpointer=checkpointer, submission_id=7)
+        second = _run(checkpointer=checkpointer, submission_id=7)
+
+    assert first.attempts == 1
+    assert second.attempts == 1
+    assert first.thread_id != second.thread_id
+
+
+def test_the_run_thread_is_published_on_the_outcome() -> None:
+    """It names the run's checkpoints. Nothing in the UI shows it yet, so
+    the log is its only consumer — it has to leave this function somehow.
+    """
+    with _stub_llm(VALID):
+        outcome = _run(submission_id=7)
+
+    assert outcome.thread_id.startswith("submission:7:")
+
+
+def test_an_unrecorded_run_still_gets_a_thread() -> None:
+    """``submission_id`` is optional; the checkpointer is not. An ad-hoc
+    run against inline cases must not fail for lacking an id.
+    """
+    with _stub_llm(VALID):
+        outcome = _run()
+
+    assert outcome.thread_id.startswith("submission:none:")
+
+
+def test_the_checkpointer_and_store_reach_the_compiled_graph() -> None:
+    """Both are accepted and handed to ``compile`` rather than quietly
+    dropped — a parameter that is plumbed but not passed is the failure
+    mode this test exists for.
+    """
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.store.memory import InMemoryStore
+
+    checkpointer = InMemorySaver()
+    store = InMemoryStore()
+
+    graph = build_analysis_graph(checkpointer=checkpointer, store=store)
+
+    assert graph.checkpointer is checkpointer
+    assert graph.store is store
+
+
+def test_every_node_can_announce_itself() -> None:
+    """A node with no entry in ``NODE_LABELS`` would be announced to the
+    student under its internal name — and ``read_code`` is not a thing to
+    show anyone. The label table is checked against the real topology so
+    it cannot fall behind a node being added.
+    """
+    compiled = build_analysis_graph(FakeRetriever())
+    nodes = {n for n in compiled.get_graph().nodes if not n.startswith("__")}
+
+    assert set(graph_module.NODE_LABELS) == nodes
+
+
+def test_the_nodes_announce_themselves_as_they_finish() -> None:
+    """S8's streaming: ``on_step`` hears about each node, in order.
+
+    ``read_code`` and ``retrieve`` are the ones that matter most — they
+    are the stretch where the UI can currently only show a spinner, and
+    they are cheap, so a student sees movement immediately after the
+    verdict.
+    """
+    steps: list[tuple[str, str]] = []
+
+    with _stub_llm(VALID):
+        _run(on_step=lambda name, label: steps.append((name, label)))
+
+    assert [name for name, _ in steps] == [
+        "read_code",
+        "retrieve",
+        "analyse",
+        "self_check",
+    ]
+    assert all(label for _, label in steps)
+
+
+def test_a_retry_reports_the_extra_round() -> None:
+    """The loop is the part a student would otherwise never see: the graph
+    went back and asked again, and the only evidence in the log was a
+    note. Streaming makes the second ``analyse`` visible.
+    """
+    steps: list[str] = []
+
+    with _stub_llm(THIN, VALID):
+        _run(on_step=lambda name, _label: steps.append(name))
+
+    assert steps.count("analyse") == 2
+
+
+def test_the_event_sink_reaches_the_model_call() -> None:
+    """P2-8's ``agent_tool`` events on the graph path.
+
+    Regression: ``build_analysis_graph`` accepted ``on_event`` and
+    documented it as "passed straight through to ``analyze_error``" while
+    never forwarding it, so the graph was the one orchestrator that
+    silently dropped the stream. The docstring was true; the code was not.
+    """
+    from app.agent.analyzer import AnalysisOutcome
+
+    sink = object()
+    with patch.object(
+        graph_module, "analyze_error", return_value=AnalysisOutcome(attempts=0)
+    ) as mock:
+        _run(on_event=sink)
+
+    assert mock.call_args.kwargs["on_event"] is sink
 
 
 def test_the_outcome_reports_what_happened() -> None:

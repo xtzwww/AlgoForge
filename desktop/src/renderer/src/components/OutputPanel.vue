@@ -155,6 +155,8 @@ const phaseLabel = computed<string>(() => {
       return '继续下一个用例…'
     case 'agent_start':
       return '判题结束，Agent 正在分析错因…'
+    case 'agent_step':
+      return `正在${last.label ?? '分析'}…`
     case 'agent_tool':
       return 'Agent 正在分析错因…'
     case 'agent_done':
@@ -220,6 +222,23 @@ const agentRunning = computed<boolean>(() => {
     if (ev.type === 'agent_done') done = true
   }
   return started && !done
+})
+
+/**
+ * Which stage of the analysis is in flight, or `null` when the backend is
+ * not reporting stages (S8).
+ *
+ * Only the graph pipeline sends `agent_step`; the default pipeline is one
+ * model call with nothing observable between start and end, so `null` is
+ * a real answer and not a missing one — the header falls back to
+ * 「分析中…」 rather than inventing a stage.
+ */
+const currentStep = computed<string | null>(() => {
+  if (!agentRunning.value) return null
+  for (let i = props.events.length - 1; i >= 0; i -= 1) {
+    if (props.events[i].type === 'agent_step') return props.events[i].label ?? null
+  }
+  return null
 })
 
 /** The finished analysis, or `null` while it is still running. */
@@ -351,6 +370,8 @@ function eventLabel(type: string): string {
       return '用例完成'
     case 'agent_start':
       return 'Agent 开始分析'
+    case 'agent_step':
+      return 'Agent 阶段'
     case 'agent_tool':
       return 'Agent 调用工具'
     case 'agent_done':
@@ -453,7 +474,9 @@ function eventLabel(type: string): string {
     <section v-if="hasAgentPhase" class="agent-panel">
       <div class="agent-header">
         <h3>Agent 分析</h3>
-        <span v-if="agentRunning" class="agent-state">分析中…</span>
+        <span v-if="agentRunning" class="agent-state">
+          {{ currentStep ? `正在${currentStep}…` : '分析中…' }}
+        </span>
         <!--
           Once the diagnosis itself is on screen (below), the header does
           not repeat the label — `LayeredFeedback` already shows it, in
@@ -589,6 +612,9 @@ function eventLabel(type: string): string {
             <span class="event-detail">#{{ (ev.index ?? 0) + 1 }}</span>
             <VerdictBadge :status="ev.status ?? ''" size="sm" />
           </template>
+          <span v-if="ev.type === 'agent_step'" class="event-detail">
+            {{ ev.label }}
+          </span>
           <template v-if="ev.type === 'agent_tool'">
             <code class="event-detail">{{ ev.name }}</code>
             <span class="event-detail">{{ ev.ok === false ? '失败' : '成功' }}</span>

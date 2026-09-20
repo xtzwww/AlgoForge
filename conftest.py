@@ -177,6 +177,20 @@ def _no_real_llm_calls(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(settings, "llm_guardrails", False)
 
+    # S8: keep the suite off PostgreSQL too.
+    #
+    # `sidecar/.env` may carry `LANGGRAPH_CHECKPOINT_URI`, and on a machine
+    # that *does* have `langgraph-checkpoint-postgres` installed that is
+    # enough for `memory.build_checkpointer()` to try to connect. A suite
+    # that needs a database to pass is the same problem as one that needs
+    # a hosted model: it fails to run on someone else's laptop for a
+    # reason unrelated to what is under test.
+    #
+    # Tests that exercise the PostgreSQL branch set the URI themselves
+    # (in the body, so their value lands on top of this one) and inject a
+    # fake backend rather than reaching a real server.
+    monkeypatch.setattr(settings, "langgraph_checkpoint_uri", "")
+
 
 @pytest.fixture
 def ascii_tmp_path() -> Path:

@@ -157,6 +157,22 @@ describe('OutputPanel', () => {
     expect(w.find('.agent-state').text()).toBe('分析中…')
   })
 
+  it('分析进行中说得出「正在做哪一步」，不只是「分析中…」', () => {
+    const w = mountPanel({
+      events: [
+        { type: 'judge_done', passed: 1, total: 2, analysing: true },
+        { type: 'agent_start', verdict: 'WA' },
+        { type: 'agent_step', step: 'retrieve', label: '检索知识点' }
+      ],
+      result: result(),
+      isRunning: true
+    })
+
+    // S8：节点级流式。判题结束到分析完成之间是最长的一段等待，
+    // 「分析中…」三个字撑不住它；知道在检索还是在问模型，学生才看得出在动。
+    expect(w.find('.agent-state').text()).toBe('正在检索知识点…')
+  })
+
   it('试运行要标明未记录，别让学生以为交了', () => {
     const scratch = mountPanel({ result: result(), isScratch: true })
     expect(scratch.find('.scratch-note').text()).toContain('未记录')

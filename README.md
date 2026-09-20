@@ -224,7 +224,7 @@
 | 前端构建 | electron-vite（vue-ts 模板）                                                                          |
 | 后端依赖 | pip + requirements.txt                                                                            |
 | 代码规范 | ESLint + Prettier（前端）/ Ruff（后端）                                                                   |
-| 测试   | pytest（后端，2026-09-20 实测 **1061 通过 / 3 跳过**，另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，56 用例） |
+| 测试   | pytest（后端，2026-09-20 实测 **1089 通过 / 3 跳过**，另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，57 用例） |
 | CI   | GitHub Actions（`.github/workflows/ci.yml`）                                                        |
 
 ---
@@ -291,10 +291,11 @@
 | **用户体系与鉴权**                                   | ✅ 已实现（学生/教师两角色、PBKDF2 口令、12 小时会话、教师端服务端守卫）；⬜ **学生仍可不登录使用**，未登录提交无归属（历史数据同理），这是有意保留的降级而非缺陷                                                                                                                                                                    |
 | **进程级鉴权**                                     | ✅ 已实现（`app/security.py`：HTTP 要 `X-Sidecar-Token`、WebSocket 握手要 `?token=`，`/health` 与 CORS 预检豁免，定长比较）。⚠️ 它是**一个共享密钥**：证明「是本应用」，不区分使用者，也不抗读取（网页版把 token 编进 bundle）                                                                                             |
 | 高并发安全加固                                       | ✅ 三处已修：`create_all` 移出请求路径（`_ensure_engine` 只建一次）、`run_code` 改走工作线程、判题改用**有上限的沙箱线程池**（`app/sandbox/pool.py`，默认 4，`SANDBOX_CONCURRENCY` 可调；用线程池而非 `asyncio.Semaphore`，因为后者会绑定到第一个事件循环，而本进程会创建多个循环）。⚠️ 队列无上界：超出并发的请求会**排队等待**而不是被拒绝（有意为之——判题返回 503 比让学生多等两秒更糟） |
-| 前端单元测试（Vitest）                                | ✅ 已接入（2026-09-19，**56 个用例**：判题流事件时序 + api 层聚合规则 + **五个组件的界面行为**）；⚠️ 组件测试覆盖 `LayeredFeedback` / `OutputPanel` / `VerdictBadge` / `AttentionAlerts` / `ProblemStatement`，其余组件仍只有人眼走查，见下                                                                        |
+| 前端单元测试（Vitest）                                | ✅ 已接入（2026-09-19，**57 个用例**：判题流事件时序 + api 层聚合规则 + **五个组件的界面行为**）；⚠️ 组件测试覆盖 `LayeredFeedback` / `OutputPanel` / `VerdictBadge` / `AttentionAlerts` / `ProblemStatement`，其余组件仍只有人眼走查，见下                                                                        |
 | **LangGraph 状态图编排（S4）**                       | ✅ **已实现并测试**（`app/agent/graph.py`：读代码 → 检索 → 分析 → 自检，带条件回边；实测编译产物是 `CompiledStateGraph`）；✅ **已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选编排器，`graph` 分支已用真实模型端到端跑通）；⚠️ **默认仍是 `direct`（单次调用）**，且图分支**未在 20 题评估集上重测准确率**                        |
 | **知识库检索层（RAG，S5）**                            | ✅ **已实现并测试**（`app/rag/` 四模块：卡片读取 / 索引器 / 检索器 / 字段契约；12 张知识卡片覆盖 32 个知识点）；⚠️ **未在真实向量库上验证**（Milvus 三个调用从未对着真实服务执行过），连不上时降级为 `NullRetriever`                                                                                                                    |
 | **多智能体协作（S7）**                                | ✅ **已实现、已接线、默认关**（`app/agent/team.py`：诊断子图 + 提示 / 变式题两工作者并行 + 汇总节点；`ANALYSIS_PIPELINE=team` 与 S4 共用开关）。⚠️ **只有诊断落库**——提示阶梯与变式题没有存放位置（`AnalysisOutcome` 无对应字段、错题本无对应列），记日志后丢弃 |
+| **记忆与流式（S8）**                                  | ✅ **已实现、已接线**（`app/agent/memory.py`：检查点=短期记忆、Store=长期记忆，配了 `LANGGRAPH_CHECKPOINT_URI` 且包装了就走 PostgreSQL，否则退回内存**并在日志里说清为什么**；节点级流式 `agent_step` 已并入 P2-8 那条 WebSocket 事件流，前端显示「正在检索知识点…」）。⚠️ **检查点目前走内存**——`langgraph-checkpoint-postgres` 没装，进程退出即失效；⚠️ **流式是节点级不是 token 级**——网关没有流式调用，做不到「模型写到一半」                        |
 | **模型调用护栏（S10）**                               | ✅ **已实现、已接线、默认开**（`app/agent/guardrails.py`：PII 脱敏 / 瞬时重试 / provider 兜底链）。接在 `analyzer` 文本分支、`tool_caller` 工具循环、`team` 三个工作者三处；`LLM_GUARDRAILS=false` 可一键回退到直连网关                                             |
 
 **题目里的「智能体」指什么。** 题目是「基于智能体的编程课程学习过程分析与反馈
@@ -328,6 +329,18 @@
   ⚠️ S7 的**提示阶梯与变式题仍无处存放**——`AnalysisOutcome` 没有对应字段、错题本
   没有对应列，所以 `team` 目前买到的只是诊断（代价约三倍模型调用）。要让变式题
   出现在学生面前需要一列 + 一个 API 字段 + 一处 UI，那是产品决定而非接线。
+- ✅ **已接线**：记忆与流式（S8，`app/agent/memory.py`）。图现在带检查点（短期，
+  按 thread 存）和 Store（长期，跨 thread），`LANGGRAPH_CHECKPOINT_URI` 配了且
+  `langgraph-checkpoint-postgres` 装了就走 PostgreSQL，否则退回内存**并把原因写进
+  日志**——「为什么我的检查点没活过重启」必须能从日志里答出来。
+  一次分析的 thread 键是 `submission:<id>:<run>`：**按 run 而不是按 submission**，
+  因为 LangGraph 不会在两次 `invoke` 之间重置 thread，同键重跑会继承上一次的
+  `analysis`，并让 `attempts` / `notes` 这两个累加字段继续往上长（实测第二次
+  报 `attempts=2`）。重试入口 `reanalyse_entry` 正好会重跑同一个 submission，
+  这条不是理论风险。
+  流式是 `graph.stream` 的**节点级**进度（`agent_step` → 「正在检索知识点…」），
+  **不是 token 级**：`app/llm/gateway.py` 没有流式调用，做不到「模型写到一半」，
+  不假装能做。
 - ⚠️ **已实现并测试，但未接入主路径**：知识库检索层（S5）。它在 `graph` 分支里
   是被调用的，只是默认分支走不到；另有一条：
   **Milvus 调用从未对着真实服务跑过**。
@@ -362,7 +375,7 @@
 ├─ sidecar/                  # Python FastAPI 服务
 │  └─ app/
 │     ├─ api/                # REST 路由 + WebSocket
-│     ├─ agent/              # 错因分析：schema / 工具循环 / 分析器
+│     ├─ agent/              # 错因分析：schema / 工具循环 / 分析器 / 状态图 / 编排选择 / 记忆
 │     │                      #  + pipeline（编排器开关，S4 接线）
 │     │                      #  + graph（S4 状态图）/ team（S7 三智能体）/ guardrails（S10 护栏）
 │     ├─ llm/                # LLM Gateway（OpenAI 兼容）
@@ -435,7 +448,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 | **阶段 7** | **打包与交付**                          | 见下方「阶段 7 的完成定义」——本机做得出来不算数，要能在**没有 Python / Node 的机器**上跑通                                                                                                                                                                        | **P0**：6 条里 **5 条已闭合**，仅第 3 条（安装包）受本机沙箱限制 ⬜ |
 | 阶段 8     | 编排与检索（`AGENTS.md` S4 / S5）         | LangGraph 状态图**已实现并测试，且已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选 `direct` / `graph`，**默认 `direct`** 即原来的单次调用；`graph` 分支已用真实模型端到端验过）✅；知识库检索层**已实现并测试**（`app/rag/` 四模块 + 12 张卡片覆盖 32 个知识点），**Milvus 未对着真实服务验证** ⬜ | P2 部分 ✅（已接线 / 默认未启用 / 未实测）                  |
 | 阶段 9     | 多智能体协作（`AGENTS.md` S7）             | ✅ 错因 / 提示 / 变式题三 Agent 分工，**已用真实模型跑通一次完整流程**；✅ **已接线**——`ANALYSIS_PIPELINE=team`（与 S4 共用开关，默认仍是 `direct`）；⚠️ 提示阶梯与变式题**暂不落库**（无字段、无列，记日志后丢弃）                                                                                                      | P3 ✅（已接线 / 默认未启用 / 产物未落库） |
-| 阶段 10    | 评估、可观测与护栏（`AGENTS.md` S9 / S10 其余） | 评估集跑通 ⬜；LangSmith 追踪接入 ⬜（需 key）；LangChain 1.x 中间件护栏（PII / ModelFallback / ModelRetry）✅ **已实现、已接线、默认开**（`LLM_GUARDRAILS`）——接在 `analyzer` / `tool_caller` / `team` 三处                                                                               | P3 部分 ✅（护栏已接线） |
+| 阶段 10    | 评估、可观测与护栏（`AGENTS.md` S8 / S9 / S10 其余） | 记忆与流式（S8）✅ **已接线**（检查点 + Store，默认内存；节点级流式 `agent_step` 已进前端）；评估集跑通 ⬜；LangSmith 追踪接入 ⬜（需 key）；LangChain 1.x 中间件护栏（PII / ModelFallback / ModelRetry）✅ **已实现、已接线、默认开**（`LLM_GUARDRAILS`）——接在 `analyzer` / `tool_caller` / `team` 三处                                                    | P3 部分 ✅（护栏与记忆已接线） |
 
 ### 阶段 8–10 的阻塞项
 
@@ -696,7 +709,7 @@ env -u PYTHONPATH python -m pytest ../tests -q -m eval_set
     
   `test_timeout` / `test_judge_tle` 用 1 秒上限各自覆盖，不受影响。
 
-前端单元测试 2026-09-19 接入 Vitest（`AGENTS.md` 锁定的框架），**56 个用例**
+前端单元测试 2026-09-19 接入 Vitest（`AGENTS.md` 锁定的框架），**57 个用例**
   
 （2026-09-20 由 44 增至 56：抽 `AttentionAlerts` / `ProblemStatement` 两个子组件后
   
@@ -862,7 +875,7 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **复核结论尚未回流**              | 教师的确认/驳回目前只改变队列与计数，**没有**反过来调整 `process_trace` 的阈值或影响学生端提示。要做自动校准，得先积累足够复核样本——这是「阈值有证据可依」的前提，不是漏实现的功能                                                                                                                                                                                                                                                                 |
 | **过程特征无验证集**              | 「粘贴后零改写」的阈值（`≥120` 字符、`≥80%` 占比、`≤15%` 改写）是设计取值，未用人工标注样本校准；因此只作**提示**交给教师复核，不作判定                                                                                                                                                                                                                                                                                      |
 | **无检测验证集**                | AI 使用检测缺少人工标注样本，因此不以准确率为目标                                                                                                                                                                                                                                                                                                                                            |
-| **组件测试只覆盖五个组件**           | Vitest 共 **56 个用例**：api 层纯逻辑、判题流时序，加上 `LayeredFeedback`（分层释放）、`OutputPanel`（诊断渲染与工具结果）、`VerdictBadge`（判定映射）、`AttentionAlerts`（学情预警）、`ProblemStatement`（题面）共 30 个组件用例。后两个是 2026-09-20 从 1605 / 1247 行的两个视图里抽出来的纯展示子组件。**其余组件**（编辑器、教师看板雷达图、错题本列表等）的行为仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」                                                                                    |
+| **组件测试只覆盖五个组件**           | Vitest 共 **57 个用例**：api 层纯逻辑、判题流时序，加上 `LayeredFeedback`（分层释放）、`OutputPanel`（诊断渲染、工具结果与 S8 阶段进度）、`VerdictBadge`（判定映射）、`AttentionAlerts`（学情预警）、`ProblemStatement`（题面）共 31 个组件用例。后两个是 2026-09-20 从 1605 / 1247 行的两个视图里抽出来的纯展示子组件。**其余组件**（编辑器、教师看板雷达图、错题本列表等）的行为仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」                                                                                    |
 | **安装包尚未产出**               | sidecar 已打成 PyInstaller onedir（**113 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 **C++ / Python / Java 三种语言的判题**；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出                                         |
 | **onedir 产物的限制**          | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准）                                                                                                                                                                                                              |
 | **打包版只验到判题层**             | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（C++ 与 Python 验 AC + WA；Java 验 AC / CE / TLE，2026-09-20）、密钥未进产物。脚本 `tools/verify_packaged_sidecar.py` 可复现。**未验**：桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条）、真 PostgreSQL 下的完整业务链路                                                                                                                                                   |

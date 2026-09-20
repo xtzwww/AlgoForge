@@ -70,9 +70,10 @@ def _analyse_and_annotate(
         result: The verdict, used for the failing case's I/O.
         context: The submission, for the source and problem id.
         statement: Problem statement, when the caller has it.
-        on_event: Sink for tool-call notifications, so a WebSocket client
-            can watch the Agent work (P2-8). ``None`` for the REST route,
-            which has no stream to put them on.
+        on_event: Sink for the Agent's progress events — tool calls
+            (P2-8) and, on the graph pipeline, one per node completed
+            (S8). ``None`` for the REST route, which has no stream to put
+            them on.
 
     Returns:
         The ``agent_done`` payload for the caller to send **after it
@@ -136,6 +137,20 @@ def _analyse_and_annotate(
             }
         )
 
+    def _step_event(node: str, label: str) -> None:
+        """S8: which stage of the analysis is running right now.
+
+        Node-level, not token-level — the gateway has no streaming call, so
+        this is as fine-grained as the progress report can honestly be.
+        ``node`` is carried alongside the label because the client renders
+        the label but a log reader needs the name the backend used; the two
+        are not interchangeable, and dropping one would leave the other
+        untraceable.
+        """
+        if on_event is None:
+            return
+        on_event({"type": "agent_step", "step": node, "label": label})
+
     if on_event is not None:
         on_event({"type": "agent_start", "verdict": result.status.value})
 
@@ -151,6 +166,13 @@ def _analyse_and_annotate(
         # measures, but the product should use the better-informed one.
         use_tools=True,
         on_event=_tool_event,
+        # S8: names the checkpoint thread when the graph pipeline is
+        # selected. Ignored by the ``direct`` default, which never
+        # compiles a graph and so has no thread to name.
+        submission_id=entry.submission_id,
+        # Likewise graph-only: the default pipeline is one opaque model
+        # call, so it never emits a step and the client never sees one.
+        on_step=_step_event,
     )
 
     # No terminal event here: it is returned to the caller, which sends it

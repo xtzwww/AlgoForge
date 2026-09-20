@@ -316,7 +316,26 @@ def test_graph_receives_the_tags_and_the_event_sink(
         "tags": ["数学", "溢出"],
         "use_tools": True,
         "on_event": sink,
+        "submission_id": None,
+        "on_step": None,
     }
+
+
+def test_the_step_sink_reaches_the_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S8 streaming on the graph path: the node-progress sink is another
+    thing that only exists for one orchestrator, and so another thing the
+    wiring can quietly drop.
+    """
+    monkeypatch.setattr(settings, "analysis_pipeline", pipeline.GRAPH)
+    graph = _Recorder(returns=_graph_outcome())
+    monkeypatch.setattr("app.agent.graph.run_analysis_graph", graph)
+    sink = object()
+
+    pipeline.analyse(*ARGS, on_step=sink)
+
+    assert graph.call["kwargs"]["on_step"] is sink
 
 
 def test_the_graph_branch_does_not_forward_extra_context(

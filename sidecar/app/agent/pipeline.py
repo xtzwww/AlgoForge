@@ -121,6 +121,8 @@ def analyse(
     on_event: Optional[Callable[[Any], None]] = None,
     max_steps: int = DEFAULT_TOOL_STEPS,
     tags: Sequence[str] = (),
+    submission_id: Optional[int] = None,
+    on_step: Optional[Callable[[str, str], None]] = None,
 ) -> AnalysisOutcome:
     """Analyse one failing submission with the configured orchestrator.
 
@@ -150,6 +152,14 @@ def analyse(
             ``direct`` only; the graph uses ``analyzer``'s default, which
             is the same value.
         tags: Knowledge-point tags to filter retrieval by. ``graph`` only.
+        submission_id: Which submission this is, for the graph's checkpoint
+            key (S8). ``graph`` only; ``direct`` has no thread to name and
+            ``team`` does not checkpoint. ``None`` for an unrecorded run.
+        on_step: Called with ``(node, label)`` as the graph's nodes finish
+            (S8 streaming). ``graph`` only — ``direct`` and ``team`` are
+            opaque single calls with nothing to report between start and
+            end, and inventing a step for them would be a lie the client
+            cannot detect.
 
     Returns:
         An :class:`AnalysisOutcome`; ``ok`` is False when no analysis
@@ -180,6 +190,8 @@ def analyse(
             use_tools=use_tools,
             on_event=on_event,
             tags=tags,
+            submission_id=submission_id,
+            on_step=on_step,
         )
 
     return analyze_error(
@@ -208,6 +220,8 @@ def _via_graph(
     use_tools: bool,
     on_event: Optional[Callable[[Any], None]],
     tags: Sequence[str],
+    submission_id: Optional[int] = None,
+    on_step: Optional[Callable[[str, str], None]] = None,
 ) -> AnalysisOutcome:
     """Run S4's graph and flatten its outcome into an ``AnalysisOutcome``.
 
@@ -236,6 +250,8 @@ def _via_graph(
             tags=tags,
             use_tools=use_tools,
             on_event=on_event,
+            submission_id=submission_id,
+            on_step=on_step,
         )
     except Exception as exc:  # noqa: BLE001 — degradation is the contract
         # Not swallowed quietly: an exception here is a bug in the graph or
@@ -249,6 +265,12 @@ def _via_graph(
             len(outcome.notes),
             "; ".join(outcome.notes),
         )
+
+    # S8: the run's node-by-node checkpoints are filed under this key. It
+    # goes to the log because nothing in the UI shows it yet, and "which
+    # run produced this analysis" has to be answerable from the log alone.
+    if outcome.thread_id:
+        logger.info("analysis graph run recorded as thread %s", outcome.thread_id)
 
     return AnalysisOutcome(
         result=outcome.analysis,
