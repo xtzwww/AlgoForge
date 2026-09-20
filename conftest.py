@@ -71,9 +71,12 @@ def _no_real_submission_writes(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Since PU-13 the judge records every verdict by calling
     ``app.records.record_submission``, whose default session comes from
-    ``app.db.get_session``. That opens an engine against the documented
-    PostgreSQL DSN — which is not running here — so a judge test that
-    does not opt out would hang on a connection instead of failing.
+    ``app.records_session.get_session`` — one binding over
+    ``app.db.get_session``, deliberately the only one, so a test can
+    redirect the whole write path by replacing it in that single place.
+    Unredirected it opens an engine against the documented PostgreSQL DSN,
+    which is not running here, so a judge test that does not opt out would
+    hang on a connection instead of failing.
 
     The replacement records nothing. Tests that *do* care about the write
     assert it through their own explicit hook (see

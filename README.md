@@ -197,7 +197,7 @@
 | 前端构建 | electron-vite（vue-ts 模板） |
 | 后端依赖 | pip + requirements.txt |
 | 代码规范 | ESLint + Prettier（前端）/ Ruff（后端） |
-| 测试 | pytest（后端，860 用例）/ Vitest（前端，2026-09-19 接入，56 用例） |
+| 测试 | pytest（后端，2026-09-20 实测 **1061 通过 / 3 跳过**，另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，56 用例） |
 | CI | GitHub Actions（`.github/workflows/ci.yml`） |
 
 ---
@@ -321,6 +321,11 @@
 │     ├─ sandbox/            # 编译运行、资源限制、判题
 │     ├─ scheduler/          # SM-2 复习调度
 │     ├─ models/             # SQLAlchemy ORM + 学情聚合
+│     ├─ records.py          # 提交落库与错因标注的门面（只再导出，无逻辑）
+│     │                      #  + records_write（落库 / 归档）
+│     │                      #  + records_analyse（分析 / 标注 / 重试）
+│     │                      #  + records_session（get_session 的唯一绑定处）
+│     │                      #  + records_support / records_suggestion（纯辅助）
 │     ├─ prompts/            # Prompt 模板（版本化管理）
 │     └─ rag/                # S5 检索层：卡片读取 / 索引器 / 检索器 / 字段契约
 ├─ corpus/                   # 试卷与语料
