@@ -31,11 +31,66 @@ const GRACEFUL_SHUTDOWN_MS = 4000
 /** How long to wait after a force kill before giving up (ms). */
 const FORCE_SHUTDOWN_MS = 2000
 
+/**
+ * How many times to restart the sidecar after it dies on its own.
+ *
+ * Bounded, and the bound is the point: a sidecar that cannot start at all
+ * (a missing dependency, a broken venv) would otherwise be respawned in a
+ * tight loop forever, which turns one log line into a machine that cannot
+ * be used. Five attempts over ~15s of backoff is enough to ride out the
+ * thing that actually happens — the process being killed under memory
+ * pressure — without hiding a permanent failure.
+ */
+const MAX_RESTARTS = 5
+const RESTART_BACKOFF_MS = [500, 1000, 2000, 4000, 8000]
+
 let sidecarProcess: ChildProcess | null = null
 let sidecarInfo: SidecarInfo | null = null
 
 /** The pid of the process tree currently being torn down (if any). */
 let shuttingDownPid: number | null = null
+
+/**
+ * Set by {@link stopSidecar} so the exit handler can tell "we killed it"
+ * from "it died". Without this the teardown path would look like a crash
+ * and schedule a restart of a process that is supposed to be going away.
+ */
+let intentionallyStopped = false
+
+/** Restart bookkeeping. */
+let restartAttempts = 0
+let restartTimer: NodeJS.Timeout | null = null
+
+/**
+ * Listeners for connection-info changes.
+ *
+ * A restarted sidecar gets a **new port and a new token** — both are
+ * generated fresh on every spawn. So the renderer cannot simply retry the
+ * old URL: it has to be told the new one, or every request keeps failing
+ * against a dead port while the engine is in fact running again. That is
+ * exactly the failure this fixes.
+ */
+type InfoListener = (info: SidecarInfo | null) => void
+const infoListeners: InfoListener[] = []
+
+/** Subscribe to connection-info changes. Returns an unsubscribe function. */
+export function onSidecarInfoChanged(listener: InfoListener): () => void {
+  infoListeners.push(listener)
+  return () => {
+    const index = infoListeners.indexOf(listener)
+    if (index >= 0) infoListeners.splice(index, 1)
+  }
+}
+
+function emitInfo(info: SidecarInfo | null): void {
+  for (const listener of [...infoListeners]) {
+    try {
+      listener(info)
+    } catch (err) {
+      console.error('[sidecar] info listener threw:', (err as Error).message)
+    }
+  }
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -180,10 +235,22 @@ function killProcessTreeSync(pid: number, force: boolean): void {
 }
 
 /**
- * Start the sidecar process. Returns immediately if already running.
+ * Spawn one sidecar process and wait for it to answer.
+ *
+ * Separate from {@link startSidecar} because a restart must be able to
+ * spawn again even though `sidecarInfo` is currently null — the public
+ * entry point's "already running, return it" shortcut is right for
+ * callers and wrong for the restart path.
+ *
+ * Every spawn mints a **new port and a new token**, so callers holding
+ * the previous `SidecarInfo` must treat it as expired the moment this
+ * resolves. {@link onSidecarInfoChanged} is how they find out.
  */
-export async function startSidecar(): Promise<SidecarInfo> {
-  if (sidecarInfo) return sidecarInfo
+async function spawnSidecar(): Promise<SidecarInfo> {
+  // A previous stopSidecar() disarmed the restart machinery; starting
+  // again re-arms it. Without this reset, an app that stopped and then
+  // restarted its sidecar would never recover from a later crash.
+  intentionallyStopped = false
 
   const port = await getAvailablePort()
   const token = crypto.randomBytes(32).toString('hex')
@@ -229,14 +296,33 @@ export async function startSidecar(): Promise<SidecarInfo> {
     if (shuttingDownPid !== null && sidecarProcess?.pid === shuttingDownPid) {
       return
     }
-    console.log(`[sidecar] exited (code=${code}, signal=${signal})`)
+    const ours = sidecarProcess
     sidecarProcess = null
     sidecarInfo = null
+
+    if (intentionallyStopped) {
+      console.log(`[sidecar] exited (code=${code}, signal=${signal})`)
+      return
+    }
+
+    // It died on its own. This is the whole reason for the restart
+    // machinery: without it the app stays up with a dead engine and
+    // every page reports "Network Error" until the user quits.
+    console.warn(
+      `[sidecar] died unexpectedly (code=${code}, signal=${signal}, pid=${ours?.pid}); ` +
+        'notifying renderer and scheduling a restart'
+    )
+    emitInfo(null)
+    scheduleRestart()
   })
   sidecarProcess.on('error', (err) => {
     console.error('[sidecar] failed to spawn:', err.message)
     sidecarProcess = null
     sidecarInfo = null
+    if (!intentionallyStopped) {
+      emitInfo(null)
+      scheduleRestart()
+    }
   })
 
   const url = `http://127.0.0.1:${port}`
@@ -244,13 +330,92 @@ export async function startSidecar(): Promise<SidecarInfo> {
     await waitForHealth(`${url}/health`)
   } catch (err) {
     console.error('[sidecar] health check failed:', (err as Error).message)
-    await stopSidecar()
+    // Kill this attempt without setting `intentionallyStopped`: the
+    // reason we are here may be transient (a slow first import), and a
+    // restart must still be allowed to try again.
+    await killCurrent()
+    if (!intentionallyStopped) scheduleRestart()
     throw err
   }
 
+  restartAttempts = 0
   sidecarInfo = { port, token, url }
   console.log(`[sidecar] ready at ${url} (token=${token.slice(0, 8)}...)`)
+  emitInfo(sidecarInfo)
   return sidecarInfo
+}
+
+/**
+ * Tear down whatever process is currently spawned, without declaring the
+ * sidecar permanently stopped.
+ *
+ * Used when one spawn attempt fails: the process has to go, but the
+ * restart machinery must stay armed.
+ */
+async function killCurrent(): Promise<void> {
+  const proc = sidecarProcess
+  const pid = proc?.pid
+  sidecarProcess = null
+  sidecarInfo = null
+  if (!proc || pid === undefined || proc.exitCode !== null || proc.signalCode !== null) {
+    return
+  }
+  shuttingDownPid = pid
+  const exited = new Promise<void>((resolve) => {
+    proc.once('exit', () => resolve())
+  })
+  killProcessTreeSync(pid, false)
+  const timedOut = await Promise.race([
+    exited.then(() => false),
+    delay(GRACEFUL_SHUTDOWN_MS).then(() => true),
+  ])
+  if (timedOut) {
+    killProcessTreeSync(pid, true)
+    await Promise.race([exited, delay(FORCE_SHUTDOWN_MS)])
+  }
+  shuttingDownPid = null
+}
+
+/**
+ * Bring the sidecar back after it died, with backoff.
+ *
+ * Attempts are bounded by {@link MAX_RESTARTS}: past that the failure is
+ * treated as permanent and the UI keeps its error state, which is the
+ * honest answer. Retrying forever would keep the CPU busy and the user
+ * none the wiser.
+ */
+function scheduleRestart(): void {
+  if (intentionallyStopped || restartTimer) return
+  if (restartAttempts >= MAX_RESTARTS) {
+    console.error(
+      `[sidecar] giving up after ${restartAttempts} restart attempts; ` +
+        'the analysis engine will stay unavailable until the app is restarted'
+    )
+    return
+  }
+
+  const waitMs = RESTART_BACKOFF_MS[Math.min(restartAttempts, RESTART_BACKOFF_MS.length - 1)]
+  restartAttempts += 1
+  console.log(`[sidecar] restart attempt ${restartAttempts}/${MAX_RESTARTS} in ${waitMs}ms`)
+
+  restartTimer = setTimeout(() => {
+    restartTimer = null
+    void spawnSidecar()
+      .then((info) => console.log(`[sidecar] restarted at ${info.url}`))
+      .catch((err) => {
+        console.error('[sidecar] restart failed:', (err as Error).message)
+        scheduleRestart()
+      })
+  }, waitMs)
+  restartTimer.unref?.()
+}
+
+/**
+ * Start the sidecar process. Returns immediately if already running.
+ */
+export async function startSidecar(): Promise<SidecarInfo> {
+  if (sidecarInfo) return sidecarInfo
+  return spawnSidecar()
 }
 
 /**
@@ -265,6 +430,15 @@ export async function startSidecar(): Promise<SidecarInfo> {
 export async function stopSidecar(): Promise<void> {
   const proc = sidecarProcess
   const pid = proc?.pid
+
+  // Disarm the restart machinery *first*. The exits this function causes
+  // must never be mistaken for a crash — otherwise quitting the app would
+  // respawn the sidecar we are in the middle of tearing down.
+  intentionallyStopped = true
+  if (restartTimer) {
+    clearTimeout(restartTimer)
+    restartTimer = null
+  }
 
   // Nothing to do: never started, already exited, or no usable pid.
   if (!proc || pid === undefined || proc.exitCode !== null || proc.signalCode !== null) {

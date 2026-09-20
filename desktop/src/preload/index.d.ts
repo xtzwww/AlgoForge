@@ -9,6 +9,12 @@ export interface SidecarInfo {
 export interface AlgoForgeAPI {
   sidecar: {
     getInfo: () => Promise<SidecarInfo | null>
+    /**
+     * Fires when the engine is replaced (crash + automatic restart).
+     * The new engine has a **new port and a new token**; `null` means
+     * the engine is currently gone.
+     */
+    onInfoChanged: (callback: (info: SidecarInfo | null) => void) => void
   }
   app: {
     /** PU-2: fires when the splash hands over to the main window. */

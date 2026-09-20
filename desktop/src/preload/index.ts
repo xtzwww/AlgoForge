@@ -10,6 +10,21 @@ import { electronAPI } from '@electron-toolkit/preload'
 const algoforge = {
   sidecar: {
     getInfo: () => ipcRenderer.invoke('sidecar:info'),
+    /**
+     * Fired when the engine is replaced — including after a crash and
+     * automatic restart.
+     *
+     * A restarted sidecar listens on a **new port with a new token**, so
+     * without this the renderer would keep retrying the dead address for
+     * the rest of the session: the engine would be running and every
+     * page would still say "Network Error".
+     *
+     * `null` means the engine is currently gone (it just died); a fresh
+     * info object means it came back.
+     */
+    onInfoChanged: (callback: (info: unknown) => void): void => {
+      ipcRenderer.on('sidecar:info-changed', (_event, info) => callback(info))
+    }
   },
   app: {
     /**

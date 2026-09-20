@@ -27,5 +27,12 @@ export const runtime: Runtime = {
     // `dist/index.html` can be opened directly in a browser during UI
     // work, and the app should come up unanimated rather than throw.
     window.algoforge?.app?.onReveal(callback)
+  },
+
+  onSidecarInfoChanged(callback: (info: SidecarInfo | null) => void): void {
+    // Guarded for the same reason as `onReveal` above. The main process
+    // pushes this when the sidecar is replaced — including after it
+    // crashed and was restarted automatically.
+    window.algoforge?.sidecar?.onInfoChanged?.((info) => callback(info as SidecarInfo | null))
   }
 }

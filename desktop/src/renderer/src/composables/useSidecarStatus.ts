@@ -132,6 +132,25 @@ export function bootstrapSidecarStatus(): void {
   runtime.onReveal(() => {
     void checkSidecar()
   })
+
+  // Recover when the engine is replaced underneath us.
+  //
+  // The desktop main process restarts the sidecar if it dies, and a
+  // restarted sidecar listens on a **new port with a new token**. The
+  // axios instance was configured once at startup, so without this the
+  // app would keep calling the dead address: the sidebar would stay
+  // red and every page would say "Network Error" for the rest of the
+  // session, with the only fix being to quit and reopen.
+  runtime.onSidecarInfoChanged((info) => {
+    if (info === null) {
+      // Engine gone. Say so now rather than waiting for the next page
+      // request to fail — the status dot is the thing the user watches.
+      phase.value = 'failed'
+      errorMessage.value = '分析引擎已断开，正在尝试重新连接…'
+      return
+    }
+    void checkSidecar()
+  })
 }
 
 /**

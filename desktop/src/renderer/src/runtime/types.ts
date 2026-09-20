@@ -83,4 +83,20 @@ export interface Runtime {
    * visible. Fires immediately (next frame) in the browser.
    */
   onReveal(callback: () => void): void
+
+  /**
+   * Run *callback* when the sidecar's address or token changes.
+   *
+   * Desktop only in practice: the web build reads a fixed URL from a
+   * build-time variable and has no way to learn about a replacement, so
+   * it never fires. It still has to exist on the interface — a capability
+   * the UI reads must be answered by both implementations, and "never
+   * fires" is the honest answer here, not a missing method.
+   *
+   * `null` means the engine is currently gone; a fresh
+   * {@link SidecarInfo} means it came back — on a **new port with a new
+   * token**, which is why the UI must re-configure its HTTP client
+   * rather than just retry the old URL.
+   */
+  onSidecarInfoChanged(callback: (info: SidecarInfo | null) => void): void
 }

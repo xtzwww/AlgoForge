@@ -2,7 +2,13 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { startSidecar, stopSidecar, getSidecarInfo, installExitHook } from './sidecar'
+import {
+  startSidecar,
+  stopSidecar,
+  getSidecarInfo,
+  installExitHook,
+  onSidecarInfoChanged,
+} from './sidecar'
 import { createSplashWindow, setSplashStatus, closeSplash } from './splash'
 
 // PU-1: catch abnormal exits (crash, uncaught exception) that would
@@ -138,6 +144,20 @@ app.whenReady().then(async () => {
 
   // IPC: expose sidecar connection info to renderer
   ipcMain.handle('sidecar:info', () => getSidecarInfo())
+
+  // Push connection-info changes to every window.
+  //
+  // Needed because a restarted sidecar gets a new port and a new token.
+  // The renderer's axios instance is configured once at startup from
+  // `sidecar:info`; without this push it would hold a dead address for
+  // the rest of the session and report "Network Error" on every page
+  // while the engine is in fact running again.
+  onSidecarInfoChanged((info) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) continue
+      window.webContents.send('sidecar:info-changed', info)
+    }
+  })
 
   // --- Startup sequence (PU-2) -------------------------------------
   //

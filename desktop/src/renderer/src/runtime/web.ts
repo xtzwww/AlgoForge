@@ -78,5 +78,17 @@ export const runtime: Runtime = {
     // in the same order — registered before the first paint, applied
     // after — so the animation behaves the same in both.
     requestAnimationFrame(() => callback())
+  },
+
+  // Deliberately declared without the callback parameter: this shell can
+  // never have a replacement to report, so taking the argument would be
+  // a lie about a capability it does not have (and an unused one).
+  //
+  // Never fires, and that is the honest answer rather than a gap: the
+  // web build's address is fixed at build time, and there is no main
+  // process to tell it about a replacement. A web deployment whose
+  // sidecar dies needs its own ops story, not this callback.
+  onSidecarInfoChanged(): void {
+    /* no-op */
   }
 }
