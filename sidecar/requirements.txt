@@ -45,6 +45,17 @@ asyncpg>=0.29.0
 # 看起来像「Milvus 没起」。跑 RAG 之前先清掉代理变量。
 pymilvus>=2.4.0
 
+# milvus-lite 是 Milvus 的**内嵌**构建（同一个引擎，不需要 Docker），只在
+# tests/test_rag_milvus_live.py 里用来对着真实 Milvus 验证检索层。
+#
+# 故意**不**列进依赖：它会带进 faiss-cpu 与 pyarrow（上百 MB），而打包版
+# sidecar 走的是 Milvus **服务**（MILVUS_URI），永远不该把它们打进产物。
+# 已在 sidecar/packaging/algoforge-sidecar.spec 的 excludes 里显式排除，
+# 这样产物体积就不会取决于某个开发者有没有跑过那条测试。
+#
+# 要跑那 6 条测试：sidecar/.venv/Scripts/python.exe -m pip install milvus-lite
+# 没装时该测试文件整体 skip，套件照绿。
+
 # ------------------------------------------------- 编排（阶段 8 · AGENTS.md S4/S7）
 # AGENTS.md §一 把 Agent 编排锁定为 LangGraph + LangChain 1.x。app/agent/graph.py
 # 在**模块顶层** `from langgraph.graph import ...`，所以缺了它连 import 都会炸

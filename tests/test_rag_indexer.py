@@ -32,6 +32,7 @@ from app.rag.schema import (
     FIELD_TEXT,
     FIELD_TITLE,
     FIELD_VECTOR,
+    MAX_ID_LENGTH,
     OUTPUT_FIELDS,
 )
 
@@ -166,6 +167,29 @@ def test_index_creates_the_collection_with_the_inferred_dimension() -> None:
     assert client.created[0]["primary_field_name"] == FIELD_ID
     assert client.created[0]["vector_field_name"] == FIELD_VECTOR
     assert client.created[0]["auto_id"] is False
+
+
+def test_the_primary_key_is_created_as_a_string() -> None:
+    """The regression guard for a bug no fake could catch.
+
+    ``MilvusClient.create_collection`` defaults ``id_type`` to ``"int"``,
+    so the primary key is typed INT64 — and every upsert of a ``card_id``
+    like ``"binary-search"`` then dies with ``DataNotMatchException:
+    {card_id} field should be a int64, but got a {<class 'str'>}``.
+    ``max_length`` alone does nothing; it is only read once the key is
+    already a varchar.
+
+    Found 2026-09-20 by running against a real Milvus for the first time
+    (``tests/test_rag_milvus_live.py``). The stub here recorded the call
+    and stayed green, which is exactly why this assertion is now explicit:
+    a fake cannot tell ``id_type="int"`` from ``id_type="string"``.
+    """
+    client = StubMilvus(existing=False)
+
+    index_cards(client, "cards", [_card()], _embedder)
+
+    assert client.created[0]["id_type"] == "string"
+    assert client.created[0]["max_length"] == MAX_ID_LENGTH
 
 
 def test_index_reuses_an_existing_collection() -> None:

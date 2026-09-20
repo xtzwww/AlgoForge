@@ -25,7 +25,16 @@ Embedder = Callable[[str], Sequence[float]]
 
 #: Primary key. ``card_id`` rather than a generated id so re-indexing a card
 #: overwrites it instead of adding a second row for the same knowledge point.
+#:
+#: A **string** key, which is why :func:`app.rag.indexer.index_cards` has to
+#: pass ``id_type="string"`` when it creates the collection: Milvus defaults
+#: the primary key to INT64, and every upsert then fails.
 FIELD_ID = "card_id"
+
+#: Declared length of that varchar. Ids are short slugs (``"binary-search"``),
+#: but Milvus needs a number and an underestimate is a schema error on write
+#: rather than something a test with fakes can catch.
+MAX_ID_LENGTH = 256
 
 #: The embedding itself.
 FIELD_VECTOR = "vector"

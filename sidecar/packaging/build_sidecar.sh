@@ -64,8 +64,20 @@ py -m PyInstaller \
   --hidden-import "uvicorn.logging" \
   --hidden-import "sqlalchemy.dialects.postgresql.asyncpg" \
   --hidden-import "asyncpg" \
+  --exclude-module "milvus_lite" \
+  --exclude-module "faiss" \
   --log-level WARN \
   packaging/sidecar_main.py
+
+# ⚠️ 那两个 --exclude-module 是必需的，不是洁癖。
+# `pip install milvus-lite` 会带进 faiss-cpu 与 pyarrow（上百 MB），而它只是
+# tests/test_rag_milvus_live.py 用来对着真实 Milvus 引擎验检索层的**测试**依赖
+# ——sidecar 生产走的是 Milvus **服务**（MILVUS_URI），永远不 import 它。
+# PyInstaller 做的是静态扫描，不看 import 是否真的会执行，所以只要某个开发者
+# 装过 milvus-lite，产物就会莫名胖上百 MB。显式排除后，产物体积不再取决于
+# 谁跑过那条测试。
+# 同理别去改 packaging/*.spec：它是每次构建重新生成的（--noconfirm），
+# 而且 .gitignore 里就排除了 *.spec，改了不进版本库。
 
 echo ""
 echo "产物：$REPO/dist/algoforge-sidecar/algoforge-sidecar.exe"

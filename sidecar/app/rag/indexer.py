@@ -13,14 +13,19 @@ collaborators means the whole indexing path — record building, dimension
 inference, idempotent upsert — is exercised by tests with fakes, and the only
 unverified surface left is the exact shape of the three Milvus calls.
 
-What is *not* verified
-----------------------
-No Milvus server has ever been reachable from this repository, so
-:func:`index_cards` has never run against a real instance. The call shapes
-(``has_collection`` / ``create_collection`` / ``upsert``) follow the
-``MilvusClient`` API but are unverified — see ``.workbuddy-ai/night-queue.md``
-T7b. Do not describe this as "indexing works" until someone runs it against a
-live Milvus.
+What is verified, and what still is not
+---------------------------------------
+As of 2026-09-20 this has run against a **real Milvus engine** —
+``milvus-lite``, the embedded build, which needs no Docker and runs on
+Windows. ``tests/test_rag_milvus_live.py`` indexes the actual corpus and
+searches it. That is what caught the wrong primary-key type below.
+
+Still unverified: a **Milvus server** (standalone / cluster, reached over
+``MILVUS_URI``). Milvus Lite is the same engine but not the same
+deployment, and the things most likely to differ — authentication, index
+type selection at scale, consistency level — are exactly what the embedded
+build does not exercise. So: indexing and retrieval are verified against a
+real Milvus **engine**; the production **service** is not.
 
 Idempotence
 -----------
@@ -46,6 +51,7 @@ from app.rag.schema import (
     FIELD_TEXT,
     FIELD_TITLE,
     FIELD_VECTOR,
+    MAX_ID_LENGTH,
     Embedder,
 )
 
@@ -143,6 +149,20 @@ def index_cards(
             primary_field_name=FIELD_ID,
             vector_field_name=FIELD_VECTOR,
             auto_id=False,
+            # ``id_type`` is the whole ballgame and its default is wrong for
+            # this corpus. Left at ``"int"``, Milvus types the primary key as
+            # INT64 and every upsert then dies with
+            # ``DataNotMatchException: {card_id} field should be a int64, but
+            # got a {<class 'str'>}`` — card ids are slugs like
+            # ``"binary-search"``. ``max_length`` alone does nothing: it is
+            # only consulted once the key is already a varchar.
+            #
+            # Found by running against a real Milvus for the first time
+            # (milvus-lite, 2026-09-20); the fakes in
+            # ``tests/test_rag_indexer.py`` accepted the call either way, so
+            # nothing failed until an actual server answered.
+            id_type="string",
+            max_length=MAX_ID_LENGTH,
         )
         logger.info("created collection %s (dimension=%d)", collection, dimension)
 

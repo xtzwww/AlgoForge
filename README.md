@@ -224,7 +224,7 @@
 | 前端构建 | electron-vite（vue-ts 模板）                                                                          |
 | 后端依赖 | pip + requirements.txt                                                                            |
 | 代码规范 | ESLint + Prettier（前端）/ Ruff（后端）                                                                   |
-| 测试   | pytest（后端，2026-09-20 实测 **1100 通过 / 3 跳过**，另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，57 用例） |
+| 测试   | pytest（后端，2026-09-20 实测 **1107 通过 / 3 跳过**（其中 6 条需 `milvus-lite`，没装时 skip），另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，57 用例） |
 | CI   | GitHub Actions（`.github/workflows/ci.yml`）                                                        |
 
 ---
@@ -293,7 +293,7 @@
 | 高并发安全加固                                       | ✅ 三处已修：`create_all` 移出请求路径（`_ensure_engine` 只建一次）、`run_code` 改走工作线程、判题改用**有上限的沙箱线程池**（`app/sandbox/pool.py`，默认 4，`SANDBOX_CONCURRENCY` 可调；用线程池而非 `asyncio.Semaphore`，因为后者会绑定到第一个事件循环，而本进程会创建多个循环）。⚠️ 队列无上界：超出并发的请求会**排队等待**而不是被拒绝（有意为之——判题返回 503 比让学生多等两秒更糟） |
 | 前端单元测试（Vitest）                                | ✅ 已接入（2026-09-19，**57 个用例**：判题流事件时序 + api 层聚合规则 + **五个组件的界面行为**）；⚠️ 组件测试覆盖 `LayeredFeedback` / `OutputPanel` / `VerdictBadge` / `AttentionAlerts` / `ProblemStatement`，其余组件仍只有人眼走查，见下                                                                        |
 | **LangGraph 状态图编排（S4）**                       | ✅ **已实现并测试**（`app/agent/graph.py`：读代码 → 检索 → 分析 → 自检，带条件回边；实测编译产物是 `CompiledStateGraph`）；✅ **已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选编排器，`graph` 分支已用真实模型端到端跑通）；⚠️ **默认仍是 `direct`（单次调用）**，且图分支**未在 20 题评估集上重测准确率**                        |
-| **知识库检索层（RAG，S5）**                            | ✅ **已实现并测试**（`app/rag/` 四模块：卡片读取 / 索引器 / 检索器 / 字段契约；12 张知识卡片覆盖 32 个知识点）；⚠️ **未在真实向量库上验证**（Milvus 三个调用从未对着真实服务执行过），连不上时降级为 `NullRetriever`                                                                                                                    |
+| **知识库检索层（RAG，S5）**                            | ✅ **已实现并测试**（`app/rag/` 四模块：卡片读取 / 索引器 / 检索器 / 字段契约；12 张知识卡片覆盖 32 个知识点）；✅ **2026-09-20 首次对着真实 Milvus 引擎跑通**（`tests/test_rag_milvus_live.py`：内嵌 Milvus 建库 → 写入 12 张真实卡片 → 检索 → 进图节点，**并因此抓出一个真 bug**，见下）。⚠️ 仍未验的是 **Milvus 服务**（standalone / cluster，走 `MILVUS_URI`）——内嵌引擎不等于部署形态，鉴权 / 大规模索引选择 / 一致性级别都没被覆盖；连不上时降级为 `NullRetriever`                                                                                                                    |
 | **多智能体协作（S7）**                                | ✅ **已实现、已接线、默认关**（`app/agent/team.py`：诊断子图 + 提示 / 变式题两工作者并行 + 汇总节点；`ANALYSIS_PIPELINE=team` 与 S4 共用开关）。⚠️ **只有诊断落库**——提示阶梯与变式题没有存放位置（`AnalysisOutcome` 无对应字段、错题本无对应列），记日志后丢弃 |
 | **记忆与流式（S8）**                                  | ✅ **已实现、已接线**（`app/agent/memory.py`：检查点=短期记忆、Store=长期记忆，配了 `LANGGRAPH_CHECKPOINT_URI` 且包装了就走 PostgreSQL，否则退回内存**并在日志里说清为什么**；节点级流式 `agent_step` 已并入 P2-8 那条 WebSocket 事件流，前端显示「正在检索知识点…」）。⚠️ **检查点目前走内存**——`langgraph-checkpoint-postgres` 没装，进程退出即失效；⚠️ **流式是节点级不是 token 级**——网关没有流式调用，做不到「模型写到一半」                        |
 | **追踪（S9 的可观测部分）**                              | ✅ **已实现、已接线、默认关**（`app/agent/tracing.py`：`pipeline.analyse` / `run_analysis_graph` / `analyze_error` 三层 LangSmith span，启动时按 `LANGSMITH_API_KEY` 配置）。⚠️ **没有 key 就一条 trace 都不会发出**，且不会报错——本项目走 `app/llm/gateway.py` 的 httpx 调用而非 LangChain chat model，LangSmith 的**自动**埋点抓不到任何东西，所以「配了 key」不等于「有 trace」，span 必须挂在我们自己的函数上                                    |
@@ -351,15 +351,22 @@
   产生**，而且没有任何报错：从外面看，「已配置」和「静默什么都没抓到」长得一模
   一样。span 必须挂在我们自己的函数上，这就是 `tracing.py` 存在的理由。
   没有 key 时装饰器就是恒等函数，一个 HTTP 请求都不发。
-- ⚠️ **已实现并测试，但未接入主路径**：知识库检索层（S5）。它在 `graph` 分支里
-  是被调用的，只是默认分支走不到；另有一条：
-  **Milvus 调用从未对着真实服务跑过**。
-- ⬜ **真的没有**：Milvus 服务在本机起不来（Docker 不通，见 §六 阻塞项），因此
-    
-  RAG 只验到「连不上时正确降级」；LangSmith 追踪需要账号与 key，未接入。
+- ⚠️ **已实现、已对着真实 Milvus 引擎验过，但未接入主路径**：知识库检索层（S5）。
+  它在 `graph` 分支里是被调用的，只是默认分支走不到。
+  2026-09-20 第一次对着**真的 Milvus 引擎**跑通了：内嵌版 Milvus（milvus-lite，
+  不需要 Docker）建库 → 写入 12 张真实卡片 → 检索 → 结果进图的 `retrieve` 节点。
+  **这一跑抓出一个此前无人发现的 bug**：`create_collection` 的 `id_type` 默认是
+  `"int"`，而卡片 id 是 `binary-search` 这类字符串 → 每次 upsert 都会
+  `DataNotMatchException: {card_id} field should be a int64`。假客户端两种写法都照收，
+  所以只有真 Milvus 能把它照出来。已修（`id_type="string"`），并加了断言钉住。
+  ⚠️ 仍未验的是 **Milvus 服务**（standalone / cluster）：内嵌引擎不是部署形态，
+  鉴权、大规模索引选择、一致性级别都没被覆盖。
+- ⬜ **真的没有**：Milvus **服务** 在本机起不来（Docker 不通，见 §六 阻塞项）；
+  LangSmith 追踪已接线但无 key 则不发送。
 - **统一口径**：这几项统一说成「**已实现并测试；编排线已接入判题主路径、默认仍走
     
-  单次调用；检索未在真实向量库上验证**」。不要写成「系统已具备」——那会从
+  单次调用；检索已对着真实 Milvus 引擎验证，但未对着 Milvus 服务验证**」。
+  不要写成「系统已具备」——那会从
     
   「说没做」变成「说做了但演示不出来」，同样翻车；也不要反过来硬说「都没实现」，
     
@@ -456,7 +463,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 | **阶段 5** | 检测融入反馈链路                           | 学生端过程提示 ✅；教师端过程标记 ✅；可复核可驳回 ✅                                                                                                                                                                                                     | P2 ✅                                        |
 | **阶段 6** | 收尾                                 | 学情预警 ✅（三条规则：连续 5 次未通过 / 超过 7 天无提交 / 同一错因跨 3 道题反复出现，每条带触发它的数字）；安全加固 ✅（进程级鉴权：侧车校验 `SIDECAR_TOKEN`，执行隔离维持既有的 subprocess + 超时 + 内存上限，按 AGENTS.md §二.3 有意不容器化）                                                                        | P3 ✅                                        |
 | **阶段 7** | **打包与交付**                          | 见下方「阶段 7 的完成定义」——本机做得出来不算数，要能在**没有 Python / Node 的机器**上跑通                                                                                                                                                                        | **P0**：6 条里 **5 条已闭合**，仅第 3 条（安装包）受本机沙箱限制 ⬜ |
-| 阶段 8     | 编排与检索（`AGENTS.md` S4 / S5）         | LangGraph 状态图**已实现并测试，且已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选 `direct` / `graph`，**默认 `direct`** 即原来的单次调用；`graph` 分支已用真实模型端到端验过）✅；知识库检索层**已实现并测试**（`app/rag/` 四模块 + 12 张卡片覆盖 32 个知识点），**Milvus 未对着真实服务验证** ⬜ | P2 部分 ✅（已接线 / 默认未启用 / 未实测）                  |
+| 阶段 8     | 编排与检索（`AGENTS.md` S4 / S5）         | LangGraph 状态图**已实现并测试，且已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选 `direct` / `graph`，**默认 `direct`** 即原来的单次调用；`graph` 分支已用真实模型端到端验过）✅；知识库检索层**已实现并测试**（`app/rag/` 四模块 + 12 张卡片覆盖 32 个知识点），**已于 2026-09-20 对着真实 Milvus 引擎验证**（内嵌 milvus-lite，6 条真实检索测试，**抓出并修掉一个主键类型 bug**）✅；**Milvus 服务**仍未验证 ⬜ | P2 部分 ✅（已接线 / 默认未启用 / 引擎级已实测）                  |
 | 阶段 9     | 多智能体协作（`AGENTS.md` S7）             | ✅ 错因 / 提示 / 变式题三 Agent 分工，**已用真实模型跑通一次完整流程**；✅ **已接线**——`ANALYSIS_PIPELINE=team`（与 S4 共用开关，默认仍是 `direct`）；⚠️ 提示阶梯与变式题**暂不落库**（无字段、无列，记日志后丢弃）                                                                                                      | P3 ✅（已接线 / 默认未启用 / 产物未落库） |
 | 阶段 10    | 评估、可观测与护栏（`AGENTS.md` S8 / S9 / S10 其余） | 记忆与流式（S8）✅ **已接线**（检查点 + Store，默认内存；节点级流式 `agent_step` 已进前端）；评估集 harness ✅ 已写好（20 例 + 结构/行为两层断言），⚠️ **跑一次要打付费端点**，所以只在人工量准确率时跑；LangSmith 追踪 ✅ **已接线**（三层 span，`app/agent/tracing.py`），⚠️ 无 key 则不发送且不影响分析；LangChain 1.x 中间件护栏（PII / ModelFallback / ModelRetry）✅ **已实现、已接线、默认开**（`LLM_GUARDRAILS`）——接在 `analyzer` / `tool_caller` / `team` 三处                                                    | P3 部分 ✅（护栏、记忆、追踪已接线） |
 
@@ -464,7 +471,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 
 | 阻塞                 | 卡住什么              | 现状                                                                                                                                                                                                                    |
 | ------------------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Milvus 起不来**     | 阶段 8 的**检索层真实验证** | 本机 Docker 不通（`wsl.exe` 被安全策略拉黑，见「环境陷阱」）。检索层代码（`app/rag/`）已实现并测过，**降级路径也用真实 pymilvus 验过**；没验的只是「连上之后」那一段。`AGENTS.md` §二.2 锁定向量检索**只用 Milvus**，不换 Chroma / sqlite-vec，所以这项要换一台能跑 Docker 的机器，或起 Milvus 服务后接 `MILVUS_URI` |
+| **Milvus 服务起不来**   | 阶段 8 的**检索层服务级验证** | 本机 Docker 不通（`wsl.exe` 被安全策略拉黑，见「环境陷阱」）。⚠️ 但**「引擎级」这一层已于 2026-09-20 补上**：`milvus-lite` 是 Milvus 的**内嵌**构建，不需要 Docker 也能在 Windows 上起一个真 Milvus 引擎，`tests/test_rag_milvus_live.py` 用它把 12 张真实卡片写进去再检索出来（并抓出一个真 bug，见上）。**仍没验的是 Milvus 服务**（standalone / cluster 走 `MILVUS_URI`）——鉴权、大规模索引选择、一致性级别，内嵌版都不覆盖。`AGENTS.md` §二.2 锁定向量检索**只用 Milvus**（milvus-lite 本身就是 Milvus，不违反），所以服务级验证要么换一台能跑 Docker 的机器，要么起 Milvus 服务后接 `MILVUS_URI`。要跑那 6 条测试：`pip install milvus-lite`（**不是项目依赖**，会带进 faiss-cpu / pyarrow，已写进打包 `excludes`） |
 | **LangSmith 需要账号** | 阶段 10 的追踪**发送**   | ⚠️ 别把这项读成「追踪没做」——`app/agent/tracing.py` **已接线**，`pipeline.analyse` / `run_analysis_graph` / `analyze_error` 三层都挂了 LangSmith span，`main.py` 启动时按 `LANGSMITH_API_KEY` 配置。缺的只是一个 key：**没有 key 就没有 span 发出去**，分析本身不受影响。另有一层容易踩空的事实：本项目走 `app/llm/gateway.py` 的 httpx 调用，**不是** LangChain chat model，所以 LangSmith 的自动埋点抓不到任何东西——**只配 key 不挂 span 的话项目里一条 trace 都不会出现**，而且不会有任何报错。接线正是为这个 |
 
 
