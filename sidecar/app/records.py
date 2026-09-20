@@ -73,9 +73,7 @@ and the result is written back to ``agent_error_type`` /
 
 from __future__ import annotations
 
-import hashlib
 import logging
-from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from sqlalchemy import select
@@ -92,198 +90,53 @@ from app.models.mistake_book import (
 from app.models.problem import Problem
 from app.models.recurrence import Recurrence, find_recurrence
 from app.models.submission import Submission
-from app.process_trace import ProcessTrace, describe, from_trace
-from app.sandbox.judge import JudgeResult, JudgeStatus
+from app.process_trace import describe, from_trace
+from app.records_suggestion import (
+    _SUGGESTION_LABELS,
+    _format_suggestion,
+    split_suggestion,
+)
+from app.records_support import (
+    _ARCHIVABLE,
+    SubmissionContext,
+    _assemble_statement,
+    _code_fingerprint,
+    _find_open_duplicate,
+    _first_failing_case,
+    _has_open_duplicate,
+    _pick_output,
+    _worst_measurements,
+)
+from app.sandbox.judge import JudgeResult
 
 logger = logging.getLogger(__name__)
 
-#: Verdicts that get filed in the mistake book. Everything except AC:
-#: a TLE or a CE is just as much a mistake the user wants to revisit, and
-#: limiting this to WA would silently drop the cases the agent is most
-#: useful for.
-_ARCHIVABLE = frozenset(
-    {
-        JudgeStatus.WA,
-        JudgeStatus.TLE,
-        JudgeStatus.MLE,
-        JudgeStatus.CE,
-        JudgeStatus.RE,
-    }
-)
+# app.records stays the single import surface for callers and tests:
+# the helpers above now live in their own modules but are still reachable
+# from here, so `from app.records import SubmissionContext` keeps working
+# unchanged. Listed explicitly because Ruff reads __all__ as "used".
+__all__ = [
+    "SubmissionContext",
+    "_ARCHIVABLE",
+    "_SUGGESTION_LABELS",
+    "_analyse_and_annotate",
+    "_archive_mistake",
+    "_assemble_statement",
+    "_code_fingerprint",
+    "_find_open_duplicate",
+    "_first_failing_case",
+    "_format_suggestion",
+    "_has_open_duplicate",
+    "_pick_output",
+    "_worst_measurements",
+    "analyse_submission",
+    "record_submission",
+    "record_submission_quietly",
+    "reanalyse_entry",
+    "split_suggestion",
+    "will_analyse",
+]
 
-
-@dataclass
-class SubmissionContext:
-    """Everything about a judge run that is not part of the verdict.
-
-    Grouped into a dataclass rather than passed as seven positional
-    arguments, because the two call sites (REST and WebSocket) have the
-    same set and a misordered argument would be a silent data corruption
-    — swapping ``stdout`` and ``stderr`` type-checks fine.
-    """
-
-    code: str
-    language: str
-    #: Problem the run was made against, or None for a free run.
-    problem_id: Optional[int] = None
-    #: Accepted for symmetry and future use; the per-anchor time limit is
-    #: not stored on the row, but callers that know it should pass it so
-    #: the signature does not change later.
-    time_limit: Optional[float] = None
-    mem_limit_mb: Optional[int] = None
-    #: Overrides recorded only when set.
-    tags: list[str] = field(default_factory=list)
-    #: The editor's behaviour trace for the session that produced this
-    #: submission (C1), or ``None`` when the caller has none — which is
-    #: the normal case for the REST route, for an older client, and for
-    #: anything submitted outside the editor. ``None`` is recorded as
-    #: "no process observed", never as a clean process.
-    trace: Optional[ProcessTrace] = None
-    #: Who submitted it (B1), or ``None`` for an unowned run. Carried
-    #: here rather than resolved inside the write so both entry points
-    #: decide it the same way and the router — which is where the
-    #: credential is available — stays the only place that reads it.
-    user_id: Optional[int] = None
-
-
-def _pick_output(result: JudgeResult) -> tuple[str, str]:
-    """Choose which case's output to store.
-
-    The first failing case is the informative one — it is where the
-    program went wrong, and it is what the user needs to see to fix the
-    code. When everything passed, the last case is stored so the field is
-    not empty for no reason.
-
-    CE is special: compilation produced no cases at all, so the compiler
-    diagnostics go in ``stderr`` instead, which is where a user looks for
-    them.
-    """
-    if result.status == JudgeStatus.CE:
-        return "", result.compile_output
-
-    failing = next(
-        (tc for tc in result.test_cases if tc.status != JudgeStatus.AC), None
-    )
-    chosen = failing if failing is not None else (
-        result.test_cases[-1] if result.test_cases else None
-    )
-    if chosen is None:
-        return "", ""
-    return chosen.actual_output, chosen.stderr
-
-
-def _worst_measurements(result: JudgeResult) -> tuple[Optional[float], Optional[int]]:
-    """Aggregate per-case timings into one (seconds, megabytes) pair.
-
-    The **worst** time and the **largest** memory across cases, not the
-    sum: a limit is per case, so the sum is not a quantity any limit
-    applies to and would grow with the case count for no reason.
-
-    Returns ``(None, None)`` when nothing was measured — a CE run has no
-    cases, and a run whose cases were all killed before a sample was
-    taken has no memory figure. Reporting 0 for those would state "ran
-    instantly, used no memory", which is a different and false claim.
-    """
-    times = [tc.exec_time for tc in result.test_cases if tc.exec_time is not None]
-    mems = [tc.memory_used for tc in result.test_cases if tc.memory_used is not None]
-    return (max(times) if times else None, max(mems) if mems else None)
-
-
-def _code_fingerprint(*parts: str) -> str:
-    """Stable short digest used to compare two submissions' code.
-
-    Hashed rather than compared directly because the comparison happens
-    in SQL: two long sources stored in ``Text`` columns would have to be
-    compared in full for every candidate row, and on SQLite a mismatch
-    between how the two drivers normalize line endings would make the
-    comparison unreliable. A digest makes the comparison a fixed-size
-    string equality and sidesteps the newline question entirely.
-
-    The parts are joined with a NUL, which cannot appear in any of them.
-    """
-    joined = "\x00".join(parts)
-    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
-
-
-def _find_open_duplicate(
-    session: Session, problem_id: int, fingerprint: str
-) -> Optional[MistakeBookEntry]:
-    """Return the existing un-annotated entry for this code, if any.
-
-    "Open" means ``error_cause`` is still empty — the state PU-13 leaves
-    an auto-archived entry in. Once the agent annotates an entry it is no
-    longer open, and a later identical failure gets its own row.
-
-    Returns the entry itself rather than a bool because P2-4 annotates
-    whichever entry it ends up with; re-querying it afterwards would be a
-    second round trip for a value already in hand.
-    """
-    stmt = (
-        select(MistakeBookEntry)
-        .where(MistakeBookEntry.problem_id == problem_id)
-        .where(MistakeBookEntry.error_cause == "")
-        .where(MistakeBookEntry.error_cause_fingerprint == fingerprint)
-        .limit(1)
-    )
-    return session.execute(stmt).scalars().first()
-
-
-def _has_open_duplicate(session: Session, problem_id: int, fingerprint: str) -> bool:
-    """Boolean form of :func:`_find_open_duplicate`.
-
-    Kept as its own function because the question "is this a duplicate?"
-    is asked on its own in tests and reads better than ``is not None``
-    at a call site.
-    """
-    return _find_open_duplicate(session, problem_id, fingerprint) is not None
-
-
-def _assemble_statement(problem: Problem) -> str:
-    """Flatten a :class:`Problem`'s statement fields into one string.
-
-    PU-11 stores a statement as three columns (``description``,
-    ``input_format``, ``output_format``) plus a samples list, because that
-    is how the UI renders it. The agent wants one text block, and it
-    wants the input/output format rules specifically: a large share of
-    the ``io_format_error`` label depends on the model having seen them.
-
-    Empty sections are skipped rather than emitted as blank headings, and
-    the whole thing degrades to "" when the problem has no statement at
-    all — ``analyze_error`` then substitutes its own explicit "题面未提供"
-    note, which is a claim the model can act on.
-    """
-    parts = []
-
-    description = (problem.description or "").strip()
-    if description:
-        parts.append(description)
-
-    input_format = (problem.input_format or "").strip()
-    if input_format:
-        parts.append(f"输入格式：\n{input_format}")
-
-    output_format = (problem.output_format or "").strip()
-    if output_format:
-        parts.append(f"输出格式：\n{output_format}")
-
-    return "\n\n".join(parts)
-
-
-def _first_failing_case(result: JudgeResult) -> Optional[Any]:
-    """The case the analysis is built around, or None when there is none.
-
-    The analysis needs one case's input, expected output and actual
-    output. "Failing" means anything that is not AC — a TLE has no wrong
-    output but is still the case the student needs explained.
-
-    Shared with :func:`will_analyse` so that "an analysis will follow
-    this verdict" and "there is a case to analyse" cannot drift apart.
-    A CE is what makes the distinction visible: the entry is filed, but
-    the judge ran no case, so no analysis can be built for it.
-    """
-    return next(
-        (tc for tc in result.test_cases if tc.status != JudgeStatus.AC), None
-    )
 
 
 def _analyse_and_annotate(
@@ -513,117 +366,6 @@ def _find_recurrence(
         return Recurrence(label=error_type)
 
 
-def _format_suggestion(analysis: object) -> str:
-    """Join the analysis prose into the single text column.
-
-    The three prose fields share one column rather than three because
-    they are written as a unit and were, until :func:`split_suggestion`
-    existed, read as a unit too. Labelled with their Chinese headings so
-    the stored string is still readable when dumped straight into a
-    terminal or a bug report.
-
-    The labels are load-bearing: :func:`split_suggestion` parses them
-    back out, and the frontend uses the split to release the three
-    parts one at a time instead of handing the student the fix up
-    front. So the format here and the parser below are one contract —
-    change one, change both, and :data:`_SUGGESTION_LABELS` is the
-    single source for the label strings.
-    """
-    detail = getattr(analysis, "error_detail", "") or ""
-    hint = getattr(analysis, "hint", "") or ""
-    fix = getattr(analysis, "suggested_fix", "") or ""
-
-    parts = []
-    if detail:
-        parts.append(f"{_SUGGESTION_LABELS['error_detail']}{detail}")
-    if hint:
-        parts.append(f"{_SUGGESTION_LABELS['hint']}{hint}")
-    if fix:
-        parts.append(f"{_SUGGESTION_LABELS['suggested_fix']}{fix}")
-    return "\n".join(parts)
-
-
-#: The Chinese headings ``_format_suggestion`` writes and
-#: :func:`split_suggestion` reads back. Kept as data rather than as
-#: literals in both functions so a reworded heading cannot desynchronise
-#: the writer from the parser.
-_SUGGESTION_LABELS: dict[str, str] = {
-    "error_detail": "【错在哪】",
-    "hint": "【提示】",
-    "suggested_fix": "【怎么改】",
-}
-
-
-def split_suggestion(suggestion: str) -> dict[str, str]:
-    """Split ``agent_suggestion`` back into its three prose fields.
-
-    The inverse of :func:`_format_suggestion`. Exists so the API can
-    serve the parts separately and the frontend can release them one at
-    a time — the point of which is pedagogical: ``hint`` is a nudge and
-    ``suggested_fix`` is the answer, and presenting them together means
-    the student reads the answer and never uses the nudge. The storage
-    format is unchanged; only the read path gained structure.
-
-    Parsed leniently rather than strictly, for three reasons:
-
-    * **Old rows.** ``agent_suggestion`` is free text that predates any
-      contract. A row written before a label was renamed, or by a
-      different prompt version, simply won't match — and must still
-      render. Anything unmatched is returned as-is under
-      ``error_detail``, which is the field the UI always shows first, so
-      the worst case is "the whole text appears at once" (the old
-      behaviour) rather than "the text disappears".
-    * **Model-authored newlines.** The prose itself may contain the
-      label of a *later* section, or contain no label at all. Splitting
-      on the first occurrence of each known label in order is enough to
-      survive that; a strict line-by-line grammar would not.
-    * **Cost of being wrong.** A false split shows a student a
-      mislabelled paragraph. A lost split shows nothing. The lenient
-      path degrades to the previous behaviour, so this is the safe
-      direction to fail in.
-
-    Args:
-        suggestion: The stored column value. May be empty, may be
-            unlabelled free text, may hold any subset of the three
-            sections.
-
-    Returns:
-        A dict with keys ``error_detail``, ``hint`` and ``suggested_fix``.
-        Every key is present; a section that was not found is ``""``.
-        When no label matches at all, the whole input is returned under
-        ``error_detail``.
-    """
-    if not suggestion:
-        return {"error_detail": "", "hint": "", "suggested_fix": ""}
-
-    # Locate each label, keeping only the first occurrence of each. A
-    # label appearing later inside another section's prose is ignored,
-    # because by then we already have that section's start.
-    found: list[tuple[int, str]] = []
-    # `section`, not `field`: `field` is the dataclasses import above, and
-    # shadowing an import inside a loop is the kind of thing that turns
-    # into a real bug the moment the function grows a `@dataclass`.
-    for section, label in _SUGGESTION_LABELS.items():
-        at = suggestion.find(label)
-        if at != -1:
-            found.append((at, section))
-
-    if not found:
-        # Unlabelled free text: hand it back whole so the UI still has
-        # something to show.
-        return {
-            "error_detail": suggestion,
-            "hint": "",
-            "suggested_fix": "",
-        }
-
-    found.sort()
-    result = {"error_detail": "", "hint": "", "suggested_fix": ""}
-    for index, (start, section) in enumerate(found):
-        body_start = start + len(_SUGGESTION_LABELS[section])
-        body_end = found[index + 1][0] if index + 1 < len(found) else len(suggestion)
-        result[section] = suggestion[body_start:body_end].strip()
-    return result
 
 
 def _archive_mistake(
