@@ -9,6 +9,7 @@ import {
   installExitHook,
   onSidecarInfoChanged,
 } from './sidecar'
+import { ensurePostgres, stopPostgres } from './pg'
 import { createSplashWindow, setSplashStatus, closeSplash } from './splash'
 
 // PU-1: catch abnormal exits (crash, uncaught exception) that would
@@ -181,7 +182,14 @@ app.whenReady().then(async () => {
     return
   }
 
-  setSplashStatus('启动分析引擎…')
+  setSplashStatus('启动数据库…')
+
+  // The sidecar's DATABASE_URL points at PostgreSQL, and /health does not
+  // touch the database — so without this the app would come up looking
+  // healthy while every page hangs and reports "Network Error".
+  const dbReady = await ensurePostgres((message) => setSplashStatus(message))
+
+  setSplashStatus(dbReady ? '启动分析引擎…' : '数据库未就绪，将继续启动…')
 
   let sidecarFailed = false
   try {
@@ -194,7 +202,9 @@ app.whenReady().then(async () => {
     console.error('[main] failed to start sidecar:', (err as Error).message)
   }
 
-  setSplashStatus(sidecarFailed ? '分析引擎未就绪，将继续启动…' : '准备就绪')
+  setSplashStatus(
+    sidecarFailed ? '分析引擎未就绪，将继续启动…' : dbReady ? '准备就绪' : '数据库未就绪，将继续启动…'
+  )
 
   // See MIN_SPLASH_MS.
   const elapsed = Date.now() - splashShownAt
@@ -240,6 +250,12 @@ app.on('before-quit', (event) => {
     .then(() => stopSidecar())
     .catch((err) => {
       console.error('[main] sidecar teardown failed:', (err as Error).message)
+    })
+    // Only stops PostgreSQL if this process started it, and with `-m fast`
+    // so the next launch does not pay 40 seconds of crash recovery.
+    .then(() => stopPostgres())
+    .catch((err) => {
+      console.error('[main] postgres teardown failed:', (err as Error).message)
     })
     .finally(() => {
       app.quit()
