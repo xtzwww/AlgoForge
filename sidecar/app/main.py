@@ -8,6 +8,7 @@ feature module owns its own router.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agent.tracing import configure_tracing
 from app.api.assignments import router as assignments_router
 from app.api.auth import router as auth_router
 from app.api.env_check import router as env_check_router
@@ -99,3 +100,13 @@ app.include_router(profile_router)
 app.include_router(review_router)
 app.include_router(teacher_router)
 app.include_router(assignments_router)
+
+# S9: LangSmith tracing, configured once at startup from settings.
+#
+# Called here rather than inside a request because the tracer reads the
+# environment when a span opens, and the environment has to already hold
+# the key by then. Off entirely when LANGSMITH_API_KEY is unset — and
+# note that setting the key is *not* enough on its own: the LLM calls go
+# through app.llm.gateway over httpx, not through a LangChain chat model,
+# so nothing is traced unless app.agent.tracing wraps our own functions.
+configure_tracing()

@@ -43,6 +43,7 @@ from app.agent.schemas import (
     ErrorAnalysisResult,
     parse_error_analysis,
 )
+from app.agent.tracing import traceable_if_enabled
 from app.config import settings
 from app.llm.gateway import LLMGatewayError, chat_completion
 from app.prompts import loader
@@ -295,6 +296,7 @@ def _analyse_once(
         return "", f"{type(exc).__name__}: {exc}", []
 
 
+@traceable_if_enabled("analyze_error")
 def analyze_error(
     code: str,
     stdin: str,

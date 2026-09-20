@@ -224,7 +224,7 @@
 | 前端构建 | electron-vite（vue-ts 模板）                                                                          |
 | 后端依赖 | pip + requirements.txt                                                                            |
 | 代码规范 | ESLint + Prettier（前端）/ Ruff（后端）                                                                   |
-| 测试   | pytest（后端，2026-09-20 实测 **1089 通过 / 3 跳过**，另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，57 用例） |
+| 测试   | pytest（后端，2026-09-20 实测 **1100 通过 / 3 跳过**，另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，57 用例） |
 | CI   | GitHub Actions（`.github/workflows/ci.yml`）                                                        |
 
 ---
@@ -296,6 +296,7 @@
 | **知识库检索层（RAG，S5）**                            | ✅ **已实现并测试**（`app/rag/` 四模块：卡片读取 / 索引器 / 检索器 / 字段契约；12 张知识卡片覆盖 32 个知识点）；⚠️ **未在真实向量库上验证**（Milvus 三个调用从未对着真实服务执行过），连不上时降级为 `NullRetriever`                                                                                                                    |
 | **多智能体协作（S7）**                                | ✅ **已实现、已接线、默认关**（`app/agent/team.py`：诊断子图 + 提示 / 变式题两工作者并行 + 汇总节点；`ANALYSIS_PIPELINE=team` 与 S4 共用开关）。⚠️ **只有诊断落库**——提示阶梯与变式题没有存放位置（`AnalysisOutcome` 无对应字段、错题本无对应列），记日志后丢弃 |
 | **记忆与流式（S8）**                                  | ✅ **已实现、已接线**（`app/agent/memory.py`：检查点=短期记忆、Store=长期记忆，配了 `LANGGRAPH_CHECKPOINT_URI` 且包装了就走 PostgreSQL，否则退回内存**并在日志里说清为什么**；节点级流式 `agent_step` 已并入 P2-8 那条 WebSocket 事件流，前端显示「正在检索知识点…」）。⚠️ **检查点目前走内存**——`langgraph-checkpoint-postgres` 没装，进程退出即失效；⚠️ **流式是节点级不是 token 级**——网关没有流式调用，做不到「模型写到一半」                        |
+| **追踪（S9 的可观测部分）**                              | ✅ **已实现、已接线、默认关**（`app/agent/tracing.py`：`pipeline.analyse` / `run_analysis_graph` / `analyze_error` 三层 LangSmith span，启动时按 `LANGSMITH_API_KEY` 配置）。⚠️ **没有 key 就一条 trace 都不会发出**，且不会报错——本项目走 `app/llm/gateway.py` 的 httpx 调用而非 LangChain chat model，LangSmith 的**自动**埋点抓不到任何东西，所以「配了 key」不等于「有 trace」，span 必须挂在我们自己的函数上                                    |
 | **模型调用护栏（S10）**                               | ✅ **已实现、已接线、默认开**（`app/agent/guardrails.py`：PII 脱敏 / 瞬时重试 / provider 兜底链）。接在 `analyzer` 文本分支、`tool_caller` 工具循环、`team` 三个工作者三处；`LLM_GUARDRAILS=false` 可一键回退到直连网关                                             |
 
 **题目里的「智能体」指什么。** 题目是「基于智能体的编程课程学习过程分析与反馈
@@ -341,6 +342,15 @@
   流式是 `graph.stream` 的**节点级**进度（`agent_step` → 「正在检索知识点…」），
   **不是 token 级**：`app/llm/gateway.py` 没有流式调用，做不到「模型写到一半」，
   不假装能做。
+- ✅ **已接线**：LangSmith 追踪（S9 的可观测部分，`app/agent/tracing.py`）。
+  `pipeline.analyse` / `run_analysis_graph` / `analyze_error` 三层各挂一个 span，
+  互相嵌套，所以一次分析在 LangSmith 里是一棵树而不是三条平铺记录。
+  ⚠️ **这里有个极易踩空的事实**：本项目调模型走的是 `app/llm/gateway.py` 的
+  httpx 请求，**不是** LangChain chat model——而 LangSmith 的**自动**埋点只认它
+  自己认识的对象。所以「把 `LANGSMITH_API_KEY` 配上」这件事**一条 trace 都不会
+  产生**，而且没有任何报错：从外面看，「已配置」和「静默什么都没抓到」长得一模
+  一样。span 必须挂在我们自己的函数上，这就是 `tracing.py` 存在的理由。
+  没有 key 时装饰器就是恒等函数，一个 HTTP 请求都不发。
 - ⚠️ **已实现并测试，但未接入主路径**：知识库检索层（S5）。它在 `graph` 分支里
   是被调用的，只是默认分支走不到；另有一条：
   **Milvus 调用从未对着真实服务跑过**。
@@ -448,14 +458,14 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 | **阶段 7** | **打包与交付**                          | 见下方「阶段 7 的完成定义」——本机做得出来不算数，要能在**没有 Python / Node 的机器**上跑通                                                                                                                                                                        | **P0**：6 条里 **5 条已闭合**，仅第 3 条（安装包）受本机沙箱限制 ⬜ |
 | 阶段 8     | 编排与检索（`AGENTS.md` S4 / S5）         | LangGraph 状态图**已实现并测试，且已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选 `direct` / `graph`，**默认 `direct`** 即原来的单次调用；`graph` 分支已用真实模型端到端验过）✅；知识库检索层**已实现并测试**（`app/rag/` 四模块 + 12 张卡片覆盖 32 个知识点），**Milvus 未对着真实服务验证** ⬜ | P2 部分 ✅（已接线 / 默认未启用 / 未实测）                  |
 | 阶段 9     | 多智能体协作（`AGENTS.md` S7）             | ✅ 错因 / 提示 / 变式题三 Agent 分工，**已用真实模型跑通一次完整流程**；✅ **已接线**——`ANALYSIS_PIPELINE=team`（与 S4 共用开关，默认仍是 `direct`）；⚠️ 提示阶梯与变式题**暂不落库**（无字段、无列，记日志后丢弃）                                                                                                      | P3 ✅（已接线 / 默认未启用 / 产物未落库） |
-| 阶段 10    | 评估、可观测与护栏（`AGENTS.md` S8 / S9 / S10 其余） | 记忆与流式（S8）✅ **已接线**（检查点 + Store，默认内存；节点级流式 `agent_step` 已进前端）；评估集跑通 ⬜；LangSmith 追踪接入 ⬜（需 key）；LangChain 1.x 中间件护栏（PII / ModelFallback / ModelRetry）✅ **已实现、已接线、默认开**（`LLM_GUARDRAILS`）——接在 `analyzer` / `tool_caller` / `team` 三处                                                    | P3 部分 ✅（护栏与记忆已接线） |
+| 阶段 10    | 评估、可观测与护栏（`AGENTS.md` S8 / S9 / S10 其余） | 记忆与流式（S8）✅ **已接线**（检查点 + Store，默认内存；节点级流式 `agent_step` 已进前端）；评估集 harness ✅ 已写好（20 例 + 结构/行为两层断言），⚠️ **跑一次要打付费端点**，所以只在人工量准确率时跑；LangSmith 追踪 ✅ **已接线**（三层 span，`app/agent/tracing.py`），⚠️ 无 key 则不发送且不影响分析；LangChain 1.x 中间件护栏（PII / ModelFallback / ModelRetry）✅ **已实现、已接线、默认开**（`LLM_GUARDRAILS`）——接在 `analyzer` / `tool_caller` / `team` 三处                                                    | P3 部分 ✅（护栏、记忆、追踪已接线） |
 
 ### 阶段 8–10 的阻塞项
 
 | 阻塞                 | 卡住什么              | 现状                                                                                                                                                                                                                    |
 | ------------------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Milvus 起不来**     | 阶段 8 的**检索层真实验证** | 本机 Docker 不通（`wsl.exe` 被安全策略拉黑，见「环境陷阱」）。检索层代码（`app/rag/`）已实现并测过，**降级路径也用真实 pymilvus 验过**；没验的只是「连上之后」那一段。`AGENTS.md` §二.2 锁定向量检索**只用 Milvus**，不换 Chroma / sqlite-vec，所以这项要换一台能跑 Docker 的机器，或起 Milvus 服务后接 `MILVUS_URI` |
-| **LangSmith 需要账号** | 阶段 10 的追踪部分       | 需要 `LANGSMITH_API_KEY`。没有 key 时评估集照样能跑，只是没有追踪                                                                                                                                                                         |
+| **LangSmith 需要账号** | 阶段 10 的追踪**发送**   | ⚠️ 别把这项读成「追踪没做」——`app/agent/tracing.py` **已接线**，`pipeline.analyse` / `run_analysis_graph` / `analyze_error` 三层都挂了 LangSmith span，`main.py` 启动时按 `LANGSMITH_API_KEY` 配置。缺的只是一个 key：**没有 key 就没有 span 发出去**，分析本身不受影响。另有一层容易踩空的事实：本项目走 `app/llm/gateway.py` 的 httpx 调用，**不是** LangChain chat model，所以 LangSmith 的自动埋点抓不到任何东西——**只配 key 不挂 span 的话项目里一条 trace 都不会出现**，而且不会有任何报错。接线正是为这个 |
 
 
 ### 阶段 7 的完成定义（打包）

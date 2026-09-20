@@ -75,6 +75,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agent import memory
 from app.agent.analyzer import AnalysisOutcome, analyze_error
 from app.agent.schemas import ErrorAnalysisResult
+from app.agent.tracing import traceable_if_enabled
 from app.rag.retriever import (
     RetrievedCard,
     Retriever,
@@ -390,6 +391,7 @@ def build_analysis_graph(
     return graph.compile(checkpointer=checkpointer, store=store)
 
 
+@traceable_if_enabled("run_analysis_graph")
 def run_analysis_graph(
     code: str,
     stdin: str,

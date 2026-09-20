@@ -52,6 +52,7 @@ from app.agent.analyzer import (
     AnalysisOutcome,
     analyze_error,
 )
+from app.agent.tracing import traceable_if_enabled
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,7 @@ def resolved_pipeline() -> str:
     return DEFAULT_PIPELINE
 
 
+@traceable_if_enabled("analyse_submission")
 def analyse(
     code: str,
     stdin: str,

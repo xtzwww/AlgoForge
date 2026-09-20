@@ -191,6 +191,12 @@ def _no_real_llm_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     # fake backend rather than reaching a real server.
     monkeypatch.setattr(settings, "langgraph_checkpoint_uri", "")
 
+    # S9: no LangSmith either. With a key configured, `configure_tracing`
+    # turns tracing on and every traced function starts backgrounding HTTP
+    # requests to smith.langchain.com — from inside a test run, for no
+    # reason any test asserts on.
+    monkeypatch.setattr(settings, "langsmith_api_key", "")
+
 
 @pytest.fixture
 def ascii_tmp_path() -> Path:
