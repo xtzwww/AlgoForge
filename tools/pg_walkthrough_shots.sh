@@ -56,7 +56,7 @@ cleanup() {
   [ -n "$SIDECAR_PID" ] && kill "$SIDECAR_PID" 2>/dev/null
   if [ "$PG_UP" = 1 ]; then
     echo "[收尾] 停止 PostgreSQL（干净停止，下次启动不用崩溃恢复）"
-    (cd "$PG_HOME" && env COMSPEC="$NOCMD_WIN" "$PG_BIN/pg_ctl.exe" -D "$PG_DATA" -m fast stop 2>&1 | tail -1)
+    (cd "$PG_HOME" && COMSPEC="$NOCMD_WIN" "$PG_BIN/pg_ctl.exe" -D "$PG_DATA" -m fast stop 2>&1 | tail -1)
   fi
 }
 trap cleanup EXIT
@@ -69,7 +69,9 @@ if [ -f "$PG_DATA/postmaster.pid" ] && ! tasklist 2>/dev/null | grep -qi postgre
   rm -f "$PG_DATA/postmaster.pid"
 fi
 echo "[1/6] 启动 PostgreSQL"
-(cd "$PG_HOME" && env COMSPEC="$NOCMD_WIN" "$PG_BIN/postgres.exe" -D "$PG_DATA" \
+# COMSPEC 用前缀赋值（只作用于这一条命令，且不会 export 出去污染后续 popen）。
+# 不能用 `env COMSPEC=... cmd`：本机 ~/.local/bin/env 是空壳脚本，会整条吞掉、rc=0。
+(cd "$PG_HOME" && COMSPEC="$NOCMD_WIN" "$PG_BIN/postgres.exe" -D "$PG_DATA" \
     > "$PG_HOME/pg_shots.log" 2>&1 &)
 PG_UP=1
 ready=no
@@ -83,13 +85,19 @@ done
 
 # --- 2. 迁移 -------------------------------------------------------------
 echo "[2/6] alembic upgrade head"
-(cd "$REPO/sidecar" && env -u PYTHONPATH ./.venv/Scripts/python.exe -m alembic \
-    -x "db_url=$PG_DSN_PSYCOPG" upgrade head 2>&1 | tail -3) || die "迁移失败"
+(unset PYTHONPATH; cd "$REPO/sidecar"; exec ./.venv/Scripts/python.exe -m alembic \
+    -x "db_url=$PG_DSN_PSYCOPG" upgrade head) 2>&1 | tail -3
+[ "${PIPESTATUS[0]}" = 0 ] || die "迁移失败"
 
 # --- 3. sidecar ----------------------------------------------------------
 echo "[3/6] 启动 sidecar（DATABASE_URL 指向真 PostgreSQL）"
-# 不用子 shell 起，否则 $! 拿不到真实 PID（也就得靠 netstat/taskkill 兜底，
-# 而那两个命令会触发沙箱升级——升级后 PostgreSQL 反而起不来，实测过）。
+# 用「子 shell + exec」起：exec 不换 PID，所以 $! 拿到的**就是** uvicorn 自己，
+# 可以直接 kill（不必靠 netstat/taskkill 兜底——那两个会触发沙箱升级，
+# 升级后 PostgreSQL 反而起不来，实测过）。
+#
+# 之所以要子 shell：本机 ~/.local/bin/env 是个空壳脚本（忽略全部参数、不执行、
+# 返回 0），`env -u PYTHONPATH ...` 是彻底的空操作，改写成子 shell 里 `unset`
+# 再 `exec` 才能真的清掉变量。
 #
 # 关于沙箱升级的额外说明：本机测试时 `bash tools/pg_walkthrough_shots.sh` 这条
 # 形式会被识别为「可能要运行高风险命令」而弹升级，升级后 PG 启动直接失败
@@ -97,10 +105,10 @@ echo "[3/6] 启动 sidecar（DATABASE_URL 指向真 PostgreSQL）"
 #（不要 `bash script.sh`，而是把步骤直接写在命令字符串中）。这是本机沙箱的特
 # 殊行为，与脚本无关；用户自己在非沙箱里跑这个脚本不会有这个问题。
 cd "$REPO/sidecar" || die "没有 sidecar/ 目录"
-env -u PYTHONPATH DATABASE_URL="$PG_DSN" \
-    SIDECAR_PORT="$SIDECAR_PORT" SIDECAR_TOKEN="$SIDECAR_TOKEN" \
-    .venv/Scripts/python.exe -u -m uvicorn app.main:app \
-    --host 127.0.0.1 --port "$SIDECAR_PORT" > C:/Windows/Temp/uv_shots.log 2>&1 &
+( unset PYTHONPATH
+  export DATABASE_URL="$PG_DSN" SIDECAR_PORT="$SIDECAR_PORT" SIDECAR_TOKEN="$SIDECAR_TOKEN"
+  exec .venv/Scripts/python.exe -u -m uvicorn app.main:app \
+    --host 127.0.0.1 --port "$SIDECAR_PORT" ) > C:/Windows/Temp/uv_shots.log 2>&1 &
 SIDECAR_PID=$!
 for i in $(seq 1 30); do
   if curl -sf --noproxy '*' -m 2 "http://127.0.0.1:$SIDECAR_PORT/health" >/dev/null 2>&1; then
@@ -115,23 +123,23 @@ curl -sf --noproxy '*' -m 3 "http://127.0.0.1:$SIDECAR_PORT/health" >/dev/null 2
 echo "[4/6] 检查已有数据"
 COUNT="$(curl -sf --noproxy '*' -m 5 -H "X-Sidecar-Token: $SIDECAR_TOKEN" \
     "http://127.0.0.1:$SIDECAR_PORT/api/v1/problems?limit=1" |
-    env -u PYTHONPATH "$REPO/sidecar/.venv/Scripts/python.exe" -c \
-    'import json,sys; print(json.load(sys.stdin).get("total", 0))' 2>/dev/null || echo 0)"
+    ( unset PYTHONPATH; exec "$REPO/sidecar/.venv/Scripts/python.exe" -c \
+    'import json,sys; print(json.load(sys.stdin).get("total", 0))' ) 2>/dev/null || echo 0)"
 echo "      题库 $COUNT 道"
 if [ "${COUNT:-0}" -lt 1 ] 2>/dev/null; then
   echo "      灌入 20 道题（每题真实编译，约 1 分钟）…"
-  (cd "$REPO" && env -u PYTHONPATH DATABASE_URL="$PG_DSN" \
-      sidecar/.venv/Scripts/python.exe tools/load_problems.py 2>&1 | tail -3)
+  ( unset PYTHONPATH; export DATABASE_URL="$PG_DSN"; cd "$REPO"
+    exec sidecar/.venv/Scripts/python.exe tools/load_problems.py ) 2>&1 | tail -3
 fi
 
 # --- 5. vite（网页版）----------------------------------------------------
 echo "[5/6] 启动 vite（网页版，指向上面的 sidecar）"
 mkdir -p "$OUT_DIR"
 cd "$REPO/desktop" || die "没有 desktop/ 目录"
-env VITE_SIDECAR_URL="http://127.0.0.1:$SIDECAR_PORT" \
-    VITE_SIDECAR_TOKEN="$SIDECAR_TOKEN" \
-    ./node_modules/.bin/vite --config vite.config.web.ts --mode web \
-    --port "$VITE_PORT" --strictPort > C:/Windows/Temp/vite_shots.log 2>&1 &
+( export VITE_SIDECAR_URL="http://127.0.0.1:$SIDECAR_PORT" \
+    VITE_SIDECAR_TOKEN="$SIDECAR_TOKEN"
+  exec ./node_modules/.bin/vite --config vite.config.web.ts --mode web \
+    --port "$VITE_PORT" --strictPort ) > C:/Windows/Temp/vite_shots.log 2>&1 &
 VITE_PID=$!
 for i in $(seq 1 40); do
   if curl -sf --noproxy '*' -m 2 "http://127.0.0.1:$VITE_PORT/" >/dev/null 2>&1; then
