@@ -20,10 +20,33 @@
 # 对应的前端配置在 desktop/.env.web：
 #   VITE_SIDECAR_URL=http://127.0.0.1:8123
 #   VITE_SIDECAR_TOKEN=dev-local-token   ← 必须与下面的 SIDECAR_TOKEN 一致
+#
+# ⚠️ 绝不要用 `env` 来设或清环境变量（2026-09-20 实测，踩过）
+# ------------------------------------------------------------
+# 本机 `~/.local/bin/env` 覆盖了 `/usr/bin/env`，而它是个 328 字节的空壳脚本：
+# **忽略全部参数、什么都不执行、还返回 0**。所以下面这两种写法都是彻底的空操作：
+#
+#   env -u PYTHONPATH FOO=1 cmd     # 清 + 设，整条被吞
+#   env FOO=1 cmd                   # 只设，同样被吞
+#
+# 特征正是「**零输出 + rc=0**」，`set -e` 抓不住。本脚本原先就是 `env -u` 形式，
+# 于是 sidecar 从来没起过——而脚本只会在「等 /health」空转 40 秒后才暴露，
+# 更糟的情况是复用上一次残留的 sidecar 假装成功。
+#
+# 正确写法：子 shell 里 `unset` 再 `export`，最后 `exec`。**`exec` 不换 PID**，
+# 所以下面 `$!` 拿到的仍是 uvicorn 自己的进程，EXIT trap 的 `kill` 依旧有效
+# （这个脚本不能用 `taskkill`：PID 来自 `$!`，是 MSYS 命名空间里的真 PID）。
 
 cd /d/BaiduNetdiskDownload/AlgoForge/sidecar || exit 1
 
-env -u PYTHONPATH DATABASE_URL="sqlite:///C:/Windows/Temp/af_dev.db" SIDECAR_PORT=8123 SIDECAR_TOKEN=dev-local-token .venv/Scripts/python.exe -u -m uvicorn app.main:app --host 127.0.0.1 --port 8123 > C:/Windows/Temp/uv2.log 2>&1 &
+(
+  unset PYTHONPATH
+  export DATABASE_URL="sqlite:///C:/Windows/Temp/af_dev.db"
+  export SIDECAR_PORT=8123
+  export SIDECAR_TOKEN=dev-local-token
+  exec .venv/Scripts/python.exe -u -m uvicorn app.main:app \
+    --host 127.0.0.1 --port 8123
+) > C:/Windows/Temp/uv2.log 2>&1 &
 SIDECAR_PID=$!
 trap 'kill $SIDECAR_PID 2>/dev/null' EXIT
 
