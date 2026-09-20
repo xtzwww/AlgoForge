@@ -44,7 +44,7 @@
 
 import { spawn, spawnSync, type ChildProcess } from 'child_process'
 import * as net from 'net'
-import { existsSync } from 'fs'
+import { existsSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
 
@@ -151,7 +151,7 @@ export async function ensurePostgres(onProgress?: (message: string) => void): Pr
   if (existsSync(join(data, 'postmaster.pid')) && !postgresIsRunning()) {
     console.log('[pg] removing stale postmaster.pid (no postgres process)')
     try {
-      await import('fs').then((fs) => fs.promises.unlink(join(data, 'postmaster.pid')))
+      unlinkSync(join(data, 'postmaster.pid'))
     } catch {
       /* gone already */
     }
