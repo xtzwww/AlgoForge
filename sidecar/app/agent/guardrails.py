@@ -726,3 +726,35 @@ def guarded_chat_completion(
 def redacted_types(matches: Iterable[PIIMatch]) -> list[str]:
     """Distinct PII types in *matches*, sorted. A convenience for logging."""
     return sorted({match["type"] for match in matches})
+
+
+def complete_through_guardrails(
+    messages: Sequence[Mapping[str, Any]],
+    **kwargs: Any,
+) -> Completion:
+    """A :func:`app.llm.gateway.complete`-shaped call that runs the chain.
+
+    This is what lets the **tool loop** be guarded. :func:`guard_completion`
+    returns a :class:`GuardedCompletion` — the completion plus the bookkeeping
+    about what the guardrails did — and the loop wants the completion itself,
+    so this unwraps it.
+
+    The bookkeeping is not discarded silently: ``attempts`` above 1 means
+    retries or a fallback happened, which is exactly the kind of thing worth
+    knowing when a student's analysis took three times as long as usual.
+
+    Raises:
+        LLMGatewayError: same as the gateway — the chain only adds retries
+            and fallbacks, and when all of them fail the last error is the
+            one raised.
+    """
+    guarded = guard_completion(messages, **kwargs)
+    if guarded.attempts > 1 or guarded.fallbacks:
+        logger.info(
+            "guarded completion needed %s attempts (%s retries, %s fallbacks) "
+            "before answering",
+            guarded.attempts,
+            guarded.retries,
+            guarded.fallbacks,
+        )
+    return guarded.completion

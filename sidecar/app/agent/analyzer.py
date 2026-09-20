@@ -37,6 +37,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Optional
 
+from app.agent.guardrails import complete_through_guardrails, guarded_chat_completion
 from app.agent.schemas import (
     ErrorAnalysisParseError,
     ErrorAnalysisResult,
@@ -263,15 +264,25 @@ def _analyse_once(
             max_tokens=settings.llm_max_tokens,
             timeout=settings.llm_timeout,
             on_tool_call=on_event,
+            # None keeps the loop on the plain gateway — see `caller` in
+            # tool_caller.run_with_tools. Passing the guarded one means
+            # every round trip of the loop is redacted once and allowed to
+            # retry, not just the first.
+            caller=complete_through_guardrails if settings.llm_guardrails else None,
         )
         if not loop.ok:
             reason = loop.error or f"the tool loop stopped: {loop.stop_reason}"
             return "", reason, loop.calls
         return loop.content, None, loop.calls
 
+    # Guardrails are on by default (settings.llm_guardrails): redaction,
+    # the fallback chain and transient retries all apply here. The plain
+    # gateway stays reachable via that switch so a bad interaction can be
+    # turned off without a code change.
+    call = guarded_chat_completion if settings.llm_guardrails else chat_completion
     try:
         return (
-            chat_completion(
+            call(
                 messages,
                 temperature=DEFAULT_TEMPERATURE,
                 max_tokens=settings.llm_max_tokens,

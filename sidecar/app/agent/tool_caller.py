@@ -225,6 +225,7 @@ def run_with_tools(
     tool_choice: Optional[Any] = None,
     include_placeholders: bool = False,
     on_tool_call: Optional[Callable[[ToolCallRecord], None]] = None,
+    caller: Optional[Callable[..., Completion]] = None,
     **llm_kwargs: Any,
 ) -> ToolLoopResult:
     """Run a conversation until the model answers or the budget is spent.
@@ -275,6 +276,15 @@ def run_with_tools(
             )
 
     schemas = tool_schemas(include_placeholders=include_placeholders)
+    # Which function makes each model call. It is a parameter and not a
+    # hard-coded `complete` so the guardrails can be switched on without
+    # this module importing them: the loop only ever needs something with
+    # the gateway's signature. Default is the plain gateway, so behaviour
+    # is unchanged for every existing caller.
+    # NB: not named `call` — the loop below reuses that name for each
+    # ToolCall, and shadowing it here would turn the second round trip into
+    # "'ToolCall' object is not callable".
+    make_call = caller or complete
     # A copy: the caller's list is theirs, and the transcript returned to
     # them must not alias whatever they passed in.
     transcript: list[dict[str, Any]] = list(messages)
@@ -282,7 +292,7 @@ def run_with_tools(
 
     for step in range(1, max_steps + 1):
         try:
-            completion = complete(transcript, tools=schemas, **llm_kwargs)
+            completion = make_call(transcript, tools=schemas, **llm_kwargs)
         except LLMGatewayError as exc:
             return ToolLoopResult(
                 calls=calls,

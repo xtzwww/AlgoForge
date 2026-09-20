@@ -84,6 +84,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agent.analyzer import DEFAULT_TEMPERATURE, NO_STATEMENT_NOTE
 from app.agent.graph import DEFAULT_MAX_RETRIES, build_analysis_graph
+from app.agent.guardrails import guarded_chat_completion
 from app.agent.schemas import (
     ErrorAnalysisResult,
     HintLadderResult,
@@ -330,9 +331,13 @@ def _ask_worker(
     """
     messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
 
+    # Same switch as the analyser: the team is a batch of text calls, so
+    # `guarded_chat_completion` (text-only, no tools) is the right entry.
+    call = guarded_chat_completion if settings.llm_guardrails else chat_completion
+
     for attempt in range(1, max_attempts + 1):
         try:
-            raw = chat_completion(
+            raw = call(
                 messages,
                 temperature=DEFAULT_TEMPERATURE,
                 max_tokens=settings.llm_max_tokens,

@@ -146,6 +146,16 @@ class Settings(BaseSettings):
     # 把要分析的东西删了。
     llm_pii_redaction: bool = Field(default=True)
 
+    # 分析调用是否走护栏链（PII 脱敏 → provider 兜底 → 瞬时重试）。
+    #
+    # 默认开：这三层都是保护，关掉它们只会让失败更脆。留这个开关是为了
+    # 一键回退——护栏一旦真的接进主路径，它就站在学生等 judge_done 的路上，
+    # 出问题时需要有比「改代码」更快的办法。关掉之后调用点直连网关，行为
+    # 与接线前逐字一致。
+    #
+    # 下面三项是链内部的策略，与这个开关独立：关掉开关它们也就不生效了。
+    llm_guardrails: bool = Field(default=True)
+
     # 兜底 provider 链，逗号分隔，写在**主路径之后**。留空表示只用
     # LLM_PROVIDER 那一个。例如 ``ollama`` 表示「DeepSeek 不行就用 Ollama」
     # —— AGENTS.md §一 的「主路径 DeepSeek API，兜底 Ollama」。

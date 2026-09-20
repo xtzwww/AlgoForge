@@ -158,6 +158,25 @@ def _no_real_llm_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tool_caller, "complete", _refuse)
     monkeypatch.setattr(guardrails, "complete", _refuse)
 
+    # Turn the guardrail chain off for the suite.
+    #
+    # `settings.llm_guardrails` picks, at call time, between the gateway and
+    # `guarded_chat_completion` inside `analyzer` / `team`. Left on, every
+    # `patch.object(analyzer, "chat_completion", ...)` in these tests lands
+    # on a name the code no longer reads: the call goes to the guardrails,
+    # which reach `guardrails.complete` — refused above — instead of
+    # returning the scripted reply. The tests then fail for a reason that
+    # has nothing to do with what they assert.
+    #
+    # None of the three layers is wanted here anyway: redaction would
+    # rewrite the prompts the tests script against, the fallback chain
+    # would hide which provider answered, and retries would turn one
+    # expected failure into several. The wiring itself is covered by
+    # `tests/test_guardrail_wiring.py`, which switches it on deliberately.
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "llm_guardrails", False)
+
 
 @pytest.fixture
 def ascii_tmp_path() -> Path:
