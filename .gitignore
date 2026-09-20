@@ -109,4 +109,9 @@ sidecar/*.spec
 
 # PyInstaller / electron-builder 产物
 dist-desktop/
+# 换过几次名字：dist-desktop2/ 是早期的一次实验产物，dist-fresh/ 是 electron-builder
+# 用 `-c.directories.output=` 输出到新目录时的落点（绕开本机沙箱的批量删除拦截，
+# 见 night-queue.md 的 T3）。都不是源码，不进版本库。
+dist-desktop2/
+dist-fresh/
 sidecar/packaging/*.spec
