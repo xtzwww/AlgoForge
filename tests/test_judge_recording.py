@@ -46,7 +46,7 @@ from app.models.mistake_book import MistakeBookEntry
 from app.models.problem import Problem
 from app.models.submission import Submission
 from app.models.test_case import TestCase
-from app.records import SubmissionContext, record_submission
+from app.records import SubmissionContext, record_submission, record_submission_quietly
 from app.sandbox import judge_input as judge_input_module
 from conftest import TEST_SIDECAR_HEADERS, TEST_SIDECAR_TOKEN
 
@@ -611,24 +611,73 @@ def test_recording_failure_does_not_break_the_verdict(
     than losing it. ``record_submission`` swallows exceptions for this
     reason, and this pins that it does.
 
-    The patch goes on ``app.records.record_submission`` — the *inner*
-    function — not on the route's ``record_judge_outcome`` hook. The
-    hook **is** the guard, so replacing it with a raising function would
-    remove the protection being tested and prove nothing.
+    The patch goes on the *inner* function ``record_submission``, not on the
+    route's ``record_judge_outcome`` hook. The hook **is** the guard, so
+    replacing it with a raising function would remove the protection being
+    tested and prove nothing.
+
+    ⚠️ **And it has to go on this module's own binding of that name**, which is
+    what the ``client`` fixture's ``_record`` actually calls. This test used to
+    patch ``app.records.record_submission`` and was **green for the wrong
+    reason the whole time**: ``_record`` resolves ``record_submission`` in
+    *this* module's globals (imported at the top of the file), so rebinding it
+    on the app side touched a name nothing on this path reads. The real
+    recorder ran, the write succeeded, the verdict came back 200 — and the
+    exception this test exists to absorb was never raised.
+
+    Found by T13b: the split moved the definition into ``app.records_write``,
+    which made the latent problem visible. The fix is not "patch the new
+    module" — that would miss for the same reason — but "patch the namespace
+    the caller resolves the name in". Hence :data:`sys.modules[__name__]`, and
+    hence the ``assert calls`` below, without which this test cannot tell
+    "absorbed the failure" apart from "the failure never happened".
+
+    Two patches, because two different namespaces resolve the name:
+
+    * ``app.records_write`` — where ``record_submission_quietly`` looks it up
+      (same module, so the module global is what counts);
+    * the hook is pointed back at the real ``record_submission_quietly``, so
+      the route exercises the production guard rather than the fixture's
+      unprotected ``_record``.
+
+    Getting only one of these wrong fails in opposite directions: patch the
+    wrong module and the exception is never raised (green, proves nothing);
+    point the hook at ``_record`` and the exception escapes to the client.
     """
-    import app.records as records_module
+    import app.records_write as records_write_module
+
+    calls: list[int] = []
 
     def _boom(*args: object, **kwargs: object) -> None:
+        calls.append(1)
         raise RuntimeError("database is on fire")
 
     # A raising inner recorder stands in for a database failure on the
-    # write path: it is exactly what record_submission_quietly must
-    # absorb.
-    monkeypatch.setattr(records_module, "record_submission", _boom)
+    # write path: it is exactly what the guard must absorb.
+    monkeypatch.setattr(records_write_module, "record_submission", _boom)
+
+    # Restore the *real* hook for this one test. The ``client`` fixture
+    # replaces ``record_judge_outcome`` with its own ``_record``, which calls
+    # ``record_submission`` bare — so under the fixture the exception above
+    # escapes to the client and there is nothing left to absorb. Production
+    # never does that: the hook *is* ``record_submission_quietly``, and its
+    # try/except is the guarantee this test is about.
+    monkeypatch.setattr(
+        judge_module, "record_judge_outcome", record_submission_quietly
+    )
 
     resp = client.post(
         "/api/v1/judge",
         json={"code": _CPP_AC, "language": "cpp", "problem_id": 1},
+    )
+
+    # The patch must actually have been reached, or this test proves nothing:
+    # if the real recorder ran instead, the write would succeed and a 200
+    # would come back for the wrong reason. That is the failure mode this
+    # assertion exists to catch — it is invisible without it.
+    assert calls, (
+        "record_submission was never called through app.records_write; "
+        "the patch did not take effect and the verdict below proves nothing"
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "AC"

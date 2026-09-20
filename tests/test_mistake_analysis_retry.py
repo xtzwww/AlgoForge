@@ -85,19 +85,26 @@ def engine():
 def session(engine, monkeypatch) -> Iterator[Session]:
     """The test session, wired in as the provider every module asks for.
 
-    Both module-level ``get_session`` bindings are replaced, not just the
-    one the routes import. ``reanalyse_entry`` and ``analyse_submission``
-    live in ``app.records`` and call their own reference; a test that
-    patched only the routes would reach the real PostgreSQL URL and hang
-    on a connection timeout instead of failing fast. Doing it here means
-    no test in this file can forget.
+    Two ``get_session`` bindings are replaced, not just the one the routes
+    import. ``reanalyse_entry`` and ``analyse_submission`` open their own
+    sessions through ``app.records_session``; a test that patched only the
+    routes would reach the real PostgreSQL URL and **hang** on a connection
+    timeout instead of failing fast. Doing it here means no test in this file
+    can forget.
+
+    Only **two** because that is now all there are: after T13b the write path
+    reaches the factory as ``records_session.get_session()`` from both
+    ``records_write`` and ``records_analyse``, so replacing it on the holder
+    module covers the whole path at once. This is exactly what the split was
+    designed for — before it, every module owned a separate binding and a
+    forgotten one turned into a hang rather than a red test.
     """
-    import app.records as records_module
+    import app.records_session as records_session_module
 
     SessionLocal = sessionmaker(engine, expire_on_commit=False)
     db = SessionLocal()
     monkeypatch.setattr(mb_module, "get_session", lambda: db)
-    monkeypatch.setattr(records_module, "get_session", lambda: db)
+    monkeypatch.setattr(records_session_module, "get_session", lambda: db)
     try:
         yield db
     finally:

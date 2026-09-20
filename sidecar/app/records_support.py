@@ -225,3 +225,12 @@ def _first_failing_case(result: JudgeResult) -> Optional[Any]:
     return next(
         (tc for tc in result.test_cases if tc.status != JudgeStatus.AC), None
     )
+
+def _should_archive(result: JudgeResult, context: SubmissionContext) -> bool:
+    """Whether recording this verdict files a mistake-book entry.
+
+    One definition, used both by the write itself and by
+    :func:`will_analyse`. The stream route needs the same answer *before*
+    the write happens, and two copies of this condition would drift.
+    """
+    return result.status in _ARCHIVABLE and context.problem_id is not None
