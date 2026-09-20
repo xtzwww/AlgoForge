@@ -21,6 +21,17 @@
 # ----------------
 # 数据库里有 20 道题目和若干提交，想重来就删库重建（`dropdb` / `createdb`）
 # 或跑 `./tools/pg_verify.sh`（它会清空后重跑迁移与聚合测试）。
+#
+# ⚠️ 绝不要用 `env` 来设/清环境变量
+# --------------------------------
+# 本机 `~/.local/bin/env` 覆盖了 `/usr/bin/env`，而它是个空壳脚本——**忽略全部
+# 参数、什么都不执行、还返回 0**。所以下面两种写法都是**彻底的空操作**：
+#     env -u PYTHONPATH python x.py       # 没清 PYTHONPATH，也没跑 python
+#     env COMSPEC=... postgres.exe ...    # PG 根本没启动
+# 2026-09-20 实测：本脚本曾同时被这两条打穿——**PG 起不来、sidecar 没起、冒烟
+# 也没跑**，而脚本只在「PG 未就绪」处才失败（若上一次留下过 PG 进程，还会复用
+# 它假装成功）。正确写法：清变量用子 shell `unset` + `exec`（见下面的 `py()`），
+# 设变量用前缀赋值（`COMSPEC=... cmd`，只作用于该命令，等价于原意）。
 # ============================================================
 set -uo pipefail
 
@@ -42,15 +53,29 @@ SIDECAR_PID=""
 cleanup() {
   echo ""
   echo "[收尾] 停止 sidecar"
-  [ -n "$SIDECAR_PID" ] && kill "$SIDECAR_PID" 2>/dev/null
+  # ⚠️ 这里**不能用 MSYS 的 `kill`**。$SIDECAR_PID 是从 netstat 取的 **Windows PID**，
+  # 而 MSYS `kill` 只认自己的 PID 命名空间——`kill 13688` 会报 "No such process"
+  # 并被 2>/dev/null 吞掉，于是 sidecar 每次都被留在后台（2026-09-20 实测）。
+  # 后果不只是脏：残留进程占着 8123，下一次运行在「等 /health」那一步会**立刻
+  # 命中上一个 sidecar**（旧代码、旧环境）并判定通过——又一次假绿。
+  # 所以必须用 Windows 的 taskkill 按 Windows PID 杀。
+  if [ -n "$SIDECAR_PID" ]; then
+    taskkill /F /PID "$SIDECAR_PID" >/dev/null 2>&1 &&
+      echo "      sidecar（PID $SIDECAR_PID）已停止"
+  fi
   if [ "$PG_UP" = 1 ]; then
     echo "[收尾] 停止 PostgreSQL（干净停止，下次启动才不用崩溃恢复）"
-    (cd "$PG_HOME" && env COMSPEC="$NOCMD" "$PG_BIN/pg_ctl.exe" -D "$PG_DATA" -m fast stop 2>&1 | tail -1)
+    (cd "$PG_HOME" && COMSPEC="$NOCMD" "$PG_BIN/pg_ctl.exe" -D "$PG_DATA" -m fast stop 2>&1 | tail -1)
   fi
 }
 trap cleanup EXIT
 
 die() { echo "[pg-walkthrough] 失败：$*" >&2; exit 1; }
+
+# 跑 Python 的唯一入口：子 shell 里清掉 PYTHONPATH 再 exec。
+# 不用 `env -u PYTHONPATH` —— 理由见文件头「绝不要用 env」那一节。
+PY="$REPO/sidecar/.venv/Scripts/python.exe"
+py() { ( unset PYTHONPATH; exec "$PY" "$@" ); }
 
 # --- 1. PostgreSQL -------------------------------------------------------
 if [ -f "$PG_DATA/postmaster.pid" ] && ! tasklist 2>/dev/null | grep -qi postgres; then
@@ -58,7 +83,7 @@ if [ -f "$PG_DATA/postmaster.pid" ] && ! tasklist 2>/dev/null | grep -qi postgre
   rm -f "$PG_DATA/postmaster.pid"
 fi
 echo "[1/5] 启动 PostgreSQL"
-(cd "$PG_HOME" && env COMSPEC="$NOCMD" "$PG_BIN/postgres.exe" -D "$PG_DATA" \
+(cd "$PG_HOME" && COMSPEC="$NOCMD" "$PG_BIN/postgres.exe" -D "$PG_DATA" \
     > "$PG_HOME/pg_walkthrough.log" 2>&1 &)
 PG_UP=1
 ready=no
@@ -72,14 +97,14 @@ done
 
 # --- 2. 迁移 -------------------------------------------------------------
 echo "[2/5] alembic upgrade head"
-(cd "$REPO/sidecar" && env -u PYTHONPATH ./.venv/Scripts/python.exe -m alembic \
+(cd "$REPO/sidecar" && unset PYTHONPATH && exec ./.venv/Scripts/python.exe -m alembic \
     -x "db_url=$PG_DSN_PSYCOPG" upgrade head 2>&1 | tail -3) || die "迁移失败"
 
 # --- 3. sidecar ----------------------------------------------------------
 echo "[3/5] 启动 sidecar（DATABASE_URL 指向真 PostgreSQL）"
-(cd "$REPO/sidecar" && env -u PYTHONPATH DATABASE_URL="$PG_DSN" \
-    SIDECAR_PORT="$SIDECAR_PORT" SIDECAR_TOKEN="$SIDECAR_TOKEN" \
-    .venv/Scripts/python.exe -u -m uvicorn app.main:app \
+(cd "$REPO/sidecar" && unset PYTHONPATH && \
+    export DATABASE_URL="$PG_DSN" SIDECAR_PORT="$SIDECAR_PORT" SIDECAR_TOKEN="$SIDECAR_TOKEN" && \
+    exec .venv/Scripts/python.exe -u -m uvicorn app.main:app \
     --host 127.0.0.1 --port "$SIDECAR_PORT" > C:/Windows/Temp/uv_pg.log 2>&1 &)
 # 注意：上面是子 shell 起的进程，$! 拿不到它，按端口兜底。
 for i in $(seq 1 30); do
@@ -96,18 +121,18 @@ SIDECAR_PID="$(netstat -ano 2>/dev/null | grep "127.0.0.1:$SIDECAR_PORT" | grep 
 # --- 4. 灌题（库空时才灌，约 1 分钟） -----------------------------------
 COUNT="$(curl -sf --noproxy '*' -m 5 -H "X-Sidecar-Token: $SIDECAR_TOKEN" \
     "http://127.0.0.1:$SIDECAR_PORT/api/v1/problems" |
-    env -u PYTHONPATH "$REPO/sidecar/.venv/Scripts/python.exe" -c \
+    py -c \
     'import json,sys; print(json.load(sys.stdin).get("total", 0))' 2>/dev/null || echo 0)"
 echo "[4/5] 题库现有 $COUNT 道"
 if [ "${COUNT:-0}" -lt 1 ] 2>/dev/null; then
   echo "      灌入 20 道题（每题真实编译，约 1 分钟）…"
-  (cd "$REPO" && env -u PYTHONPATH DATABASE_URL="$PG_DSN" \
-      sidecar/.venv/Scripts/python.exe tools/load_problems.py 2>&1 | tail -3)
+  (cd "$REPO" && unset PYTHONPATH && export DATABASE_URL="$PG_DSN" && \
+      exec sidecar/.venv/Scripts/python.exe tools/load_problems.py 2>&1 | tail -3)
 fi
 
 # --- 5. 冒烟：业务 API 在真 PG 上真的能用 --------------------------------
 echo "[5/5] 冒烟验证（真实 PostgreSQL）"
-env -u PYTHONPATH "$REPO/sidecar/.venv/Scripts/python.exe" - <<PY || die "冒烟失败"
+py - <<PY || die "冒烟失败"
 import json, urllib.request
 BASE = "http://127.0.0.1:$SIDECAR_PORT"
 H = {"X-Sidecar-Token": "$SIDECAR_TOKEN"}
