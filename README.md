@@ -380,7 +380,7 @@
 ```
 ├─ desktop/                  # Electron + Vue 3 客户端（学生端 + 教师端同源）
 │  └─ src/
-│     ├─ main/               # 主进程：spawn sidecar、IPC、窗口管理
+│     ├─ main/               # 主进程：spawn sidecar、IPC、窗口管理，dev 下按需拉起 PostgreSQL
 │     ├─ preload/            # contextBridge：注入 sidecar 地址与 Token
 │     └─ renderer/src/
 │        ├─ views/           # Practice / ProblemList / Mistakes / Profile / Plan …
@@ -623,7 +623,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 | C++ 判题        | 自带 g++（或 clang），用 `CPP_COMPILER_PATH` 指过去                                     | 一判题就 CE，而 `/health` 仍然正常——看起来像判题器坏了                                                         |
 | Python 判题     | PATH 上有 `python`，或用 `PYTHON_INTERPRETER_PATH` 指过去                             | Python 提交判 CE（打包版默认回退到 PATH 上的裸 `python`）                                                   |
 | Java 判题       | 自带 **JDK**（要 `javac`，JRE 不够），用 `JAVA_COMPILER_PATH` / `JAVA_RUNTIME_PATH` 指过去 | Java 提交判 CE。✅ **已在打包版上实测**（2026-09-20：AC / CE / TLE 三条跑对）。注意本机 JDK 不在 PATH 上，**两个路径都要显式配置** |
-| 错题本 / 画像 / 复习 | PostgreSQL                                                                    | 这几项无持久化；**判题与运行照常可用**（实测不带 PG 也能判 AC）                                                       |
+| 错题本 / 画像 / 复习 | PostgreSQL                                                                    | 这几项无持久化。⚠️ **「判题照常可用」只在 `DATABASE_URL` 指向 SQLite 时成立**（打包冒烟就是这么测的，`record=false` 下实测能判 AC）；**若 `DATABASE_URL` 指向 PostgreSQL 而 PG 没起，表现是挂住而不是降级**——详见「启动开发环境」里那条「数据库没起来会怎样」                                                       |
 
 配置一律走环境变量，或用 `ALGOFORGE_ENV_FILE` 指向一个外部的 `.env`——
   
@@ -661,17 +661,21 @@ LLM 相关配置见 `.env.example` 内的注释（provider 切换、token 上限
 ### 启动开发环境
 
 ```bash
-# 1. 启动 PostgreSQL
-# Windows: 安装后确保服务运行，创建数据库 algoforge
-# 未启动时应用仍可运行，只是错题本/画像/复习无数据持久化；
-# 可用 GET /api/v1/env-check 查看各组件是否就绪。
+# 1. 数据库（AGENTS.md §一 锁定业务数据库为 PostgreSQL，不用 SQLite）
+#
+# **通常不用手动起**：开发模式下 Electron 自己会拉起它 —— 
+# `desktop/src/main/pg.ts` 在 spawn sidecar 之前确保 5432 可用
+#（路径用 `PG_HOME` 覆盖，默认 `D:/pg`），退出时 `pg_ctl -m fast` 干净停止。
+#
+# 想先起好省等待（或 PG 装在其他地方）：
+#     bash start-desktop-pg.sh      # 起 PG + 启动 Electron，退出时干净停止
 
 # 2. 后端依赖 + 建表（只做一次）
 cd sidecar
 pip install -r requirements.txt
 alembic upgrade head              # 读取 DATABASE_URL，无需改 alembic.ini
 
-# 3. 学生端（会一并拉起 sidecar）
+# 3. 学生端（会一并拉起 sidecar 与数据库）
 cd desktop
 npm install
 npm run dev
@@ -679,6 +683,29 @@ npm run dev
 # 教师端（浏览器访问，共用同一后端）
 npm run dev:web
 ```
+
+⚠️ **数据库没起来，症状不是「没有持久化」，而是「每一页都 Network Error」。**
+
+这一条值得单独说，因为它和直觉相反，而且**日志里没有任何异常**：
+
+| 环节 | 行为 |
+| --- | --- |
+| `GET /health` | 不碰数据库 → **200**，主进程据此判定引擎就绪并正常开窗 |
+| 题库 / 错题本 / 教师端 | 连不上 5432 → **挂住**（不报错，连 uvicorn 访问日志都不打） |
+| 前端 | 30 秒超时或连接被重置 → `Network Error` |
+
+所以看到的现象是「引擎看起来是好的，但每一页都报错」。2026-09-20 实际发生过一次。
+**排查第一步永远是 `netstat -ano \| findstr 5432`** —— 而不是去翻 sidecar 日志。
+
+数据库状态本身可以用 `GET /api/v1/env-check` 看（它会真的去连库）。
+
+另一个坑：**崩溃恢复很慢，而且会累积。** 硬杀 PostgreSQL 后它会 fsync 整个数据
+目录才接受连接，实测 40 秒以上，**每硬杀一次就更慢**（每次都排一次全量 sync）。
+期间 `pg_isready` 一直返回 "rejecting connections"。所以：
+
+- 让应用自己起停（它用 `-m fast` 干净停止），不要手动强杀；
+- 干净关闭后冷启动只要 **2 秒**；
+- 万一真在恢复，启动画面会说「数据库恢复中…（已等待 N 秒）」，等着就行。
 
 > **sidecar 不需要单独启动。** `npm run dev` 启动 Electron 后，
 >   
