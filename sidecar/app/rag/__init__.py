@@ -12,8 +12,13 @@ Three pieces, deliberately kept separate:
 
 The indexer and the retriever take their embedder and Milvus client as
 **injected collaborators**, so both are testable without ``pymilvus`` and
-without a running Milvus. What neither has been verified against is a real
-Milvus server — none has ever been reachable from this repository.
+without a running Milvus. :mod:`app.rag.embedder` is what supplies a real
+one at runtime — until 2026-09-21 nothing in the codebase built an
+embedder at all, so the retrieve node ran and found nothing.
+
+Verification status: indexing and retrieval have been exercised against a
+real Milvus build since 2026-09-20 (``milvus-lite``, embedded, no Docker).
+A Milvus **server** has still never been reachable from this repository.
 """
 
 from app.rag.documents import (
@@ -22,6 +27,11 @@ from app.rag.documents import (
     cards_for_tags,
     load_knowledge_cards,
     parse_card,
+)
+from app.rag.embedder import (
+    build_embedder,
+    reset_client_cache,
+    resolve_milvus_uri,
 )
 from app.rag.indexer import build_records, index_cards
 from app.rag.retriever import (
@@ -62,6 +72,7 @@ __all__ = [
     "OUTPUT_FIELDS",
     "RetrievedCard",
     "Retriever",
+    "build_embedder",
     "build_records",
     "build_retriever",
     "cards_for_tags",
@@ -69,4 +80,6 @@ __all__ = [
     "index_cards",
     "load_knowledge_cards",
     "parse_card",
+    "reset_client_cache",
+    "resolve_milvus_uri",
 ]

@@ -115,3 +115,8 @@ dist-desktop/
 dist-desktop2/
 dist-fresh/
 sidecar/packaging/*.spec
+
+# 内嵌向量库（milvus-lite）的运行产物。它是 sidecar/data/milvus.db，由
+# tools/index_knowledge_base.py 从 corpus/knowledge_cards/ 重建，不是数据源。
+# 进版本库只会让二进制文件冲突，且换过 embedding 模型后它必须重建。
+sidecar/data/

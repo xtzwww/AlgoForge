@@ -143,7 +143,10 @@ def analyse(
         extra_context: Retrieved knowledge to append to the prompt.
             Honoured on ``direct``; **ignored on ``graph``**, where the
             retrieve node produces the context itself — passing both would
-            append the same cards twice.
+            append the same cards twice. Left as ``None`` (the default),
+            ``direct`` retrieves its own context when an embedder is
+            configured, so the default path is no longer blind to the
+            knowledge base. Pass ``""`` to say "no context" on purpose.
         max_attempts: Total attempts per analysis, including the first.
             ``direct`` only; the graph runs ``analyzer`` with its own
             default. See the module docstring on the cost difference.
@@ -196,6 +199,13 @@ def analyse(
             on_step=on_step,
         )
 
+    # Consult the knowledge base on the default path too — before this,
+    # retrieval only ever ran inside the ``graph`` branch, which nothing
+    # selects by default, so a real student submission was analysed with
+    # no reference material at all. See _retrieve_context.
+    if extra_context is None:
+        extra_context = _retrieve_context(statement, code, tags)
+
     return analyze_error(
         code,
         stdin,
@@ -209,6 +219,69 @@ def analyse(
         on_event=on_event,
         max_steps=max_steps,
     )
+
+
+def _retrieve_context(
+    statement: str,
+    code: str,
+    tags: Sequence[str],
+) -> str:
+    """Knowledge-card context for one submission, or ``""`` when there is none.
+
+    Until 2026-09-21 the ``direct`` default made its one model call with no
+    knowledge base at all: retrieval lived in the ``graph`` branch, which
+    nothing selects by default, and no embedder was ever constructed. The
+    code was present and tested and unreachable at the same time.
+
+    The query is the *statement* when there is one, and the code only as a
+    fallback — the same choice :func:`app.agent.graph._read_code` makes,
+    for the same reason. Searching with the student's own buggy source
+    retrieves cards about the mistake they made, and working out that
+    mistake is exactly what the model is being asked to do; feeding it
+    back biases retrieval toward whatever the code superficially looks
+    like it is doing.
+
+    Returns:
+        A prompt block, or ``""``. Never raises: this runs inside the
+        judging path, where a missing enrichment is an acceptable
+        outcome and a failed verdict is not.
+    """
+    if not settings.rag_enabled:
+        return ""
+
+    query = (statement or "").strip() or (code or "").strip()
+    if not query:
+        return ""
+
+    try:
+        from app.rag import (  # noqa: PLC0415 — see note below
+            build_embedder,
+            build_retriever,
+            format_context,
+            resolve_milvus_uri,
+        )
+    except ImportError:
+        # Imported here rather than at module level for the same reason
+        # ``app.agent.graph`` is: the RAG stack pulls in pymilvus, and a
+        # deployment with retrieval switched off should not pay for it.
+        logger.info("rag stack unavailable; continuing without retrieval")
+        return ""
+
+    embedder = build_embedder()
+    if embedder is None:
+        return ""
+
+    try:
+        retriever = build_retriever(resolve_milvus_uri(), embedder=embedder)
+        cards = retriever.search(query, tags=tuple(tags or ()))
+    except Exception as exc:  # noqa: BLE001 — degradation is the contract
+        logger.warning("knowledge retrieval failed (%s); continuing without", exc)
+        return ""
+
+    context = format_context(cards)
+    if context:
+        logger.info("retrieved %d knowledge card(s) for this analysis", len(cards))
+    return context
 
 
 def _via_graph(

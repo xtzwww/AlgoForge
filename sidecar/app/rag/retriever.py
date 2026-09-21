@@ -232,6 +232,31 @@ class MilvusRetriever:
         return cards
 
 
+def _ensure_loaded(client: Any, collection: str) -> None:
+    """Load *collection* into memory when Milvus is holding it out.
+
+    A file-backed Milvus (``milvus-lite``) starts **every new process**
+    with the collection in state ``released``, and the first search then
+    fails with ``Collection ... is in state 'released'; call load()
+    before search``. The data is not missing and nothing is broken — the
+    fix is one call — so swallowing it as "no context" would have thrown
+    away a working knowledge base on the very first real submission.
+
+    Done here rather than at each call site because every entry point —
+    the graph, the default pipeline, the indexing script — opens its own
+    client and would hit the same wall independently.
+
+    Never raises: a client that cannot answer ``has_collection`` (the
+    fakes in the tests) simply gets no preloading.
+    """
+    try:
+        if not client.has_collection(collection_name=collection):
+            return
+        client.load_collection(collection_name=collection)
+    except Exception as exc:  # noqa: BLE001 — preloading is an optimisation
+        logger.debug("could not preload collection %s (%s)", collection, exc)
+
+
 def build_retriever(
     milvus_uri: str | None = None,
     *,
@@ -271,8 +296,10 @@ def build_retriever(
 
     uri = milvus_uri or "http://localhost:19530"
     try:
+        client = MilvusClient(uri=uri)
+        _ensure_loaded(client, collection)
         return MilvusRetriever(
-            client=MilvusClient(uri=uri),
+            client=client,
             collection=collection,
             embedder=embedder,
         )

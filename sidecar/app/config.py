@@ -244,6 +244,42 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------- Milvus
     milvus_uri: str = Field(default="http://localhost:19530")
 
+    # Milvus 的内嵌构建（milvus-lite）：给它一个 .db 文件路径就走内嵌引擎，
+    # 不需要 Docker。留空才用 milvus_uri 去连服务。
+    #
+    # 默认指向项目内的 data/ 而不是留空，是因为本机 Docker 不通
+    # （``wsl.exe`` 被安全策略拉黑），留空等于检索永久不可用。
+    milvus_lite_path: str = Field(
+        default=str(Path(__file__).resolve().parents[1] / "data" / "milvus.db"),
+        description="Embedded Milvus database file; empty means use MILVUS_URI.",
+    )
+
+    # ------------------------------------------------- Knowledge retrieval
+    # 检索层能不能用，取决于有没有一个「把文字变成向量」的模型。没有它，
+    # :func:`app.rag.retriever.build_retriever` 只能降级成空检索，检索节点
+    # 就是空转 —— 这才是「检索已实现但真实提交拿不到任何卡片」的根因，
+    # 不是某个开关没打开。
+    rag_enabled: bool = Field(
+        default=True,
+        description="Whether the analysis path may consult the knowledge base.",
+    )
+    embedding_provider: str = Field(
+        default="ollama",
+        description="ollama (local, free) | openai_compatible | none",
+    )
+    embedding_model: str = Field(default="bge-m3")
+    embedding_base_url: str = Field(default="http://127.0.0.1:11434")
+    embedding_api_key: str = Field(default="")
+
+    # 首次调用要把模型从磁盘装进内存（实测 bge-m3 在本机 52 秒），之后每次
+    # 约 4 秒。30 秒的默认值会把「模型还在加载」报成超时，看上去像是服务
+    # 没起来，所以默认给到 180 秒。
+    embedding_timeout: float = Field(default=180.0)
+
+    # 模型在内存里留多久。留短了，隔一会儿的下一个学生提交就要再付一次
+    # 52 秒的加载；留长了占内存（bge-m3 约 1.2 GB）。
+    embedding_keep_alive: str = Field(default="30m")
+
     # ------------------------------------------------------- C++ Compiler
     # These are intentionally env-driven (see .env.example). The previous
     # hardcoded default pointed at one specific machine's MinGW install,
