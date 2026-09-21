@@ -29,6 +29,10 @@ Run the frozen build:
 
     algoforge-sidecar.exe --host 127.0.0.1 --port 8123
 
+Check that the frozen build can still import the whole analysis stack:
+
+    algoforge-sidecar.exe --self-check
+
 Build it (see `packaging/build_sidecar.sh`):
 
     pyinstaller --onedir --name algoforge-sidecar \\
@@ -39,6 +43,82 @@ from __future__ import annotations
 
 import os
 import sys
+
+#: Modules the frozen build must be able to import, but that **nothing imports
+#: at startup** — so a frozen build can pass `/health` and every judge test
+#: while still being unable to run an analysis. Each entry is
+#: ``(label, module)``.
+#:
+#: Why this list exists at all: these are reached through imports inside
+#: functions (`pipeline.py` only imports the graph on the `graph`/`team`
+#: branches, `retriever.py` only imports `pymilvus` when it really connects,
+#: `memory.py` only imports the PG backends when a PG URI is configured).
+#: PyInstaller does follow in-function imports, so in practice they *are*
+#: bundled — but that is incidental, and the failure mode when it stops being
+#: true is "green at build time, ImportError in production". Declaring them in
+#: `build_sidecar.sh` turns it into a build-time contract; this list is the
+#: runtime check that the contract held.
+_SELF_CHECK_MODULES = (
+    ("S4 编排图", "app.agent.graph"),
+    ("S7 三智能体", "app.agent.team"),
+    ("S5 检索层", "app.rag.retriever"),
+    ("S5 Milvus 客户端", "pymilvus"),
+    ("S8 短期记忆（PG）", "langgraph.checkpoint.postgres"),
+    ("S8 长期记忆（PG）", "langgraph.store.postgres"),
+)
+
+
+def self_check() -> int:
+    """Import the lazy analysis stack and report per module; 0 iff all pass.
+
+    Imports only — no model call, no database, no Milvus connection. That is
+    the point: it can run in CI and in a packaged smoke test, and it fails for
+    exactly one reason (a module missing from the bundle) rather than for the
+    many reasons a real analysis can fail.
+
+    It also *builds* the graph, because importing `app.agent.graph` does not
+    exercise langgraph's `StateGraph` API — a missing langgraph submodule shows
+    up when the graph is assembled, not when the module is imported.
+    """
+    import importlib
+    from pathlib import Path
+
+    if not getattr(sys, "frozen", False):
+        # Source-tree run: this file lives in `packaging/`, so Python puts that
+        # on `sys.path` — not the `sidecar/` dir that actually holds the `app`
+        # package. The frozen build has `app` in its archive, so this branch is
+        # only ever taken by the "check before you build" run, which is worth
+        # supporting: it separates "the venv is broken" from "the bundle is
+        # broken" instead of blaming the bundle for both.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+    failed = 0
+    for label, name in _SELF_CHECK_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # noqa: BLE001 — reporting is the whole job
+            failed += 1
+            print(f"FAIL {label:<20} {name}: {type(exc).__name__}: {exc}")
+        else:
+            print(f"OK   {label:<20} {name}")
+
+    # `build_analysis_graph()` is all-optional, and with no retriever it builds
+    # its own — which is exactly the code path a frozen `graph` deployment
+    # takes, so it is worth the few milliseconds.
+    graph_step = "构建分析图"
+    try:
+        from app.agent.graph import build_analysis_graph
+
+        build_analysis_graph()
+    except Exception as exc:  # noqa: BLE001
+        failed += 1
+        print(f"FAIL {graph_step:<20} {type(exc).__name__}: {exc}")
+    else:
+        print(f"OK   {graph_step:<20} build_analysis_graph()")
+
+    total = len(_SELF_CHECK_MODULES) + 1
+    print(f"self-check: {total - failed}/{total} 通过")
+    return 1 if failed else 0
 
 
 def parse_args(argv: list[str]) -> tuple[str, int]:
@@ -66,6 +146,14 @@ def parse_args(argv: list[str]) -> tuple[str, int]:
 
 
 def main() -> None:
+    # Checked before anything else, and by substring rather than through
+    # `parse_args`: that parser deliberately ignores unknown flags, so routing
+    # this through it would mean either teaching it a flag the Electron caller
+    # must never pass, or changing the "ignore what you do not know" contract
+    # the two-process handshake depends on.
+    if "--self-check" in sys.argv[1:]:
+        raise SystemExit(self_check())
+
     # Imported here rather than at module scope so `--help`-style misuse
     # and import errors surface as the real traceback, and so PyInstaller
     # still sees them (it follows imports inside functions too).

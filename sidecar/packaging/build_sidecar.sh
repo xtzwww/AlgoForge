@@ -53,6 +53,37 @@ for f in "$REPO"/sidecar/app/prompts/*.md; do
 done
 echo "      打包数据文件：${#ADD_DATA[@]} 个提示模板"
 
+# ---- 懒导入的模块：显式声明，别指望字节码扫描 --------------------------
+#
+# 下面这些模块在源码里都是**函数体内**才 import 的：
+#   pipeline.py  → app.agent.graph / app.agent.team（只在非默认流水线分支里）
+#   retriever.py → pymilvus（只有真的要连 Milvus 时才 import）
+#   memory.py    → langgraph.checkpoint.postgres / langgraph.store.postgres
+#
+# ⚠️ 2026-09-21 实测**推翻了**「懒导入所以 PyInstaller 收不到」这个说法：
+# 解出上一版产物的 PYZ 归档数过——`langgraph` 126 个模块、`pymilvus` 68 个
+# （含 `pymilvus.milvus_client.milvus_client`，正是 `MilvusClient` 所在）、
+# `langsmith` 229 个、`psycopg` 80 个**全都在**。PyInstaller 扫的是字节码，
+# 函数体内的 `IMPORT_NAME` 一样跟得到。
+#
+# 那为什么还要显式写？因为收得到靠的是**字节码扫描这个偶然行为**。任何一处
+# 改成 `importlib.import_module("...")`、或把名字挂在 `__getattr__` 后面转发，
+# 扫描就断——而断了的症状是**打包时全绿、运行时才 ImportError**，正是最难
+# 查的那一类。显式列出来把「这几个必须进包」变成打包期的契约。
+# 代价是零：这些模块本来就在产物里（体积不变），只是从「碰巧收到」变成「要求收到」。
+LAZY_IMPORTS=(
+  "app.agent.graph"                # S4 编排图（pipeline.py 的 graph 分支）
+  "app.agent.team"                 # S7 三智能体（pipeline.py 的 team 分支）
+  "pymilvus"                       # S5 检索层（retriever.py 连 Milvus 时才用）
+  "langgraph.checkpoint.postgres"  # S8 短期记忆落 PG
+  "langgraph.store.postgres"       # S8 长期记忆落 PG
+)
+HIDDEN=()
+for m in "${LAZY_IMPORTS[@]}"; do
+  HIDDEN+=(--hidden-import "$m")
+done
+echo "      显式声明懒导入：${#LAZY_IMPORTS[@]} 个模块"
+
 echo "[2/2] PyInstaller 构建（约数分钟）"
 py -m PyInstaller \
   --noconfirm --clean --onedir \
@@ -61,11 +92,13 @@ py -m PyInstaller \
   --workpath "$WORKPATH" \
   --specpath packaging \
   "${ADD_DATA[@]}" \
+  "${HIDDEN[@]}" \
   --hidden-import "uvicorn.logging" \
   --hidden-import "sqlalchemy.dialects.postgresql.asyncpg" \
   --hidden-import "asyncpg" \
   --exclude-module "milvus_lite" \
   --exclude-module "faiss" \
+  --exclude-module "pyarrow" \
   --log-level WARN \
   packaging/sidecar_main.py
 
@@ -78,9 +111,24 @@ py -m PyInstaller \
 # 谁跑过那条测试。
 # 同理别去改 packaging/*.spec：它是每次构建重新生成的（--noconfirm），
 # 而且 .gitignore 里就排除了 *.spec，改了不进版本库。
+#
+# `--exclude-module pyarrow` 与上面两个同一个道理，但它是 2026-09-21 才发现的：
+# 一旦显式 `--hidden-import pymilvus`，PyInstaller 就会扫到
+# `pymilvus/bulk_writer/`，而那里**模块级** `import pyarrow`（buffer.py:21、
+# constants.py:16）——实测产物因此从 **113 MB 涨到 194 MB**，多出来的 81 MB
+# 全是 `pyarrow/`（81 MB）+ `pyarrow.libs/`（1 MB）。
+#
+# bulk_writer 是 pymilvus 的「批量导入」功能，AlgoForge 用的是 MilvusClient 的
+# 建库/检索，永远不碰它；`pymilvus/client/type_info.py` 还专门写了注释说自己
+# **不** import pyarrow（"Return symbolic Arrow layout facts without importing
+# pyarrow"）。所以排除是安全的——已实测：屏蔽 pyarrow 后
+# `from pymilvus import MilvusClient` 仍然成功（pymilvus 3.0.2）。
+# 排除后产物回到 ~113 MB 量级。
 
 echo ""
 echo "产物：$REPO/dist/algoforge-sidecar/algoforge-sidecar.exe"
 echo "验证："
 echo "  SIDECAR_TOKEN=dev \"$REPO/dist/algoforge-sidecar/algoforge-sidecar.exe\" --port 8123"
 echo "  curl --noproxy '*' http://127.0.0.1:8123/health"
+echo "  冻结后能否 import 整条分析链路（无模型调用、无数据库）："
+echo "  \"$REPO/dist/algoforge-sidecar/algoforge-sidecar.exe\" --self-check"
