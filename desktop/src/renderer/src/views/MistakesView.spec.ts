@@ -22,7 +22,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import MistakesView from './MistakesView.vue'
-import type { MistakeEntry } from '../api/mistake_book'
+import type { HintLadder, MistakeEntry, Variant } from '../api/mistake_book'
 
 const { push, listMistakes } = vi.hoisted(() => ({
   push: vi.fn(),
@@ -32,12 +32,20 @@ const { push, listMistakes } = vi.hoisted(() => ({
 vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
 
 /**
- * 整个 api 模块都换掉。
+ * 换掉 api 模块里的**函数**，保留其余导出。
  *
  * 逐个 mock 而不是只 mock `listMistakes`：视图 import 的是同一个模块的
  * 五个函数，留真的那四个就等于让这个 spec 有可能去碰真的 HTTP 客户端。
+ *
+ * 保留其余导出（`...actual`）不是偷懒：视图底下的 `LayeredFeedback` 从同一个
+ * 模块读 `FEEDBACK_SECTION_TITLES` 等常量，只返回这六个函数会把常量一起吃掉
+ * ——组件渲染到标题那一行才炸，报错指向的是组件而不是 mock，很难定位。
+ * 而把常量照抄一份进 mock 更糟：那是同一份文案的第二副本，改了真的一份
+ * 而这里没跟上，测试照样绿。用 `importOriginal` 铺底是唯一不用维护副本的做法
+ * （T34 加变式题接线用例时才踩到，因为那之前没有用例真的渲染出诊断块）。
  */
-vi.mock('../api/mistake_book', () => ({
+vi.mock('../api/mistake_book', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/mistake_book')>()),
   listMistakes,
   getMistake: vi.fn(),
   createMistake: vi.fn(),
@@ -77,6 +85,11 @@ function entry(overrides: Partial<MistakeEntry> = {}): MistakeEntry {
     hint: '',
     suggested_fix: '',
     error_type_description: '',
+    // T34: S7's two outputs. `null` / `[]` is the ordinary case — the
+    // default pipeline produces neither — so a fixture that omitted them
+    // would be a fixture claiming an analysis type that does not exist.
+    hint_ladder: null,
+    variants: [],
     ...overrides
   }
 }
@@ -219,5 +232,78 @@ describe('没有可筛的错因时', () => {
     const wrapper = await mountView([overflowEntry(1, 101), overflowEntry(2, 202)])
 
     expect(causeOptions(wrapper)).toEqual(['全部错因', '整数溢出'])
+  })
+})
+
+// ------------------------------------------------------------ S7 产物接线
+
+/**
+ * 阶梯与变式题在页面上的接线（T34）。
+ *
+ * 两个组件各有自己的 spec，覆盖的是「拿到数据怎么渲染」；这几条覆盖的是
+ * 「页面有没有把数据送进去」——而这一层的失败同样是静默的：少写一个 `v-if`
+ * 或绑错字段名，页面不报错，只是这两块永远不出现，而「不出现」恰好也是
+ * 默认（`direct`）编排下的**正常**状态。人眼分辨不出「没接」和「没数据」。
+ */
+describe('提示阶梯与变式题的接线（T34）', () => {
+  const ladder: HintLadder = {
+    levels: [{ level: 1, text: '先看看循环是从几开始的。' }],
+    self_check: []
+  }
+  const variants: Variant[] = [
+    {
+      statement: '输入第一行改成 n，再求最大值。',
+      sample_input: '3\n1 9 4',
+      sample_output: '9',
+      knowledge_points: ['循环边界'],
+      difference: '把 n 挪到了第一行。'
+    }
+  ]
+
+  it('分析完成且两种产物都有时，两块都渲染出来', async () => {
+    const wrapper = await mountView([
+      entry({ id: 1, problem_id: 101, analysis_status: 'done', hint_ladder: ladder, variants })
+    ])
+
+    expect(wrapper.find('.entry-ladder').exists()).toBe(true)
+    expect(wrapper.find('.entry-variants').exists()).toBe(true)
+    // 内容也进来了，而不是只挂了个空壳。
+    expect(wrapper.text()).toContain('提示阶梯')
+    expect(wrapper.text()).toContain('举一反三')
+  })
+
+  it('默认编排下两种产物都没有，两块都不渲染', async () => {
+    // 这是绝大多数真实条目的状态：`direct` 不跑那两个 worker。
+    const wrapper = await mountView([
+      entry({ id: 1, problem_id: 101, analysis_status: 'done', error_detail: '下标从 1 开始。' })
+    ])
+
+    expect(wrapper.find('.entry-ladder').exists()).toBe(false)
+    expect(wrapper.find('.entry-variants').exists()).toBe(false)
+  })
+
+  it('分析未完成时也不渲染——它们是同一次分析的产物', async () => {
+    const wrapper = await mountView([
+      entry({
+        id: 1,
+        problem_id: 101,
+        analysis_status: 'pending',
+        hint_ladder: ladder,
+        variants
+      })
+    ])
+
+    // 挂着「AI 分析中…」的同时摊开一张阶梯会自相矛盾。
+    expect(wrapper.find('.entry-ladder').exists()).toBe(false)
+    expect(wrapper.find('.entry-variants').exists()).toBe(false)
+  })
+
+  it('只有阶梯时只渲染阶梯，不因为缺变式题就一起不显示', async () => {
+    const wrapper = await mountView([
+      entry({ id: 1, problem_id: 101, analysis_status: 'done', hint_ladder: ladder })
+    ])
+
+    expect(wrapper.find('.entry-ladder').exists()).toBe(true)
+    expect(wrapper.find('.entry-variants').exists()).toBe(false)
   })
 })

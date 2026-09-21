@@ -68,6 +68,8 @@ import type { JudgeEvent } from '../api/ws'
 import type { JudgeResponse } from '../api/judge'
 import type { FeedbackSection } from '../api/mistake_book'
 import LayeredFeedback from './LayeredFeedback.vue'
+import HintLadder from './HintLadder.vue'
+import VariantProblem from './VariantProblem.vue'
 import VerdictBadge from './VerdictBadge.vue'
 
 const props = defineProps<{
@@ -279,6 +281,24 @@ const diagnosis = computed<Record<FeedbackSection, string>>(() => {
 const hasDiagnosis = computed<boolean>(() =>
   (Object.keys(diagnosis.value) as FeedbackSection[]).some((s) => diagnosis.value[s] !== '')
 )
+
+/**
+ * S7's hint ladder, read straight off the stream.
+ *
+ * `null` for every pipeline that runs no 提示 agent — which is the
+ * default — so the common case here is nothing, and the component renders
+ * nothing in it. The page deliberately does not add an emptiness check of
+ * its own: that rule lives in the component, and a second copy is a
+ * second thing to keep in step.
+ *
+ * Types are inferred rather than spelled out because the type and the
+ * component share a name; importing both would need an alias and buy
+ * nothing over what `?? null` already gives.
+ */
+const ladder = computed(() => agentDone.value?.hint_ladder ?? null)
+
+/** S7's practice problems, `[]` when the analysis produced none. */
+const variants = computed(() => agentDone.value?.variants ?? [])
 
 /**
  * Whether to show the learning-process note (C1).
@@ -523,6 +543,25 @@ function eventLabel(type: string): string {
         the student knows which mistake is being talked about.
       -->
       <p v-if="recurrenceNote" class="recurrence-note">{{ recurrenceNote }}</p>
+
+      <!--
+        S7's other two outputs, after everything about *this* mistake and
+        before the tool log: the ladder and the variants are things the
+        student is meant to act on, whereas the tool list below is how the
+        answer was arrived at — nearer to a teacher's or a debugger's
+        question than to the student's.
+
+        Same order as the mistake book, for the same reason: more help
+        with this problem first, then the invitation to the next one. The
+        two screens showing these in different orders would be two
+        different opinions about what to do next.
+      -->
+      <HintLadder v-if="ladder" class="agent-ladder" :ladder="ladder" />
+      <VariantProblem
+        v-if="variants.length"
+        class="agent-variants"
+        :variants="variants"
+      />
 
       <!--
         An analysis that used no tools is a normal outcome — the model is
@@ -846,6 +885,16 @@ function eventLabel(type: string): string {
  */
 .agent-diagnosis {
   margin-bottom: 8px;
+}
+
+/*
+ * Spacing for the two S7 blocks, held here for the same reason the
+ * mistake book holds its own: a component does not know what it will be
+ * stacked under, so the gap belongs to whoever does the stacking.
+ */
+.agent-ladder,
+.agent-variants {
+  margin-top: 10px;
 }
 
 /*

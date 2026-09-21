@@ -8,6 +8,7 @@
  */
 
 import type { TestCaseIn } from './judge'
+import type { HintLadder, Variant } from './mistake_book'
 import type { ProcessTracePayload, ProcessView } from '../edit-trace'
 import { sessionToken } from './session'
 import { runtime } from '../runtime'
@@ -157,6 +158,25 @@ export interface JudgeEvent {
     last_at: string | null
     summary: string
   }
+  /**
+   * agent_done: S7's graded hint ladder, or null when no 提示 agent ran.
+   *
+   * The same value the mistake book stores and serves off
+   * `agent_hint_ladder`, sent here so the practice page can show it the
+   * moment it is produced instead of making the student go and reload the
+   * mistake book to find out whether one exists. See {@link HintLadder}
+   * for how this differs from the `error_detail` / `hint` /
+   * `suggested_fix` triple above — that is a diagnosis, this is a ladder.
+   */
+  hint_ladder?: HintLadder | null
+  /**
+   * agent_done: the practice problems S7's 变式题 agent wrote, or `[]`.
+   *
+   * Always an array so the client iterates without a branch. Empty for the
+   * default pipeline, which is the common case: only `ANALYSIS_PIPELINE`
+   * values that run the variant worker produce any.
+   */
+  variants?: Variant[]
 }
 
 export interface WsJudgeRequest {

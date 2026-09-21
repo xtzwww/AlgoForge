@@ -108,6 +108,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import EmptyState from '../components/EmptyState.vue'
 import LayeredFeedback from '../components/LayeredFeedback.vue'
+import HintLadder from '../components/HintLadder.vue'
+import VariantProblem from '../components/VariantProblem.vue'
 import PageHeader from '../components/PageHeader.vue'
 import {
   analyzeMistake,
@@ -564,6 +566,35 @@ onMounted(load)
                 {{ reanalysing.has(entry.id) ? '分析中…' : '重新分析' }}
               </button>
             </div>
+
+            <!--
+              T34: S7's other two outputs, after the diagnosis.
+
+              Both sit inside the same `done` gate as the diagnosis — they
+              are products of the same analysis, and a ladder rendered
+              under 「AI 分析失败」 would read as a contradiction.
+
+              The order is deliberate: the ladder is more help with *this*
+              problem, the variants are an invitation to leave it. Putting
+              the invitation first would push the student off a problem
+              they have not finished fixing, which is the opposite of what
+              the mistake book is for.
+
+              Neither `v-if` needs to check for emptiness — both components
+              render nothing when they have nothing, which is their own
+              contract (see the components). Checking it again here would
+              be a second copy of a rule that has to stay in one place.
+            -->
+            <HintLadder
+              v-if="entry.analysis_status === 'done' && entry.hint_ladder"
+              class="entry-ladder"
+              :ladder="entry.hint_ladder"
+            />
+            <VariantProblem
+              v-if="entry.analysis_status === 'done' && entry.variants.length"
+              class="entry-variants"
+              :variants="entry.variants"
+            />
           </div>
 
           <div v-if="entry.knowledge_tags.length" class="entry-tags">
@@ -839,6 +870,17 @@ onMounted(load)
  * failed-analysis row.
  */
 .entry-analysis {
+  margin-top: 10px;
+}
+
+/*
+ * Spacing for the two S7 blocks, held here rather than inside the
+ * components: a component does not know what it will be stacked under,
+ * and a margin baked into it would be wrong the first time one is
+ * rendered on its own.
+ */
+.entry-ladder,
+.entry-variants {
   margin-top: 10px;
 }
 

@@ -7,6 +7,58 @@
 
 import { http } from './http'
 
+/**
+ * One rung of S7's hint ladder.
+ *
+ * `level` is the rung's depth, not its index: the model numbers them 1/2/3
+ * and a later phase may skip one, so the UI shows what the model said
+ * rather than recomputing a position that could disagree with it.
+ */
+export interface HintRung {
+  level: number
+  text: string
+}
+
+/**
+ * S7's 提示 agent output: three graded rungs plus self-check questions.
+ *
+ * This is **not** the same thing as {@link FeedbackSection}. Both are
+ * progressive, and both are about hints, which is exactly why they are two
+ * components and not one:
+ *
+ * - `FeedbackSection` (错在哪 / 提示 / 怎么改) is *one* diagnosis cut into
+ *   three parts of a single answer. Opening the last one ends the
+ *   exercise — there is nothing after it.
+ * - `HintLadder` is *three attempts at the same thing*, each a bit more
+ *   concrete. Rung 1 points at the area, rung 3 is nearly the answer, and
+ *   the student stops at whichever rung unsticks them.
+ *
+ * Merging them would mean either the ladder's rungs become "sections" that
+ * end in the fix (so the ladder stops being a ladder), or the diagnosis's
+ * fix becomes just another rung (so there is no final answer at all).
+ */
+export interface HintLadder {
+  levels: HintRung[]
+  /** Questions the student answers to check they actually got it. */
+  self_check: string[]
+}
+
+/**
+ * One practice problem S7's 变式题 agent wrote from the mistake.
+ *
+ * Mirrors the sidecar's `VariantOut`. `sample_input` / `sample_output` are
+ * strings shown verbatim rather than parsed: they are for reading, and the
+ * judge's test-case shape is a different contract.
+ */
+export interface Variant {
+  statement: string
+  sample_input: string
+  sample_output: string
+  knowledge_points: string[]
+  /** How this differs from the problem the student just failed. */
+  difference: string
+}
+
 export interface MistakeEntry {
   id: number
   submission_id: number
@@ -44,6 +96,22 @@ export interface MistakeEntry {
    * is not one this build knows. Prefer it over the raw label for display.
    */
   error_type_description: string
+  /**
+   * T34: S7's two worker outputs (columns added by migration
+   * `e3a71c58b2d4`, served since T28).
+   *
+   * Both are empty for every pipeline that does not run those agents —
+   * which is the default (`direct`) — so a client must treat their
+   * presence as the exception, not the rule, and render nothing at all
+   * rather than an empty labelled panel.
+   *
+   * `hint_ladder` is a single object (one ladder per analysis); `variants`
+   * is a list even though the team currently produces one, because the
+   * column is a list and a client that iterates will not need changing if
+   * a later phase asks for more.
+   */
+  hint_ladder: HintLadder | null
+  variants: Variant[]
 }
 
 /**
