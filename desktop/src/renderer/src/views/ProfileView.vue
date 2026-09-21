@@ -22,7 +22,13 @@
  * 2. *A 「数据不足」 state.* See below.
  *
  * 3. *The empty state offers a way out* and the error no longer renders
- *    beside it.
+ *    beside it — nor does the rest of the page. `load()` clears `stats` on
+ *    failure, so letting the body render would print 「总正确率 0.0% ·
+ *    0 / 0 次通过」, which states a fact the student does not have. The
+ *    failure is the state; the header's error banner plus its refresh
+ *    button is the whole response. `MistakesView` already reads this way
+ *    (its list hangs off an independent `v-if`); this page had the body
+ *    on the tail `v-else` of the loading/empty chain, so it slipped in.
  *
  * ---------------------------------------------------------------------
  * **Why the radar needs a minimum sample size.**
@@ -160,7 +166,7 @@ onMounted(load)
         @navigate="goToProblems"
       />
 
-      <template v-else>
+      <template v-else-if="!errorMsg">
         <!-- Summary -->
         <div class="summary">
           <div class="summary-card">
