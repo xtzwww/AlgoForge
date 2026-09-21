@@ -329,6 +329,21 @@ const recurrenceNote = computed<string>(() => {
   return ev.recurrence?.summary ?? ''
 })
 
+/**
+ * Which knowledge cards this explanation drew on (阶段 8 · 检索可见性).
+ *
+ * Empty when it drew on none. Shown not because a student needs to see
+ * the plumbing, but because a *silent* degradation is unverifiable:
+ * retrieval that fails — or is switched off — produces a perfectly good
+ * answer with no context, and nothing on screen says which happened.
+ * Naming the material makes the difference observable.
+ */
+const knowledgeSources = computed<string[]>(() => {
+  const ev = agentDone.value
+  if (!ev || ev.ok !== true) return []
+  return ev.knowledge_sources ?? []
+})
+
 /** Cap a long single-line gist without cutting mid-character. */
 function truncate(text: string, limit: number): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}…`
@@ -545,6 +560,15 @@ function eventLabel(type: string): string {
       <p v-if="recurrenceNote" class="recurrence-note">{{ recurrenceNote }}</p>
 
       <!--
+        Where the background material came from. Rendered only when there
+        is some: a line saying「参考资料：（无）」on every analysis teaches
+        the student to skip it, including on the day it names something.
+      -->
+      <p v-if="knowledgeSources.length" class="knowledge-note">
+        参考资料：{{ knowledgeSources.join('、') }}
+      </p>
+
+      <!--
         S7's other two outputs, after everything about *this* mistake and
         before the tool log: the ladder and the variants are things the
         student is meant to act on, whereas the tool list below is how the
@@ -557,11 +581,7 @@ function eventLabel(type: string): string {
         different opinions about what to do next.
       -->
       <HintLadder v-if="ladder" class="agent-ladder" :ladder="ladder" />
-      <VariantProblem
-        v-if="variants.length"
-        class="agent-variants"
-        :variants="variants"
-      />
+      <VariantProblem v-if="variants.length" class="agent-variants" :variants="variants" />
 
       <!--
         An analysis that used no tools is a normal outcome — the model is
@@ -904,6 +924,15 @@ function eventLabel(type: string): string {
  * diagnosis it is attached to.
  */
 .recurrence-note {
+  margin: 0 0 8px;
+  padding: 6px 0 6px 10px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--af-text-secondary);
+  border-left: 3px solid var(--af-border-strong);
+}
+
+.knowledge-note {
   margin: 0 0 8px;
   padding: 6px 0 6px 10px;
   font-size: 12px;

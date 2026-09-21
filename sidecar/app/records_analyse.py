@@ -256,6 +256,10 @@ def _analyse_and_annotate(
         # look the same.
         "hint_ladder": None,
         "variants": [],
+        # Same reasoning as the two above: always present, so "no
+        # material was used" and "the field was renamed" cannot look
+        # alike to the client.
+        "knowledge_sources": [],
             # Zero rather than absent, for the same reason as the fields
             # above: a client that has to guess whether the key exists
             # will eventually guess wrong. No label was settled on, so
@@ -317,6 +321,12 @@ def _analyse_and_annotate(
         # ``variants`` is always a list — the client iterates it.
         "hint_ladder": ladder,
         "variants": list(variants or []),
+        # Which knowledge cards the explanation drew on, or [] when it
+        # drew on none. Carried rather than logged so the client can name
+        # them — retrieval degrades to "no context" on purpose, and
+        # without this there is no way to tell a working knowledge base
+        # from one that never ran: both produce a perfectly good answer.
+        "knowledge_sources": list(outcome.knowledge_sources or []),
         # Present and never null, so the client can render it without a
         # branch. `count == 0` is the answer "this is the first time",
         # not an absence of an answer.

@@ -189,4 +189,26 @@ describe('OutputPanel', () => {
 
     expect(w.find('.agent-panel').exists()).toBe(false)
   })
+
+  it('用过知识库就把资料名字说出来，没用过就一个字都不提', () => {
+    const withSources = mountPanel({
+      events: [
+        { type: 'agent_start', verdict: 'WA' },
+        { ...AGENT_OK, knowledge_sources: ['二分查找与数值逼近', '循环与条件控制'] }
+      ],
+      result: result()
+    })
+    expect(withSources.find('.knowledge-note').text()).toContain('二分查找与数值逼近')
+
+    // 空数组是真实答案「这次没用上资料」，不是「字段丢了」，所以整行必须
+    // 消失：每次都写「参考资料：（无）」等于教会学生跳过这一行。
+    const without = mountPanel({
+      events: [
+        { type: 'agent_start', verdict: 'WA' },
+        { ...AGENT_OK, knowledge_sources: [] }
+      ],
+      result: result()
+    })
+    expect(without.find('.knowledge-note').exists()).toBe(false)
+  })
 })

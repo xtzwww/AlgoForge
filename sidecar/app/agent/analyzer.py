@@ -119,6 +119,21 @@ class AnalysisOutcome:
     # what the Agent did after the fact without having captured a stream.
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
 
+    # Titles of the knowledge cards handed to the model as context, in
+    # retrieval order. Carried so the interface can say where an
+    # explanation came from — and, just as importantly, so a demo can
+    # *show* that retrieval ran at all.
+    #
+    # Retrieval degrades silently on purpose: a missing enrichment must
+    # never fail a verdict. "Silently" is exactly the problem, though —
+    # with nothing on screen, "the knowledge base is off" and "it is
+    # working" look identical. Naming the sources makes the difference
+    # visible without turning a soft dependency into a hard failure.
+    #
+    # Empty means no material was used. It does not distinguish "not
+    # configured" from "nothing relevant found"; the log line does.
+    knowledge_sources: list[str] = field(default_factory=list)
+
     # --- S7's extra output, carried rather than dropped.
     #
     # These two live on the *shared* outcome even though only the ``team``

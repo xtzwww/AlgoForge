@@ -151,6 +151,17 @@ export interface JudgeEvent {
    * there is nothing to say, and the UI renders nothing in that case
    * rather than a line that says "first time" every single time.
    */
+  /**
+   * agent_done: titles of the knowledge cards the analysis drew on, `[]`
+   * when it drew on none.
+   *
+   * Always an array so the client renders without a branch. Empty is a
+   * real answer — it means the model answered from its own recollection
+   * — and carrying it is the point: retrieval degrades to "no context"
+   * *silently* by design, so without a value to look at, a working
+   * knowledge base and one that never ran look exactly the same.
+   */
+  knowledge_sources?: string[]
   recurrence?: {
     label: string
     count: number

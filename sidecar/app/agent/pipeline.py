@@ -203,10 +203,11 @@ def analyse(
     # retrieval only ever ran inside the ``graph`` branch, which nothing
     # selects by default, so a real student submission was analysed with
     # no reference material at all. See _retrieve_context.
+    retrieved: list[str] = []
     if extra_context is None:
-        extra_context = _retrieve_context(statement, code, tags)
+        extra_context, retrieved = _retrieve_context(statement, code, tags)
 
-    return analyze_error(
+    outcome = analyze_error(
         code,
         stdin,
         expected,
@@ -219,14 +220,20 @@ def analyse(
         on_event=on_event,
         max_steps=max_steps,
     )
+    # Attached rather than logged and dropped, so the interface can name
+    # the material an explanation drew on. Retrieval failing is invisible
+    # by design — a missing enrichment must not fail a verdict — and this
+    # is what keeps "invisible" from becoming "unverifiable".
+    outcome.knowledge_sources = retrieved
+    return outcome
 
 
 def _retrieve_context(
     statement: str,
     code: str,
     tags: Sequence[str],
-) -> str:
-    """Knowledge-card context for one submission, or ``""`` when there is none.
+) -> tuple[str, list[str]]:
+    """Knowledge-card context for one submission, and where it came from.
 
     Until 2026-09-21 the ``direct`` default made its one model call with no
     knowledge base at all: retrieval lived in the ``graph`` branch, which
@@ -242,16 +249,18 @@ def _retrieve_context(
     like it is doing.
 
     Returns:
-        A prompt block, or ``""``. Never raises: this runs inside the
-        judging path, where a missing enrichment is an acceptable
-        outcome and a failed verdict is not.
+        ``(context, titles)``: *context* is a prompt block or ``""``, and
+        *titles* names the cards it was built from so the caller can show
+        them. Never raises: this runs inside the judging path, where a
+        missing enrichment is an acceptable outcome and a failed verdict
+        is not.
     """
     if not settings.rag_enabled:
-        return ""
+        return "", []
 
     query = (statement or "").strip() or (code or "").strip()
     if not query:
-        return ""
+        return "", []
 
     try:
         from app.rag import (  # noqa: PLC0415 — see note below
@@ -265,23 +274,28 @@ def _retrieve_context(
         # ``app.agent.graph`` is: the RAG stack pulls in pymilvus, and a
         # deployment with retrieval switched off should not pay for it.
         logger.info("rag stack unavailable; continuing without retrieval")
-        return ""
+        return "", []
 
     embedder = build_embedder()
     if embedder is None:
-        return ""
+        return "", []
 
     try:
         retriever = build_retriever(resolve_milvus_uri(), embedder=embedder)
         cards = retriever.search(query, tags=tuple(tags or ()))
     except Exception as exc:  # noqa: BLE001 — degradation is the contract
         logger.warning("knowledge retrieval failed (%s); continuing without", exc)
-        return ""
+        return "", []
 
     context = format_context(cards)
+    titles = [card.title for card in cards if card.title]
     if context:
-        logger.info("retrieved %d knowledge card(s) for this analysis", len(cards))
-    return context
+        logger.info(
+            "retrieved %d knowledge card(s) for this analysis: %s",
+            len(cards),
+            ", ".join(titles),
+        )
+    return context, titles
 
 
 def _via_graph(

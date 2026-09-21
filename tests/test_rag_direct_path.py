@@ -249,3 +249,42 @@ def test_ensure_loaded_tolerates_a_client_without_preloading():
             raise AttributeError("not a real client")
 
     _ensure_loaded(_DumbClient(), "whatever")
+
+
+def test_outcome_names_the_material_it_drew_on(monkeypatch):
+    """A silent degradation is only acceptable if it is still observable.
+
+    Retrieval that fails gives the model no context and raises nothing,
+    which is right — but then "the knowledge base is switched off" and
+    "it is working" look identical from outside. Naming the sources is
+    what makes the difference visible.
+    """
+    _install_retriever(monkeypatch, _FakeRetriever(cards=[CARD]))
+    _capture_analysis(monkeypatch)
+
+    outcome = pipeline.analyse(
+        code="int main(){}",
+        stdin="",
+        expected="",
+        actual="",
+        statement="二分查找",
+        verdict="WA",
+    )
+
+    assert outcome.knowledge_sources == [CARD.title]
+
+
+def test_failed_retrieval_leaves_no_source_claims(monkeypatch):
+    _install_retriever(monkeypatch, _FakeRetriever(raises=True))
+    _capture_analysis(monkeypatch)
+
+    outcome = pipeline.analyse(
+        code="int main(){}",
+        stdin="",
+        expected="",
+        actual="",
+        statement="二分查找",
+        verdict="WA",
+    )
+
+    assert outcome.knowledge_sources == []
