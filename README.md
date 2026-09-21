@@ -224,7 +224,7 @@
 | 前端构建 | electron-vite（vue-ts 模板）                                                                          |
 | 后端依赖 | pip + requirements.txt                                                                            |
 | 代码规范 | ESLint + Prettier（前端）/ Ruff（后端）                                                                   |
-| 测试   | pytest（后端，2026-09-20 实测 **1107 通过 / 3 跳过**（其中 6 条需 `milvus-lite`，没装时 skip），另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，57 用例） |
+| 测试   | pytest（后端，2026-09-20 实测 **1107 通过 / 3 跳过**（其中 6 条需 `milvus-lite`，没装时 skip），另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，2026-09-21 增至 **99 用例**） |
 | CI   | GitHub Actions（`.github/workflows/ci.yml`）                                                        |
 
 ---
@@ -291,7 +291,7 @@
 | **用户体系与鉴权**                                   | ✅ 已实现（学生/教师两角色、PBKDF2 口令、12 小时会话、教师端服务端守卫）；⬜ **学生仍可不登录使用**，未登录提交无归属（历史数据同理），这是有意保留的降级而非缺陷                                                                                                                                                                    |
 | **进程级鉴权**                                     | ✅ 已实现（`app/security.py`：HTTP 要 `X-Sidecar-Token`、WebSocket 握手要 `?token=`，`/health` 与 CORS 预检豁免，定长比较）。⚠️ 它是**一个共享密钥**：证明「是本应用」，不区分使用者，也不抗读取（网页版把 token 编进 bundle）                                                                                             |
 | 高并发安全加固                                       | ✅ 三处已修：`create_all` 移出请求路径（`_ensure_engine` 只建一次）、`run_code` 改走工作线程、判题改用**有上限的沙箱线程池**（`app/sandbox/pool.py`，默认 4，`SANDBOX_CONCURRENCY` 可调；用线程池而非 `asyncio.Semaphore`，因为后者会绑定到第一个事件循环，而本进程会创建多个循环）。⚠️ 队列无上界：超出并发的请求会**排队等待**而不是被拒绝（有意为之——判题返回 503 比让学生多等两秒更糟） |
-| 前端单元测试（Vitest）                                | ✅ 已接入（2026-09-19，**57 个用例**：判题流事件时序 + api 层聚合规则 + **五个组件的界面行为**）；⚠️ 组件测试覆盖 `LayeredFeedback` / `OutputPanel` / `VerdictBadge` / `AttentionAlerts` / `ProblemStatement`，其余组件仍只有人眼走查，见下                                                                        |
+| 前端单元测试（Vitest）                                | ✅ 已接入（2026-09-19，2026-09-21 增至 **99 个用例**：判题流事件时序 + api 层聚合规则 + **组件目录下 11 个组件全部覆盖**）；✅ 2026-09-21 补齐最后 6 个组件（`CodeEditor` / `RadarChart` / `AppSidebar` / `AppTopbar` / `EmptyState` / `PageHeader`）；⚠️ **7 个视图（`views/`，共 5438 行）仍只有人眼走查**，见 §九                                                                        |
 | **LangGraph 状态图编排（S4）**                       | ✅ **已实现并测试**（`app/agent/graph.py`：读代码 → 检索 → 分析 → 自检，带条件回边；实测编译产物是 `CompiledStateGraph`）；✅ **已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选编排器，`graph` 分支已用真实模型端到端跑通）；⚠️ **默认仍是 `direct`（单次调用）**，且图分支**未在 20 题评估集上重测准确率**                        |
 | **知识库检索层（RAG，S5）**                            | ✅ **已实现并测试**（`app/rag/` 四模块：卡片读取 / 索引器 / 检索器 / 字段契约；12 张知识卡片覆盖 32 个知识点）；✅ **2026-09-20 首次对着真实 Milvus 引擎跑通**（`tests/test_rag_milvus_live.py`：内嵌 Milvus 建库 → 写入 12 张真实卡片 → 检索 → 进图节点，**并因此抓出一个真 bug**，见下）。⚠️ 仍未验的是 **Milvus 服务**（standalone / cluster，走 `MILVUS_URI`）——内嵌引擎不等于部署形态，鉴权 / 大规模索引选择 / 一致性级别都没被覆盖；连不上时降级为 `NullRetriever`                                                                                                                    |
 | **多智能体协作（S7）**                                | ✅ **已实现、已接线、默认关**（`app/agent/team.py`：诊断子图 + 提示 / 变式题两工作者并行 + 汇总节点；`ANALYSIS_PIPELINE=team` 与 S4 共用开关）。⚠️ **只有诊断落库**——提示阶梯与变式题没有存放位置（`AnalysisOutcome` 无对应字段、错题本无对应列），记日志后丢弃 |
@@ -800,11 +800,11 @@ env -u PYTHONPATH python -m pytest ../tests -q -m eval_set
     
   `test_timeout` / `test_judge_tle` 用 1 秒上限各自覆盖，不受影响。
 
-前端单元测试 2026-09-19 接入 Vitest（`AGENTS.md` 锁定的框架），**57 个用例**
+前端单元测试 2026-09-19 接入 Vitest（`AGENTS.md` 锁定的框架），**99 个用例 / 14 个文件**
   
 （2026-09-20 由 44 增至 56：抽 `AttentionAlerts` / `ProblemStatement` 两个子组件后
   
-补的 12 个）：
+补的 12 个；2026-09-21 由 57 增至 99：给 `components/` 下最后 6 个组件补 42 个用例）：
 
 ```bash
 cd desktop
@@ -862,21 +862,32 @@ cd desktop
     
   那个字符串**——空白比错颜色更糟，因为它读起来像「这次没有结果」。
 
-⚠️ 组件测试**只覆盖五个组件**：`LayeredFeedback`（分层释放）、`OutputPanel`
+⚠️ **`components/` 下的 11 个组件现在全部有测试**（2026-09-21 补齐最后 6 个）：
+`LayeredFeedback`（分层释放）、`OutputPanel`
   
 （诊断与工具结果怎么呈现）、`VerdictBadge`（判定到颜色的映射）、
   
-`AttentionAlerts`（教师端「需要关注」预警）、`ProblemStatement`（题面）。
+`AttentionAlerts`（教师端「需要关注」预警）、`ProblemStatement`（题面），
   
-后两个是 2026-09-20 从 1605 行的 `TeacherView.vue` 与 1247 行的 `Practice.vue`
+加上 `CodeEditor`（编辑埋点的源头）、`RadarChart`（ECharts option 契约）、
   
-里**抽出来的**——那两个视图因为既持有状态又直接发请求而测不动，抽出纯展示的
+`AppSidebar` / `AppTopbar`（导航与环境徽标）、`EmptyState` / `PageHeader`（空态与页头）。
   
-子组件才测得到（做法见下）。**其余组件**（编辑器、教师看板、雷达图等）依旧
+其中 `AttentionAlerts` / `ProblemStatement` 是 2026-09-20 从 1605 行的
   
-只有人眼走查过，类型检查 + 单测都证明不了「页面长得对不对、点了有没有反应」。
+`TeacherView.vue` 与 1247 行的 `Practice.vue` 里**抽出来的**——那两个视图因为
+  
+既持有状态又直接发请求而测不动，抽出纯展示的子组件才测得到（做法见下）。
+  
+⚠️ **仍未覆盖的是 7 个视图**（`views/`，共 5438 行：`TeacherView` 1573 /
+  
+`Practice` 1162 / `MistakesView` 856 / `ProblemListView` 698 / `PlanView` 633 /
+  
+`ProfileView` 475 / `ProblemPracticeView` 41）——它们的行为依旧只有人眼走查过，
+  
+类型检查 + 单测都证明不了「页面长得对不对、点了有没有反应」。
 
-写组件测试时的三个坑（都实测踩过）：
+写组件测试时的五个坑（都实测踩过）：
 
 - ⚠️ **样式必须跟着标记一起搬进子组件。** 两个父组件都是 `<style scoped>`，而
     
@@ -899,6 +910,28 @@ cd desktop
   `vitest.config.ts` 里的 `vue()` 插件是另一处必需项：没有它，import `.vue`
     
   会被当成语法错误。
+- ⚠️ **`vi.mock` 的工厂会被提升到所有 import 之前**，所以它**不能引用外层的
+    
+  `const`**（报 `Cannot access 'X' before initialization`）。三件事要一起记住：
+    
+  ① 替身状态放进 `vi.hoisted()`；② 那里拿不到 `ref` / `defineComponent`
+    
+  （`vi.hoisted` 的时机早于 import），要用就在工厂里 `await import('vue')`；
+    
+  ③ 别把可变状态挂在 mock 模块的额外导出上——那个名字真模块没有，取回来要
+    
+  过类型断言，等于给 `any` 开后门（`no-explicit-any` 在 CI 里是 error）。
+- ⚠️ **`onMounted` 里赋的值，`mount()` 之后立刻读不到。** 首次渲染发生在
+    
+  mounted 之前，设置 ref 引发的重渲染是**异步**的——`RadarChart` 的调色板
+    
+  就是这样：不 `await nextTick()` 只会读到 `{}`，而且不会报错（`{}.radar`
+    
+  只是 `undefined`，要等断言才炸）。另外 `vi.mock('vue-echarts')` 之后断言的是
+    
+  **传进去的 option**，不是画出来的 canvas——canvas 在 jsdom 里画不出来，
+    
+  而画不出来并不等于 option 是对的。
 
 ### 评估集校验
 
@@ -966,7 +999,8 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **复核结论尚未回流**              | 教师的确认/驳回目前只改变队列与计数，**没有**反过来调整 `process_trace` 的阈值或影响学生端提示。要做自动校准，得先积累足够复核样本——这是「阈值有证据可依」的前提，不是漏实现的功能                                                                                                                                                                                                                                                                 |
 | **过程特征无验证集**              | 「粘贴后零改写」的阈值（`≥120` 字符、`≥80%` 占比、`≤15%` 改写）是设计取值，未用人工标注样本校准；因此只作**提示**交给教师复核，不作判定                                                                                                                                                                                                                                                                                      |
 | **无检测验证集**                | AI 使用检测缺少人工标注样本，因此不以准确率为目标                                                                                                                                                                                                                                                                                                                                            |
-| **组件测试只覆盖五个组件**           | Vitest 共 **57 个用例**：api 层纯逻辑、判题流时序，加上 `LayeredFeedback`（分层释放）、`OutputPanel`（诊断渲染、工具结果与 S8 阶段进度）、`VerdictBadge`（判定映射）、`AttentionAlerts`（学情预警）、`ProblemStatement`（题面）共 31 个组件用例。后两个是 2026-09-20 从 1605 / 1247 行的两个视图里抽出来的纯展示子组件。**其余组件**（编辑器、教师看板雷达图、错题本列表等）的行为仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」                                                                                    |
+| **视图层（`views/`）仍无测试**       | Vitest 共 **99 个用例 / 14 个文件**：api 层纯逻辑 26 个、组件行为 73 个。**`components/` 下 11 个组件已全部覆盖**（2026-09-21 补齐 `CodeEditor` / `RadarChart` / `AppSidebar` / `AppTopbar` / `EmptyState` / `PageHeader` 六个，+42 个用例）。⚠️ **仍未覆盖的是 7 个视图，共 5438 行**（`TeacherView` 1573 / `Practice` 1162 / `MistakesView` 856 / `ProblemListView` 698 / `PlanView` 633 / `ProfileView` 475 / `ProblemPracticeView` 41）——它们既持有状态又直接发请求，测它们等于先把整页的数据流搭起来。现有做法是**把纯展示部分抽成子组件再测**（`AttentionAlerts` / `ProblemStatement` / `EmptyState` / `PageHeader` 都是这么来的），剩下的编排逻辑仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」 |
+| **`CodeEditor` 测的是「怎么用 Monaco」，不是 Monaco** | 真 Monaco 在 jsdom 里跑不起来（要 canvas / worker），所以 `../monaco` 换成假实现，断言的是**组件怎么调用它**：挂载时开新会话、普通输入按尺寸记账、撤销不记事件、`isFlush` 走 `reset`、粘贴改写上一条、卸载 `dispose`。**未验**：真 Monaco 下这些回调的触发时机与 `isFlush` / `isUndoing` 的真实取值（`CodeEditor` 的注释记录了它们的语义，但没有对着真编辑器跑过） |
 | **安装包尚未产出**               | sidecar 已打成 PyInstaller onedir（**113 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 **C++ / Python / Java 三种语言的判题**；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出                                         |
 | **onedir 产物的限制**          | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准）                                                                                                                                                                                                              |
 | **打包版只验到「能 import」**        | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（9 条，2026-09-21 在重打包产物上复跑全绿）、密钥未进产物、**冻结产物能 import 整条分析链路**（`algoforge-sidecar.exe --self-check` 实测 7/7：S4 图 / S7 三智能体 / S5 检索层 / `pymilvus` / S8 的两个 PG backend，并真正组装了一次 `build_analysis_graph()`）。**未验**：冻结后在**真 PostgreSQL + 已落库题目**下跑完一次 `ANALYSIS_PIPELINE=graph` 分析（要先起 PG 造数据，见队列 T26）；`pymilvus` 只验到「能 import」，没验「能连上 Milvus 服务」；桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条） |
