@@ -32,11 +32,16 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-import app.models.mistake_book  # noqa: E402, F401 — register on Base.metadata
-import app.models.problem  # noqa: E402, F401 — register on Base.metadata
-import app.models.review  # noqa: E402, F401 — register on Base.metadata
-import app.models.submission  # noqa: E402, F401 — register on Base.metadata
-import app.models.test_case  # noqa: E402, F401 — register on Base.metadata
+#
+# Import the package rather than naming modules: this list used to name five
+# and was missing `user` and `assignment`. For autogenerate that is worse than
+# a missing table — it compares the database against the metadata, so a table
+# the metadata has never heard of reads as "should be dropped".
+#
+# `import app.models` gets every model, and a new one is covered without
+# anyone remembering to come back here; `tests/test_model_registry.py` fails
+# if the package's own list falls behind.
+import app.models  # noqa: E402, F401 — register every model on Base.metadata
 from app.models.base import Base  # noqa: E402
 
 target_metadata = Base.metadata
