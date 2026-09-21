@@ -363,18 +363,36 @@ def test_recorded_submission_keeps_the_full_source(
 def test_recorded_submission_keeps_measurements(
     client: TestClient, seeded: Session
 ) -> None:
-    """A judged run reports a time and a memory figure.
+    """A judged run reports a time, and a memory figure when one was taken.
 
     Anything else means the runner's measurements are not reaching the
     row, which is the whole reason PU-13 extended ``ExecutionResult``.
+
+    ``memory_used`` is allowed to be ``None`` (T35). The runner samples
+    RSS every ``_POLL_INTERVAL / _SAMPLES_PER_POLL`` = 0.002 s; a program
+    that finishes inside the first ``proc.wait(timeout=0.002)`` exits
+    before a single sample is taken, and the loop breaks with
+    ``peak_rss_bytes == 0`` — recorded as ``None``, exactly as the
+    runner's docstring says it will be. That is a real state rather than
+    a defect: it means "this program was too quick to measure", and it is
+    machine-dependent, so demanding a value here made this test measure
+    the load on the machine running it instead of the code.
+
+    What is still asserted is the part the code does guarantee: a time is
+    always taken, and **if** a memory sample was taken it is a real
+    positive number — not 0, not negative.
+
+    Two rejected alternatives: re-sampling after the process exits
+    (psutil has usually lost it by then — ``NoSuchProcess``), and judging
+    a deliberately slow program so a sample is guaranteed (that changes
+    what is being measured rather than fixing the assertion).
     """
     _judge_via_ws(client, _CPP_AC)
 
     row = client.get("/api/v1/submissions").json()["items"][0]
     assert row["exec_time"] is not None
     assert row["exec_time"] > 0.0
-    assert row["memory_used"] is not None
-    assert row["memory_used"] >= 1
+    assert row["memory_used"] is None or row["memory_used"] >= 1
 
 
 def test_resubmitting_the_same_wrong_code_creates_one_entry(

@@ -1,0 +1,23 @@
+# ============================================================
+# AlgoForge Sidecar — 开发 / 测试依赖（不进部署环境）
+# ============================================================
+#
+# T33：从 `requirements.txt` 拆出来的两个包。
+#
+# pytest 与 httpx 只被测试套件用到（tests/ 下的用例，以及 fastapi 的
+# TestClient）。把它们留在运行时清单里，部署环境就会装上两个用不上的
+# 框架——不影响功能，但部署包变大，而且一台机器上「什么在跑」变得含糊。
+#
+# 用法（会连带装运行时依赖，所以装这一个就够）：
+#
+#     sidecar/.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+#
+# ⚠️ pyyaml 刻意**留在** `requirements.txt`：它是运行时依赖。
+# problems_corpus.py、rag/documents.py、eval_cases.py 都在运行时读 YAML
+# （懒导入，但确实会走到），所以它看起来像测试用的、其实不是。拆它的
+# 话，部署环境会在第一次读语料时才炸。
+
+-r requirements.txt
+
+pytest>=8.0.0
+httpx>=0.27.0

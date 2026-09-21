@@ -724,6 +724,8 @@ LLM 相关配置见 `.env.example` 内的注释（provider 切换、token 上限
 # 2. 后端依赖 + 建表（只做一次）
 cd sidecar
 pip install -r requirements.txt
+# 要跑测试套件就改装这个，它会连带装上面的全部（pytest / httpx 不进部署环境）：
+#   pip install -r requirements-dev.txt
 alembic upgrade head              # 读取 DATABASE_URL，无需改 alembic.ini
 
 # 3. 学生端（会一并拉起 sidecar 与数据库）
