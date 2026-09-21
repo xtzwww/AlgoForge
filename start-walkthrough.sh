@@ -39,6 +39,8 @@
 
 cd /d/BaiduNetdiskDownload/AlgoForge/sidecar || exit 1
 
+die() { echo "[walkthrough] 失败：$*" >&2; exit 1; }
+
 (
   unset PYTHONPATH
   export DATABASE_URL="sqlite:///C:/Windows/Temp/af_dev.db"
@@ -51,13 +53,24 @@ SIDECAR_PID=$!
 trap 'kill $SIDECAR_PID 2>/dev/null' EXIT
 
 echo "[sidecar] starting on :8123 (SQLite), waiting for /health ..."
+ready=no
 for i in $(seq 1 20); do
   if curl -sf --noproxy "*" -m 2 http://127.0.0.1:8123/health > /dev/null 2>&1; then
     echo "[sidecar] ready after $((i * 2))s"
+    ready=yes
     break
   fi
   sleep 2
 done
+
+# 起不来就**别往下走**（2026-09-21 改）。
+#
+# 原先这里直接去起 vite，于是演示时得到的是「页面能打开、接口全挂」——而那种
+# 状态最容易被当成前端 bug 去查，实际上 sidecar 根本没起来。宁可现在明确失败：
+# 一个报错的启动脚本比一个看起来正常的坏页面便宜得多。
+#
+# `exit 1` 会触发上面的 EXIT trap，把那个半死不活的 sidecar 一起收掉。
+[ "$ready" = yes ] || die "sidecar 40 秒内没有响应 /health；日志见 C:/Windows/Temp/uv2.log"
 
 cd /d/BaiduNetdiskDownload/AlgoForge/desktop || exit 1
 echo "[web] vite dev — 浏览器打不开时先怀疑代理：用 127.0.0.1 并让代理绕过本机"
