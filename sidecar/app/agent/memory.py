@@ -17,17 +17,39 @@ Why in-memory by default
 ``AGENTS.md`` §一 specifies PostgreSQL for production and InMemorySaver for
 development, and this module follows that — with one honest adjustment:
 
-**the PostgreSQL implementations are not installed.** They live in separate
-distributions (``langgraph-checkpoint-postgres``, and the store's
-equivalent), not in ``langgraph`` itself. So the choice is made by
-import, not by configuration alone: if the URI is set *and* the package
-imports, PostgreSQL is used; otherwise it falls back to memory and says so
-in the log.
+the PostgreSQL implementations live in a separate distribution
+(``langgraph-checkpoint-postgres``), not in ``langgraph`` itself. So the
+choice is made by import, not by configuration alone: if the URI is set
+*and* the package imports, PostgreSQL is used; otherwise it falls back to
+memory and says so in the log.
 
 That fallback is deliberately **loud once and then silent**: a missing
 package is not an error the analysis should fail on, but it is also not
 something to hide — "why did my checkpoint not survive a restart" is a
 question the log has to be able to answer.
+
+Two things about the PostgreSQL backends are easy to get wrong, and both
+were measured against a real server rather than read off the docs:
+
+1. ``PostgresSaver.from_conn_string`` is **not a constructor**, and holding
+   what it returns does not work either. It is a generator that does
+   ``with Connection.connect(...) as conn: yield cls(conn)`` — so the
+   connection is closed the moment that context exits, and merely calling
+   ``__enter__`` and keeping the saver leaves a *closed* connection behind.
+   The old code bound the context manager itself to the checkpointer, which
+   failed with ``AttributeError: '_GeneratorContextManager' object has no
+   attribute 'get_tuple'``; the first fix (entering it) got further and then
+   failed with ``psycopg.OperationalError: the connection is closed`` on the
+   first write. Both only surface once the package is installed, which is
+   why neither was caught before.
+   → The backend must be given a connection **this module owns**. So the
+   connection is opened here and kept open for the life of the process.
+2. Neither backend creates its tables on connect. ``setup()`` does, and
+   skipping it turns the first write into an ``UndefinedTable``.
+
+What that costs is a connection held open for the process, which is the
+honest price of a process-wide checkpointer: it is the same connection the
+graph writes through on every run, not an idle one.
 
 Process lifetime
 ----------------
@@ -96,6 +118,48 @@ def _postgres_available() -> tuple[bool, str]:
     return True, ""
 
 
+def _open_postgres(backend: str, uri: str) -> Any:
+    """Open a PostgreSQL backend over a connection this module owns.
+
+    Both ``PostgresSaver`` and ``PostgresStore`` take an already-open
+    connection and neither closes it — that is the contract that lets the
+    backend outlive this function, and it is why ``from_conn_string``
+    cannot be used here (it closes the connection on the way out — see the
+    module docstring).
+
+    The connection is opened with the same options ``from_conn_string``
+    uses (autocommit, ``prepare_threshold=0``, ``dict_row``), because the
+    backends' SQL assumes them.
+
+    Raises whatever the driver or ``setup()`` raises — the callers below
+    decide whether that means "degrade to memory" or "fail loudly".
+    """
+    import psycopg
+    from psycopg.rows import dict_row
+
+    if backend == "checkpointer":
+        from langgraph.checkpoint.postgres import PostgresSaver
+
+        conn = psycopg.Connection.connect(
+            uri, autocommit=True, prepare_threshold=0, row_factory=dict_row
+        )
+        opened: Any = PostgresSaver(conn)
+    else:
+        from langgraph.store.postgres import PostgresStore
+
+        conn = psycopg.Connection.connect(
+            uri, autocommit=True, prepare_threshold=0, row_factory=dict_row
+        )
+        opened = PostgresStore(conn)
+
+    try:
+        opened.setup()
+    except BaseException:
+        conn.close()
+        raise
+    return opened
+
+
 def build_checkpointer() -> Any:
     """A checkpointer for short-term, per-thread state.
 
@@ -108,10 +172,8 @@ def build_checkpointer() -> Any:
     if uri:
         ok, why = _postgres_available()
         if ok:
-            from langgraph.checkpoint.postgres import PostgresSaver
-
             try:
-                return PostgresSaver.from_conn_string(uri)
+                return _open_postgres("checkpointer", uri)
             except Exception as exc:  # noqa: BLE001 — degrade, do not raise
                 logger.warning(
                     "PostgreSQL checkpointer unavailable (%s: %s); "
@@ -142,9 +204,7 @@ def build_store() -> Any:
 
     if uri and _postgres_available()[0]:
         try:
-            from langgraph.store.postgres import PostgresStore
-
-            return PostgresStore.from_conn_string(uri)
+            return _open_postgres("store", uri)
         except Exception as exc:  # noqa: BLE001 — degrade, do not raise
             logger.warning(
                 "PostgreSQL store unavailable (%s: %s); falling back to "

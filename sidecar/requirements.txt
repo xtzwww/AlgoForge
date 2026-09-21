@@ -70,3 +70,25 @@ pymilvus>=2.4.0
 # langchain_core 不单独列：它是 langgraph 与 langchain 的共同依赖，由它们带进来。
 langgraph>=1.0.0
 langchain>=1.0.0
+
+# LangGraph 的**持久化**后端（短期检查点 + 长期记忆 Store），AGENTS.md §一
+# 要求生产走 PostgreSQL（开发用 InMemory）。它把两个东西带齐：PostgresSaver
+# （按 thread 的图状态）与 PostgresStore（跨 thread 的长期记忆）。
+#
+# 缺了它会怎样：app/agent/memory.py 的 build_checkpointer()/build_store() 会
+# **静默**回退到 InMemorySaver/InMemoryStore（这是刻意的降级设计，缺依赖不该
+# 让应用起不来）。后果是进程一退状态就没了，而日志之外没有任何迹象。
+# 所以它必须列在这里，而不是留给「反正会降级」。
+#
+# ⚠️ 实测的两个坑（都踩过，见 memory.py 模块 docstring）：
+#   ① `PostgresSaver.from_conn_string(uri)` **不是构造器**，它返回
+#      `_GeneratorContextManager`；直接把它当 saver 用会在第一次
+#      `get_tuple()` 时炸 AttributeError。而且即使 `__enter__()` 进去，
+#      它内部的 `with Connection.connect(...)` 会在生成器退出时关掉连接
+#      ——随后报 `psycopg.OperationalError: the connection is closed`。
+#      正确做法是由 memory.py 自己开连接再 `PostgresSaver(conn)`。
+#   ② 不调 `setup()` 就不会建表，第一次写入报 UndefinedTable。
+#
+# psycopg 不在这里重复列：上面 `psycopg[binary]` 已经提供了它。这里只列
+# 后端包本身（它还会带进 psycopg-pool）。
+langgraph-checkpoint-postgres>=3.1.0
