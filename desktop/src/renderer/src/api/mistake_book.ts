@@ -99,10 +99,21 @@ export interface UpdateMistakeEntryRequest {
 
 /**
  * List mistake-book entries, optionally filtered.
+ *
+ * `error_type` filters on the agent's label (P2-21) — equality against
+ * `agent_error_type`, so it never matches free text the student typed
+ * into `error_cause`. An unrecognised label is an empty list, not an
+ * error.
+ *
+ * The mistake book page does **not** pass it: that page loads everything
+ * once and filters in a computed, because its filter *options* are
+ * derived from the loaded entries. See `MistakesView.vue`. The parameter
+ * is here for callers that hold no list of their own.
  */
 export async function listMistakes(params?: {
   problem_id?: number
   reviewed?: boolean
+  error_type?: string
 }): Promise<MistakeEntry[]> {
   const res = await http.get<MistakeEntry[]>('/api/v1/mistake-book', { params })
   return res.data

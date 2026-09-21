@@ -6,7 +6,7 @@
  *   ┌── PageHeader: 错题本 · 计数 · 刷新 ────────────────────┐
  *   ├── Filter bar ─────────────────────────────────────────┤
  *   │  knowledge tags: [全部] [dp] [贪心] …                  │
- *   │  error-cause:    [错因筛选 ▾]  ← disabled, PU-14's slot │
+ *   │  error-cause:    [错因 ▾]  ← P2-21                     │
  *   ├────────────────────────────────────────────────────────┤
  *   │  Entry card: #id · created_at · reviewed badge          │
  *   │              error_cause · tags · meta                  │
@@ -38,27 +38,38 @@
  * 4. *A reserved slot for the error-cause filter* (see below).
  *
  * ---------------------------------------------------------------------
- * **The disabled 错因筛选 control.**
+ * **The 错因 filter (P2-21).**
  *
- * The error-cause filter is deliberately *shown as disabled and
- * labelled 「AI 接入后可用」* rather than omitted until it works. The
- * reason is honesty about capability: a user who cannot find the filter
- * concludes the app never had one, while a user who sees it greyed out
- * with a reason learns what is coming and, more usefully, that the
- * feature is a *later* thing rather than a *broken* thing. This matches
- * the pattern PU-6 established for the shell's own missing capabilities
- * — report the gap, do not ship a dead control and do not hide it.
+ * PU-14 reserved the slot and PU-9 deliberately shipped it as a
+ * *disabled* control labelled 「AI 接入后可用」 rather than omitting it:
+ * a user who cannot find a control concludes the app never had one,
+ * while a user who sees it greyed out with a reason learns that the
+ * feature is a *later* thing rather than a *broken* thing. That was the
+ * honest state while `agent_error_type` was NULL on every row.
  *
- * It is a `<button disabled>` with a `title`, plus a visible label. The
- * reason is written into the label rather than left to the tooltip
- * because a disabled control cannot be hovered in every browser and
- * cannot be focused at all — a disabled control that hides its own
- * explanation behind `title` effectively has no explanation.
+ * It is no longer honest — P2-4 has been filling the label since the
+ * analysis was wired up, so the control is now the real thing: a
+ * `<select>` over the causes present in the loaded entries, labelled
+ * with the Chinese wording the student is taught (`error_type_description`)
+ * rather than the raw machine label. The 「AI 接入后可用」 note is gone
+ * with it, because it would now be false.
  *
- * The error-cause taxonomy is Phase 2's P2-21 (`agent_error_type` on the
- * entry model is already reserved, see `models/mistake_book.py`). The
- * analysis card now reads it — it is the label above the three released
- * sections, together with its Chinese description.
+ * Two consequences of it being real, both deliberate:
+ *
+ * * *The options are the causes actually present*, exactly like the tag
+ *   bar above it — not the full taxonomy. A filter that can be set to a
+ *   value no entry has is a filter that answers "nothing" to a question
+ *   the user did not ask.
+ * * *It renders only when there is something to filter by.* The old slot
+ *   was always visible because it was teaching; a working control with a
+ *   single 「全部错因」 option teaches nothing and is a dead control,
+ *   which is the thing the old design was avoiding in the first place.
+ *   A mistake book whose entries have never been analysed therefore shows
+ *   no cause filter, and that is the truthful rendering.
+ *
+ * The two filters compose (AND): 「dp」+「整数溢出」 narrows to entries
+ * that are both. The empty state names whichever combination is active
+ * and offers to clear all of it.
  *
  * ---------------------------------------------------------------------
  * **Layered feedback release (current phase).**
@@ -79,9 +90,18 @@
  *
  * ---------------------------------------------------------------------
  * **Filtering is client-side.** All entries are loaded once and filtered
- * in a computed. The server can filter by `problem_id` and `reviewed`,
- * neither of which the tag bar uses, and a tag filter would be a request
- * per chip click against a corpus that is tens of entries at this stage.
+ * in a computed. The server can filter by `problem_id`, `reviewed` and
+ * `error_type` (P2-21 added the last one), none of which this page uses,
+ * and a filter would otherwise be a request per chip click against a
+ * corpus that is tens of entries at this stage.
+ *
+ * The cause filter is client-side for a second, stronger reason: its
+ * *options* are derived from the loaded entries, so a server-side filter
+ * would have to refetch before it could even know what to offer — and the
+ * tag bar, whose options are derived the same way, would silently change
+ * its chips under the user every time the cause changed. `GET
+ * /api/v1/mistake-book?error_type=` exists for callers that hold no list
+ * (and is tested), but this page is not one of them.
  */
 
 import { computed, onMounted, ref } from 'vue'
@@ -106,6 +126,21 @@ const loading = ref(false)
 const errorMsg = ref('')
 /** `null` = 全部. */
 const selectedTag = ref<string | null>(null)
+
+/**
+ * The selected root cause (P2-21), by its machine label. `''` = 全部.
+ *
+ * Empty string rather than `null` — unlike {@link selectedTag}, which is
+ * set by a chip's click handler and never round-trips through the DOM,
+ * this one is the value of a `<select>`, and a select's values are
+ * strings. `''` is the standard HTML spelling of "no choice", so the
+ * binding needs no `:value` object trick to survive the round trip.
+ *
+ * Kept as the *label* rather than as the option object so a reload cannot
+ * leave the selection pointing at a stale copy of a description — the
+ * label is the identity and the wording is looked up fresh.
+ */
+const selectedCause = ref<string>('')
 
 /**
  * What the review action is doing, per entry id.
@@ -137,10 +172,56 @@ const allTags = computed<string[]>(() => {
   return Array.from(set).sort()
 })
 
-/** Entries filtered by the selected tag (null = show all). */
-const filteredEntries = computed<MistakeEntry[]>(() => {
-  if (selectedTag.value === null) return entries.value
-  return entries.value.filter((e) => e.knowledge_tags.includes(selectedTag.value!))
+/**
+ * The error causes present in the loaded entries (P2-21).
+ *
+ * Derived from the data, not from the taxonomy in `app/eval_cases.py`:
+ * this page has no copy of that list, and the tag bar next to it already
+ * works this way. The Chinese wording comes from the API
+ * (`error_type_description`), which is also where the "unknown label"
+ * fallback lives — an entry whose label this build does not recognise
+ * would otherwise be an unlabelled option.
+ */
+const allCauses = computed<{ label: string; description: string }[]>(() => {
+  const descriptions = new Map<string, string>()
+  for (const entry of entries.value) {
+    const label = entry.agent_error_type
+    if (!label || descriptions.has(label)) continue
+    descriptions.set(label, entry.error_type_description || label)
+  }
+  return Array.from(descriptions, ([label, description]) => ({ label, description })).sort(
+    (a, b) => a.description.localeCompare(b.description, 'zh-CN')
+  )
+})
+
+/** The student-facing wording for a label, or the label when unknown. */
+function causeDescription(label: string): string {
+  return allCauses.value.find((c) => c.label === label)?.description ?? label
+}
+
+/**
+ * Entries narrowed by both filters (AND). Either being `null` means "all".
+ *
+ * Composing rather than overriding: 「dp」+「整数溢出」 is a question a
+ * student actually asks ("my overflow mistakes on DP problems"), and
+ * letting one filter silently replace the other would answer a different
+ * one.
+ */
+const filteredEntries = computed<MistakeEntry[]>(() =>
+  entries.value.filter(
+    (entry) =>
+      (selectedTag.value === null ||
+        entry.knowledge_tags.includes(selectedTag.value)) &&
+      (selectedCause.value === '' || entry.agent_error_type === selectedCause.value)
+  )
+)
+
+/** Whatever is narrowing the list right now, as text for the empty state. */
+const activeFilterLabel = computed<string>(() => {
+  const parts: string[] = []
+  if (selectedTag.value !== null) parts.push(`「${selectedTag.value}」`)
+  if (selectedCause.value !== '') parts.push(`「${causeDescription(selectedCause.value)}」`)
+  return parts.join(' + ')
 })
 
 /** Header subtitle: the count, and the reviewed split when it is useful. */
@@ -152,10 +233,10 @@ const subtitle = computed<string>(() => {
 })
 
 /**
- * True when the tag bar is filtering and that is the only reason the list
- * is empty. Distinguishes "you have no mistakes" from "this tag has none",
+ * True when a filter is active and that is the only reason the list is
+ * empty. Distinguishes "you have no mistakes" from "this filter has none",
  * which need different copy and different actions — the first offers the
- * practice page, the second offers to clear the filter.
+ * practice page, the second offers to clear the filters.
  */
 const filteredToNothing = computed<boolean>(
   () => entries.value.length > 0 && filteredEntries.value.length === 0
@@ -287,6 +368,18 @@ function selectTag(tag: string | null): void {
   selectedTag.value = tag
 }
 
+/**
+ * Drop every filter at once.
+ *
+ * The empty state's action, and the reason it is not `selectTag(null)`
+ * any more: with two filters, clearing only the tag would leave the user
+ * staring at the same empty list they just asked to leave.
+ */
+function clearFilters(): void {
+  selectedTag.value = null
+  selectedCause.value = ''
+}
+
 /** Practise the problem this entry came from — the useful next action. */
 function practise(problemId: number): void {
   void router.push({ name: 'problem', params: { id: problemId } })
@@ -350,22 +443,25 @@ onMounted(load)
         </nav>
 
         <!--
-          PU-14 / P2-21's slot. See the docstring: disabled rather than
-          hidden, and the reason is visible text rather than only a
-          tooltip, because a disabled control cannot be focused to read one.
+          P2-21's error-cause filter. Rendered only when at least one
+          loaded entry carries a label — see the docstring: the old
+          always-visible slot was teaching, and a working control with
+          nothing to choose from would be the dead control that slot
+          existed to avoid.
         -->
-        <div class="cause-filter">
-          <span class="cause-label">错因</span>
-          <button
+        <div v-if="allCauses.length" class="cause-filter">
+          <label class="cause-label" for="cause-select">错因</label>
+          <select
+            id="cause-select"
+            v-model="selectedCause"
             class="cause-select"
-            type="button"
-            disabled
-            title="错因分类需要 AI 分析，将在接入错因分析后启用"
+            title="按 AI 判定出的错因分类筛选"
           >
-            全部错因
-            <span class="cause-caret" aria-hidden="true">▾</span>
-          </button>
-          <span class="cause-note">AI 接入后可用</span>
+            <option value="">全部错因</option>
+            <option v-for="cause in allCauses" :key="cause.label" :value="cause.label">
+              {{ cause.description }}
+            </option>
+          </select>
         </div>
       </div>
 
@@ -389,10 +485,10 @@ onMounted(load)
         v-else-if="!errorMsg && filteredToNothing"
         variant="search"
         icon="search"
-        :title="`「${selectedTag}」下还没有错题`"
-        explanation="换个知识点，或者回到全部看看。"
+        :title="`${activeFilterLabel}下还没有错题`"
+        explanation="换个知识点或错因，或者回到全部看看。"
         action-label="查看全部错题"
-        @navigate="selectTag(null)"
+        @navigate="clearFilters"
       />
 
       <!-- Entry list -->
@@ -580,7 +676,7 @@ onMounted(load)
   border-color: var(--af-accent);
 }
 
-/* --- reserved error-cause slot --- */
+/* --- error-cause filter (P2-21) --- */
 .cause-filter {
   display: flex;
   align-items: center;
@@ -593,33 +689,34 @@ onMounted(load)
   color: var(--af-text-muted);
 }
 
+/*
+ * A native <select>: it is keyboard- and screen-reader-correct for free,
+ * which matters more here than matching the chip bar's look — the chips
+ * are a handful of short tags, while the causes are up to a dozen long
+ * Chinese phrases that would not fit in a row.
+ *
+ * Solid border rather than the dashed one the disabled button carried:
+ * dashed meant "not yet usable" (the label beside it said why). This one
+ * is usable, and leaving it dashed would keep saying otherwise.
+ */
 .cause-select {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
+  padding: 3px 8px;
   font-family: inherit;
   font-size: 12px;
-  color: var(--af-text-muted);
+  color: var(--af-text-secondary);
   background: var(--af-surface);
-  /* Dashed, so the disabled state is legible without relying on colour
-   * alone — the label beside it carries the reason. */
-  border: 1px dashed var(--af-border-strong);
+  border: 1px solid var(--af-border-strong);
   border-radius: var(--af-radius-sm);
-  cursor: not-allowed;
+  cursor: pointer;
 }
 
-.cause-caret {
-  opacity: 0.6;
+.cause-select:hover {
+  border-color: var(--af-accent);
 }
 
-.cause-note {
-  padding: 1px 6px;
-  font-size: 11px;
-  color: var(--af-text-muted);
-  background: var(--af-elevated);
-  border-radius: var(--af-radius-sm);
-  white-space: nowrap;
+.cause-select:focus-visible {
+  outline: 2px solid var(--af-accent);
+  outline-offset: 1px;
 }
 
 .placeholder {

@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import mistake_book as mb_module
+from app.eval_cases import ROOT_CAUSE_DESCRIPTIONS
 from app.main import app
 from app.models.base import Base
 from app.models.mistake_book import (
@@ -193,6 +194,63 @@ def test_list_entries_filter_by_problem_id(client: TestClient) -> None:
     body = resp.json()
     assert len(body) == 1
     assert body[0]["problem_id"] == 1
+
+
+def test_list_entries_filter_by_error_type(
+    client: TestClient, db_session: Session
+) -> None:
+    """GET ?error_type= returns only entries carrying that label (P2-21).
+
+    The label is written onto the row by the analysis, so it is set
+    directly here: what is under test is the *filter*, not the agent.
+    """
+    _entry_with_workers(client, db_session, agent_error_type="overflow")
+    _entry_with_workers(client, db_session, agent_error_type="off_by_one")
+    # An entry that was never analysed: ``agent_error_type`` stays NULL.
+    _entry_with_workers(client, db_session)
+
+    body = client.get("/api/v1/mistake-book?error_type=overflow").json()
+
+    assert len(body) == 1
+    assert body[0]["agent_error_type"] == "overflow"
+    # The label's Chinese reading travels with it, so a client filtering
+    # by label can still render the cause in the student's words.
+    assert body[0]["error_type_description"] == ROOT_CAUSE_DESCRIPTIONS["overflow"]
+
+
+def test_filtering_by_an_unknown_label_is_empty_not_an_error(
+    client: TestClient, db_session: Session
+) -> None:
+    """A label this build does not know matches nothing — it is not a 400.
+
+    Rejecting it would tie the endpoint's contract to this build's copy of
+    the taxonomy, so retiring a label would turn an old client's request
+    into a failure rather than into the honest "you have none of those".
+    """
+    _entry_with_workers(client, db_session, agent_error_type="overflow")
+
+    resp = client.get("/api/v1/mistake-book?error_type=no_such_label")
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_the_error_type_filter_does_not_match_free_text(
+    client: TestClient, db_session: Session
+) -> None:
+    """``?error_type=`` filters the agent's column, not ``error_cause``.
+
+    This is the whole reason ``agent_error_type`` is a separate indexed
+    column: "the agent labelled this overflow" and "the student typed the
+    word overflow" are different facts, and a filter that conflated them
+    would answer a question nobody asked.
+    """
+    entry_id = _entry_with_workers(client, db_session)
+    entry = db_session.get(MistakeBookEntry, entry_id)
+    entry.error_cause = "overflow"
+    db_session.commit()
+
+    assert client.get("/api/v1/mistake-book?error_type=overflow").json() == []
 
 
 # --- Get one -----------------------------------------------------------

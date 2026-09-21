@@ -7,7 +7,8 @@ CRUD for the mistake-book:
     problem_id and knowledge_tags are derived from the submission's
     problem; the caller doesn't pass them directly.
 - GET    /api/v1/mistake-book
-    List entries, optionally filtered by ?problem_id= or ?reviewed=.
+    List entries, optionally filtered by ?problem_id=, ?reviewed= or
+    ?error_type= (P2-21).
 - GET    /api/v1/mistake-book/{entry_id}
     Fetch a single entry.
 - PATCH  /api/v1/mistake-book/{entry_id}
@@ -317,12 +318,27 @@ def create_entry(req: MistakeEntryCreate) -> MistakeEntryOut:
 def list_entries(
     problem_id: Optional[int] = Query(default=None),
     reviewed: Optional[bool] = Query(default=None),
+    error_type: Optional[str] = Query(default=None),
 ) -> list[MistakeEntryOut]:
     """List mistake-book entries, optionally filtered.
 
     Filters:
         problem_id: only entries for this problem.
         reviewed:   only entries with the reviewed flag set (or not).
+        error_type: only entries the agent labelled with this root cause
+            (P2-21). The parameter has been promised by two docstrings
+            since P2-4 — ``models/mistake_book.py`` justifies the column's
+            index with ``GET /mistakes?error_type=overflow``, and
+            ``agent/schemas.py`` says an out-of-taxonomy label is one "no
+            downstream filter would ever match" — but the route never
+            grew the parameter, so the filter existed only in prose. It is
+            a real filter now, and it is why the column is indexed.
+
+    An unrecognised label is **not** an error: it matches nothing and the
+    route answers ``[]``. Rejecting it would make the endpoint's contract
+    depend on this build's copy of the taxonomy, so retiring a label
+    would turn an old client's request into a 400 rather than into the
+    honest "you have none of those".
     """
     with get_session() as session:
         stmt = select(MistakeBookEntry).order_by(
@@ -332,6 +348,11 @@ def list_entries(
             stmt = stmt.where(MistakeBookEntry.problem_id == problem_id)
         if reviewed is not None:
             stmt = stmt.where(MistakeBookEntry.reviewed == reviewed)
+        if error_type is not None:
+            # Equality, not a LIKE over ``error_cause``: the point of the
+            # column is that "labelled overflow" and "the user typed the
+            # word overflow" are different facts.
+            stmt = stmt.where(MistakeBookEntry.agent_error_type == error_type)
         rows = session.execute(stmt).scalars().all()
         return [_entry_to_out(e) for e in rows]
 
