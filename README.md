@@ -294,7 +294,7 @@
 | 前端单元测试（Vitest）                                | ✅ 已接入（2026-09-19，2026-09-21 增至 **99 个用例**：判题流事件时序 + api 层聚合规则 + **组件目录下 11 个组件全部覆盖**）；✅ 2026-09-21 补齐最后 6 个组件（`CodeEditor` / `RadarChart` / `AppSidebar` / `AppTopbar` / `EmptyState` / `PageHeader`）；⚠️ **7 个视图（`views/`，共 5438 行）仍只有人眼走查**，见 §九                                                                        |
 | **LangGraph 状态图编排（S4）**                       | ✅ **已实现并测试**（`app/agent/graph.py`：读代码 → 检索 → 分析 → 自检，带条件回边；实测编译产物是 `CompiledStateGraph`）；✅ **已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选编排器，`graph` 分支已用真实模型端到端跑通）；⚠️ **默认仍是 `direct`（单次调用）**，且图分支**未在 20 题评估集上重测准确率**                        |
 | **知识库检索层（RAG，S5）**                            | ✅ **已实现并测试**（`app/rag/` 四模块：卡片读取 / 索引器 / 检索器 / 字段契约；12 张知识卡片覆盖 32 个知识点）；✅ **2026-09-20 首次对着真实 Milvus 引擎跑通**（`tests/test_rag_milvus_live.py`：内嵌 Milvus 建库 → 写入 12 张真实卡片 → 检索 → 进图节点，**并因此抓出一个真 bug**，见下）。⚠️ 仍未验的是 **Milvus 服务**（standalone / cluster，走 `MILVUS_URI`）——内嵌引擎不等于部署形态，鉴权 / 大规模索引选择 / 一致性级别都没被覆盖；连不上时降级为 `NullRetriever`                                                                                                                    |
-| **多智能体协作（S7）**                                | ✅ **已实现、已接线、默认关**（`app/agent/team.py`：诊断子图 + 提示 / 变式题两工作者并行 + 汇总节点；`ANALYSIS_PIPELINE=team` 与 S4 共用开关）。⚠️ **只有诊断落库**——提示阶梯与变式题没有存放位置（`AnalysisOutcome` 无对应字段、错题本无对应列），记日志后丢弃 |
+| **多智能体协作（S7）**                                | ✅ **已实现、已接线、默认关**（`app/agent/team.py`：诊断子图 + 提示 / 变式题两工作者并行 + 汇总节点；`ANALYSIS_PIPELINE=team` 与 S4 共用开关）。✅ **2026-09-21 起产物不再丢弃**——`AnalysisOutcome` 带上了提示阶梯与变式题，错题本加了两列（迁移 `e3a71c58b2d4`），`agent_done` 与 `GET /mistake-book` 都送出去；⚠️ **前端尚未展示**（页面还是只渲染诊断那一层，见 T34），且这两列**只对着假模型验过**，没跑过真 `team` |
 | **记忆与流式（S8）**                                  | ✅ **已实现、已接线、已对着真实 PostgreSQL 验证**（`app/agent/memory.py`：检查点=短期记忆、Store=长期记忆，配了 `LANGGRAPH_CHECKPOINT_URI` 且包装了就走 PostgreSQL，否则退回内存**并在日志里说清为什么**；节点级流式 `agent_step` 已并入 P2-8 那条 WebSocket 事件流，前端显示「正在检索知识点…」）。✅ **2026-09-21 起检查点与长期记忆真的落到 PG**——`langgraph-checkpoint-postgres` 已装并列入 `sidecar/requirements.txt`，实测「写入 → 换实例 → 读出」两条都通过（短期读回 `{'v': 2}`、长期读回写入值），进程重启不再丢。⚠️ **流式是节点级不是 token 级**——网关没有流式调用，做不到「模型写到一半」                        |
 | **追踪（S9 的可观测部分）**                              | ✅ **已实现、已接线、默认关**（`app/agent/tracing.py`：`pipeline.analyse` / `run_analysis_graph` / `analyze_error` 三层 LangSmith span，启动时按 `LANGSMITH_API_KEY` 配置）。⚠️ **没有 key 就一条 trace 都不会发出**，且不会报错——本项目走 `app/llm/gateway.py` 的 httpx 调用而非 LangChain chat model，LangSmith 的**自动**埋点抓不到任何东西，所以「配了 key」不等于「有 trace」，span 必须挂在我们自己的函数上                                    |
 | **模型调用护栏（S10）**                               | ✅ **已实现、已接线、默认开**（`app/agent/guardrails.py`：PII 脱敏 / 瞬时重试 / provider 兜底链）。接在 `analyzer` 文本分支、`tool_caller` 工具循环、`team` 三个工作者三处；`LLM_GUARDRAILS=false` 可一键回退到直连网关                                             |
@@ -327,9 +327,13 @@
   与模型调用护栏（S10，`LLM_GUARDRAILS`、默认开）。两者都用真实模型端到端验过，
   接线本身另有专门的测试覆盖（`test_guardrail_wiring.py` 与 `test_agent_pipeline.py`
   的 team 一组）。
-  ⚠️ S7 的**提示阶梯与变式题仍无处存放**——`AnalysisOutcome` 没有对应字段、错题本
-  没有对应列，所以 `team` 目前买到的只是诊断（代价约三倍模型调用）。要让变式题
-  出现在学生面前需要一列 + 一个 API 字段 + 一处 UI，那是产品决定而非接线。
+  **2026-09-21（T28）补齐**：S7 的提示阶梯与变式题不再「无处存放」——
+  `AnalysisOutcome` 加了 `hint_ladder` / `variant`，错题本加了
+  `agent_hint_ladder` / `agent_generated_variants` 两列（迁移 `e3a71c58b2d4`），
+  `agent_done` 事件与 `GET /api/v1/mistake-book` 都会送出去，重新分析时旧值会被
+  清掉（否则错题本会同时描述两次分析）。
+  ⚠️ 还差两件：**前端没有展示**（T34），以及这两列**只对着假模型验过**——
+  真模型跑一次 `team` 确认「三倍调用换到了东西」要花钱，留给人。
 - ✅ **已接线**：记忆与流式（S8，`app/agent/memory.py`）。图现在带检查点（短期，
   按 thread 存）和 Store（长期，跨 thread），`LANGGRAPH_CHECKPOINT_URI` 配了且
   `langgraph-checkpoint-postgres` 装了就走 PostgreSQL，否则退回内存**并把原因写进
@@ -479,7 +483,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 | **阶段 6** | 收尾                                 | 学情预警 ✅（三条规则：连续 5 次未通过 / 超过 7 天无提交 / 同一错因跨 3 道题反复出现，每条带触发它的数字）；安全加固 ✅（进程级鉴权：侧车校验 `SIDECAR_TOKEN`，执行隔离维持既有的 subprocess + 超时 + 内存上限，按 AGENTS.md §二.3 有意不容器化）                                                                        | P3 ✅                                        |
 | **阶段 7** | **打包与交付**                          | 见下方「阶段 7 的完成定义」——本机做得出来不算数，要能在**没有 Python / Node 的机器**上跑通                                                                                                                                                                        | **P0**：6 条里 **5 条已闭合**，仅第 3 条（安装包）受本机沙箱限制 ⬜ |
 | 阶段 8     | 编排与检索（`AGENTS.md` S4 / S5）         | LangGraph 状态图**已实现并测试，且已接入判题主路径**（`app/agent/pipeline.py` 按 `ANALYSIS_PIPELINE` 选 `direct` / `graph`，**默认 `direct`** 即原来的单次调用；`graph` 分支已用真实模型端到端验过）✅；知识库检索层**已实现并测试**（`app/rag/` 四模块 + 12 张卡片覆盖 32 个知识点），**已于 2026-09-20 对着真实 Milvus 引擎验证**（内嵌 milvus-lite，6 条真实检索测试，**抓出并修掉一个主键类型 bug**）✅；**Milvus 服务**仍未验证 ⬜ | P2 部分 ✅（已接线 / 默认未启用 / 引擎级已实测）                  |
-| 阶段 9     | 多智能体协作（`AGENTS.md` S7）             | ✅ 错因 / 提示 / 变式题三 Agent 分工，**已用真实模型跑通一次完整流程**；✅ **已接线**——`ANALYSIS_PIPELINE=team`（与 S4 共用开关，默认仍是 `direct`）；⚠️ 提示阶梯与变式题**暂不落库**（无字段、无列，记日志后丢弃）                                                                                                      | P3 ✅（已接线 / 默认未启用 / 产物未落库） |
+| 阶段 9     | 多智能体协作（`AGENTS.md` S7）             | ✅ 错因 / 提示 / 变式题三 Agent 分工，**已用真实模型跑通一次完整流程**；✅ **已接线**——`ANALYSIS_PIPELINE=team`（与 S4 共用开关，默认仍是 `direct`）；✅ 提示阶梯与变式题**已落库并暴露**（T28，2026-09-21：`AnalysisOutcome` 带出来 + 错题本两列 + `agent_done` / 接口都送出）；⚠️ 前端还没展示，且只对着假模型验过                                                                                                      | P3 ✅（已接线 / 默认未启用 / 产物已落库、前端未展示） |
 | 阶段 10    | 评估、可观测与护栏（`AGENTS.md` S8 / S9 / S10 其余） | 记忆与流式（S8）✅ **已接线，且已对着真实 PostgreSQL 验证持久化**（检查点 + Store；`langgraph-checkpoint-postgres` 已装，实测「写入 → 换实例 → 读出」通过，进程重启不再丢；节点级流式 `agent_step` 已进前端）；评估集 harness ✅ 已写好（20 例 + 结构/行为两层断言），⚠️ **跑一次要打付费端点**，所以只在人工量准确率时跑；LangSmith 追踪 ✅ **已接线**（三层 span，`app/agent/tracing.py`），⚠️ 无 key 则不发送且不影响分析；LangChain 1.x 中间件护栏（PII / ModelFallback / ModelRetry）✅ **已实现、已接线、默认开**（`LLM_GUARDRAILS`）——接在 `analyzer` / `tool_caller` / `team` 三处                                                    | P3 部分 ✅（护栏、记忆、追踪已接线） |
 
 ### 阶段 8–10 的阻塞项

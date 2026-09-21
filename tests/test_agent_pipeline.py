@@ -551,16 +551,15 @@ def test_team_branch_runs_run_team(monkeypatch: pytest.MonkeyPatch) -> None:
     assert team.call["kwargs"]["statement"] == "读入两个整数。"
 
 
-def test_team_carries_only_the_diagnosis(
+def test_team_carries_the_hint_ladder_and_the_variant(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The hint ladder and the variant are logged, not silently dropped.
+    """T28: the two workers' output reaches the caller, not just the log.
 
-    There is no column for either, so an implementation that quietly threw
-    them away would look identical to this one from the outside. Asserting
-    the log line is what makes "we know they ran and we chose not to store
-    them" different from "we forgot".
+    Before this, ``AnalysisOutcome`` had no field for either, so the team's
+    three-times-higher model bill bought the student nothing they could
+    see. The assertion is on the *outcome* rather than on a log line: a
+    log line proved only that we knew we were dropping them.
     """
     monkeypatch.setattr(settings, "analysis_pipeline", "team")
     monkeypatch.setattr(
@@ -588,12 +587,35 @@ def test_team_carries_only_the_diagnosis(
         ),
     )
 
-    with caplog.at_level(logging.INFO, logger="app.agent.pipeline"):
-        out = pipeline.analyse(*ARGS)
+    out = pipeline.analyse(*ARGS)
 
     assert out.ok
     assert out.attempts == 3
-    assert any("not persisted" in record.getMessage() for record in caplog.records)
+    assert out.hint_ladder is not None
+    assert [rung.level for rung in out.hint_ladder.levels] == [1, 2, 3]
+    assert out.hint_ladder.self_check == ["三级都提到了类型", "最后一级才给改法"]
+    assert out.variant is not None
+    assert out.variant.statement == "换成矩阵乘法，同样会溢出吗？"
+    assert out.variant.knowledge_points == ["整数溢出"]
+
+
+def test_direct_and_graph_leave_the_team_fields_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two fields are ``None`` on every other pipeline.
+
+    ``None`` rather than an empty ladder: the write path stores whatever it
+    finds here, and a default-constructed ladder would be stored as "the
+    model answered with nothing" instead of "this pipeline never asks".
+    """
+    monkeypatch.setattr(settings, "analysis_pipeline", "graph")
+    monkeypatch.setattr(graph_module, "run_analysis_graph", _Recorder(_graph_outcome()))
+
+    out = pipeline.analyse(*ARGS)
+
+    assert out.ok
+    assert out.hint_ladder is None
+    assert out.variant is None
 
 
 def test_team_degrades_instead_of_raising(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -217,6 +217,114 @@ def test_get_entry_404(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+# --- S7's worker output (T28) ------------------------------------------
+
+#: A stored ladder, shaped exactly as ``HintLadderResult.model_dump()``
+#: writes it. Written by hand rather than by running the agent so this
+#: suite stays a test of the *API boundary*.
+_LADDER = {
+    "levels": [
+        {"level": 1, "text": "看看 a * b 的类型"},
+        {"level": 2, "text": "int 装得下吗"},
+        {"level": 3, "text": "先把一边转 long long"},
+    ],
+    "self_check": ["两个操作数都看过类型了吗", "结果还溢出了吗"],
+}
+
+_VARIANT = {
+    "statement": "换成矩阵乘法，同样会溢出吗？",
+    "sample_input": "2 3",
+    "sample_output": "6",
+    "knowledge_points": ["整数溢出"],
+    "difference": "操作数来自矩阵规模，不是直接输入",
+}
+
+
+def _entry_with_workers(client: TestClient, db_session: Session, **columns) -> int:
+    """Create one entry and write the given analysis columns onto it."""
+    entry_id = client.post(
+        "/api/v1/mistake-book", json={"submission_id": 1}
+    ).json()["id"]
+    entry = db_session.get(MistakeBookEntry, entry_id)
+    for name, value in columns.items():
+        setattr(entry, name, value)
+    db_session.commit()
+    return entry_id
+
+
+def test_the_served_entry_carries_the_ladder_and_the_variant(
+    client: TestClient, db_session: Session
+) -> None:
+    """T28: the two columns reach the client, typed.
+
+    Serving them is what makes them exist as far as the UI is concerned —
+    a column nobody can read is the same as no column, which is the state
+    this ticket was filed to fix.
+    """
+    entry_id = _entry_with_workers(
+        client,
+        db_session,
+        agent_hint_ladder=_LADDER,
+        agent_generated_variants=[_VARIANT],
+    )
+
+    body = client.get(f"/api/v1/mistake-book/{entry_id}").json()
+
+    assert [rung["level"] for rung in body["hint_ladder"]["levels"]] == [1, 2, 3]
+    assert body["hint_ladder"]["levels"][0]["text"] == "看看 a * b 的类型"
+    assert body["hint_ladder"]["self_check"] == [
+        "两个操作数都看过类型了吗",
+        "结果还溢出了吗",
+    ]
+    assert body["variants"][0]["statement"] == "换成矩阵乘法，同样会溢出吗？"
+    assert body["variants"][0]["knowledge_points"] == ["整数溢出"]
+
+
+def test_an_entry_without_worker_output_serves_empty_defaults(
+    client: TestClient, db_session: Session
+) -> None:
+    """The default pipeline's rows answer with ``null`` / ``[]``.
+
+    Not with missing keys: the client branches on the value, and a field
+    that only ever appears for one pipeline would make "no ladder" and
+    "the field was renamed" indistinguishable.
+    """
+    entry_id = _entry_with_workers(client, db_session)
+
+    body = client.get(f"/api/v1/mistake-book/{entry_id}").json()
+
+    assert body["hint_ladder"] is None
+    assert body["variants"] == []
+
+
+def test_a_stored_payload_that_no_longer_matches_is_dropped_not_raised(
+    client: TestClient, db_session: Session
+) -> None:
+    """A malformed stored value must not take the whole page down.
+
+    These are JSON columns written by our own writer, so a mismatch means
+    the schema changed under rows that already exist. The list endpoint
+    serializes every entry at once: one unreadable ladder raising here
+    would 500 the mistake book rather than cost one panel.
+    """
+    entry_id = _entry_with_workers(
+        client,
+        db_session,
+        agent_hint_ladder={"levels": "不是列表"},
+        # The first element is fine and the second is not, so this also
+        # pins that a bad item does not hide its siblings.
+        agent_generated_variants=[_VARIANT, {"statement": "缺字段"}],
+    )
+
+    resp = client.get(f"/api/v1/mistake-book/{entry_id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["hint_ladder"] is None
+    assert len(body["variants"]) == 1
+    assert body["variants"][0]["statement"] == "换成矩阵乘法，同样会溢出吗？"
+
+
 # --- Patch -------------------------------------------------------------
 
 

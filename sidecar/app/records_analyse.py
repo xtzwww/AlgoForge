@@ -39,6 +39,50 @@ from app.sandbox.judge import JudgeResult
 
 logger = logging.getLogger(__name__)
 
+
+def _hint_ladder_column(outcome: Any) -> Optional[dict[str, Any]]:
+    """S7's hint ladder as the JSON to store, or ``None``.
+
+    ``None`` for every pipeline that does not run the hint agent (``direct``
+    / ``graph``) and for a ``team`` run whose worker failed — which is the
+    same state the column had before this existed, so an entry that gains
+    nothing from a re-analysis does not silently keep a stale ladder from
+    an earlier one.
+
+    ``model_dump()`` rather than a hand-built dict: the schema is the
+    contract, and a second copy of it here would be the copy that drifts.
+    """
+    ladder = getattr(outcome, "hint_ladder", None)
+    if ladder is None:
+        return None
+    try:
+        return ladder.model_dump(mode="json")
+    except Exception:
+        # A dump failure is a bug in the schema, not a reason to lose the
+        # diagnosis that was already produced. Same posture as
+        # ``_find_recurrence``: the enrichment degrades, the analysis
+        # stands.
+        logger.exception("could not serialise the hint ladder; storing none")
+        return None
+
+
+def _variant_column(outcome: Any) -> Optional[list[dict[str, Any]]]:
+    """S7's variant problem as the JSON to store, or ``None``.
+
+    A one-element list because the column is named ``..._variants`` (see
+    the migration for why); ``None`` rather than ``[]`` for "none
+    produced", matching the ladder above and the other analysis columns.
+    """
+    variant = getattr(outcome, "variant", None)
+    if variant is None:
+        return None
+    try:
+        return [variant.model_dump(mode="json")]
+    except Exception:
+        logger.exception("could not serialise the variant problem; storing none")
+        return None
+
+
 def _analyse_and_annotate(
     entry: MistakeBookEntry,
     result: JudgeResult,
@@ -201,10 +245,17 @@ def _analyse_and_annotate(
             # Present and null rather than absent: the frontend branches on
             # the value, and a key that appears only on success would make
             # "no diagnosis" and "the field was renamed" look the same.
-            "suggestion": None,
-            "error_detail": None,
-            "hint": None,
-            "suggested_fix": None,
+        "suggestion": None,
+        "error_detail": None,
+        "hint": None,
+        "suggested_fix": None,
+        # S7's two worker outputs. Present and empty rather than absent,
+        # for the same reason as the fields above: the client branches on
+        # the value, and a key that appears only on a ``team`` run would
+        # make "this pipeline has no ladder" and "the field was renamed"
+        # look the same.
+        "hint_ladder": None,
+        "variants": [],
             # Zero rather than absent, for the same reason as the fields
             # above: a client that has to guess whether the key exists
             # will eventually guess wrong. No label was settled on, so
@@ -219,6 +270,16 @@ def _analyse_and_annotate(
     suggestion = _format_suggestion(analysis)
     entry.agent_error_type = str(analysis.error_type)
     entry.agent_suggestion = suggestion
+    # S7's two worker outputs (T28). Assigned unconditionally, including
+    # when they are ``None``: a re-analysis that ran a pipeline without
+    # those agents must clear whatever an earlier ``team`` run left, or
+    # the mistake book would show a hint ladder from a diagnosis that no
+    # longer exists — the same staleness the diagnosis columns avoid by
+    # being overwritten in the same breath.
+    ladder = _hint_ladder_column(outcome)
+    variants = _variant_column(outcome)
+    entry.agent_hint_ladder = ladder
+    entry.agent_generated_variants = variants
     entry.analysis_status = ANALYSIS_DONE
 
     # 历史联动反馈 (阶段 1): "这个错因你之前也出现过 N 次".
@@ -250,6 +311,12 @@ def _analyse_and_annotate(
         "error_detail": parts["error_detail"],
         "hint": parts["hint"],
         "suggested_fix": parts["suggested_fix"],
+        # T28: what S7's two workers produced, or nothing. The same
+        # values the columns were just given, so the streamed feedback and
+        # the mistake book cannot disagree about whether a ladder exists.
+        # ``variants`` is always a list — the client iterates it.
+        "hint_ladder": ladder,
+        "variants": list(variants or []),
         # Present and never null, so the client can render it without a
         # branch. `count == 0` is the answer "this is the first time",
         # not an absence of an answer.

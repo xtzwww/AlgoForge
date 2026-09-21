@@ -300,18 +300,13 @@ def _via_team(
     failure, and returns the same :class:`AnalysisOutcome`, so the write
     path does not know which orchestrator ran.
 
-    ⚠️ **Only the diagnosis survives.** The team also returns a hint ladder
-    and a variant problem, and neither has a home: ``AnalysisOutcome``
-    carries ``result`` / ``error`` / ``attempts`` / ``tool_calls`` and
-    nothing else, and the mistake-book schema has no column for a variant
-    statement. They are logged and dropped rather than half-stored —
-    putting a variant in the student's face needs a column, an API field
-    and a place in the UI, and that is a product decision, not wiring.
-
-    The practical consequence: ``ANALYSIS_PIPELINE=team`` today buys a
-    better diagnosis at roughly three times the model calls of ``direct``.
-    It does **not** buy the hint ladder or the variant until those have
-    somewhere to go.
+    The hint ladder and the variant problem ride along on the returned
+    :class:`AnalysisOutcome` (T28). They used to be logged and dropped,
+    because nothing downstream had a field for them — which meant the
+    team's roughly three-times-higher model bill bought the student
+    nothing they could see. They are still *optional*: a worker that
+    failed leaves its field ``None``, and the two other pipelines leave
+    both ``None``.
     """
     # Lazy for the same reason as the graph: `app.agent.team` pulls in
     # langgraph, and the default pipeline never needs it.
@@ -339,12 +334,15 @@ def _via_team(
             "; ".join(outcome.notes),
         )
 
-    # Logged, not dropped silently: this is the only record that the hint
-    # and variant workers ran and what they cost.
-    if outcome.hint is not None or outcome.variant is not None:
+    # Which workers ran and what the run cost stays a log line: the
+    # outcome has no field for a worker roster, and the two columns the
+    # write path fills say what was *produced*, not who was asked. A
+    # degraded run (``ok and not complete``) is otherwise invisible —
+    # a missing ladder looks exactly like a pipeline that never asks for
+    # one.
+    if outcome.workers:
         logger.info(
-            "team produced extra output (workers=%s produced=%s, %d calls) — "
-            "the hint ladder and variant are not persisted: no column for them",
+            "team ran %s (produced=%s, %d calls)",
             ",".join(outcome.workers) or "-",
             ",".join(outcome.produced) or "-",
             outcome.attempts,
@@ -360,4 +358,6 @@ def _via_team(
         result=outcome.diagnosis,
         error=outcome.error,
         attempts=outcome.attempts,
+        hint_ladder=outcome.hint,
+        variant=outcome.variant,
     )

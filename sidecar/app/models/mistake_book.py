@@ -15,12 +15,14 @@ P1-18 scope — model + CRUD API only:
   for the SM-2 spaced-repetition loop (S10). P1-18 only seeds defaults;
   the actual schedule is computed in S10.
 
-Fields left to later phases:
-- ``agent_generated_variants``: optional variant problems (S7).
-
 P2-4 added ``agent_error_type`` and ``agent_suggestion``. The docstring
 above used to list them as pending; they are now real columns, and the
 migration ``pu_14_agent_analysis_fields`` creates them.
+
+T28 added ``agent_hint_ladder`` and ``agent_generated_variants``. The
+docstring used to list the latter as "left to later phases"; both are now
+real columns (migration ``e3a71c58b2d4``), which is what let S7's two
+worker agents stop being a log line.
 """
 
 from __future__ import annotations
@@ -75,6 +77,10 @@ class MistakeBookEntry(Base):
             when the entry has not been analysed. See the column comment.
         agent_suggestion: P2-4's prose analysis (detail + hint + fix), or
             "" when the entry has not been analysed.
+        agent_hint_ladder: S7's graded hint, or None when the analysis
+            that wrote this row did not produce one.
+        agent_generated_variants: S7's practice problems, or None. A list
+            of at most one today.
         analysis_status: Whether an analysis has landed — one of
             :data:`ANALYSIS_STATUSES`. Kept separate from
             ``agent_error_type is None``, which cannot tell "not run yet"
@@ -117,6 +123,28 @@ class MistakeBookEntry(Base):
     #: means rows written before the split existed keep working: an
     #: unrecognised value degrades to "shown whole", not "shown empty".
     agent_suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: S7's 提示 agent output, as ``HintLadderResult.model_dump()`` —
+    #: ``{"levels": [{"level", "text"}, ...], "self_check": [...]}``.
+    #:
+    #: NULL means the analysis that wrote this row did not produce one,
+    #: which is true of every ``direct`` row and of a ``team`` run whose
+    #: hint worker failed or whose reply could not be parsed. The ladder is
+    #: kept apart from ``agent_suggestion`` rather than folded into it
+    #: because it is *structured* — three ordered rungs that the UI hands
+    #: out one at a time — while the suggestion is prose split on labels.
+    #: Flattening it into the prose would make the release order
+    #: unrecoverable.
+    agent_hint_ladder: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    #: S7's 变式题 agent output: a list of ``VariantResult.model_dump()``,
+    #: empty-or-one today (see the migration for why a list).
+    #:
+    #: NULL rather than ``[]`` for "none produced": the two are the same
+    #: thing to a reader, but NULL matches what the other analysis columns
+    #: do for "this pipeline never asked", and it keeps "no variant" from
+    #: looking like "a variant list that happens to be empty".
+    agent_generated_variants: Mapped[Optional[list]] = mapped_column(
+        JSON, nullable=True
+    )
     #: Whether an analysis has landed: one of :data:`ANALYSIS_STATUSES`.
     #:
     #: Exists because ``agent_error_type IS NULL`` cannot distinguish
@@ -169,6 +197,20 @@ class MistakeBookEntry(Base):
             "error_cause": self.error_cause,
             "agent_error_type": self.agent_error_type,
             "agent_suggestion": self.agent_suggestion,
+            # S7's two worker outputs. Copied rather than passed by
+            # reference: a JSON column hands back the object the ORM
+            # deserialised, and a caller that mutated the dict it was
+            # given would be mutating the row's loaded state.
+            "agent_hint_ladder": (
+                dict(self.agent_hint_ladder)
+                if self.agent_hint_ladder is not None
+                else None
+            ),
+            "agent_generated_variants": (
+                list(self.agent_generated_variants)
+                if self.agent_generated_variants is not None
+                else None
+            ),
             "analysis_status": self.analysis_status,
             "knowledge_tags": list(self.knowledge_tags or []),
             "reviewed": self.reviewed,

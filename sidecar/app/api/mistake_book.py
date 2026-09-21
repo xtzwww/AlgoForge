@@ -30,7 +30,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -78,6 +78,41 @@ class MistakeEntryUpdate(BaseModel):
     reviewed: Optional[bool] = None
 
 
+class HintRungOut(BaseModel):
+    """One rung of S7's hint ladder."""
+
+    level: int
+    text: str
+
+
+class HintLadderOut(BaseModel):
+    """S7's 提示 agent output: three graded rungs plus self-check questions.
+
+    Typed rather than served as a raw dict so the OpenAPI schema says what
+    a client will actually receive, and so a stored payload that no longer
+    matches the schema is caught at the boundary instead of in the client.
+    """
+
+    levels: list[HintRungOut]
+    self_check: list[str]
+
+
+class VariantOut(BaseModel):
+    """One variant problem from S7's 变式题 agent.
+
+    ``sample_input`` / ``sample_output`` are strings rather than parsed
+    structures, matching :class:`app.agent.schemas.VariantResult`: they are
+    shown to the student verbatim, and the judge's test-case format is a
+    different contract.
+    """
+
+    statement: str
+    sample_input: str
+    sample_output: str
+    knowledge_points: list[str]
+    difference: str
+
+
 class MistakeEntryOut(BaseModel):
     id: int
     submission_id: int
@@ -117,9 +152,57 @@ class MistakeEntryOut(BaseModel):
     hint: str = ""
     suggested_fix: str = ""
     error_type_description: str = ""
+    #: T28: S7's two worker outputs, which had nowhere to live until the
+    #: migration ``e3a71c58b2d4`` gave them columns. Both are ``None`` /
+    #: empty for every pipeline that does not run those agents — which is
+    #: the default (``direct``) — so a client must treat their presence as
+    #: the exception, not the rule.
+    #:
+    #: ``hint_ladder`` is a single object (there is one ladder per
+    #: analysis); ``variants`` is a list even though the team produces one,
+    #: because the column is a list and a client that iterates will not
+    #: need changing if a later phase asks for more.
+    hint_ladder: Optional[HintLadderOut] = None
+    variants: list[VariantOut] = []
 
 
 # --- Helpers -----------------------------------------------------------
+
+
+def _ladder_out(raw: object) -> Optional[HintLadderOut]:
+    """Validate a stored hint ladder, or drop it.
+
+    The column is JSON written by our own writer, so a mismatch means the
+    schema changed under rows that were already stored. Returning ``None``
+    rather than raising is the whole point: this runs while serializing a
+    *list* of entries, and one unreadable ladder would otherwise take the
+    entire mistake book down with a 500. A missing ladder degrades to "no
+    ladder for this entry", which the UI already handles.
+    """
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return HintLadderOut.model_validate(raw)
+    except ValidationError:
+        logger.warning("stored hint ladder does not match the schema; omitted")
+        return None
+
+
+def _variants_out(raw: object) -> list[VariantOut]:
+    """Validate the stored variants, dropping any that do not fit.
+
+    Same posture as :func:`_ladder_out`, and per-item rather than
+    all-or-nothing so one bad element cannot hide its siblings.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[VariantOut] = []
+    for item in raw:
+        try:
+            out.append(VariantOut.model_validate(item))
+        except ValidationError:
+            logger.warning("stored variant does not match the schema; omitted")
+    return out
 
 
 def _entry_to_out(entry: MistakeBookEntry) -> MistakeEntryOut:
@@ -162,6 +245,8 @@ def _entry_to_out(entry: MistakeBookEntry) -> MistakeEntryOut:
         error_type_description=(
             ROOT_CAUSE_DESCRIPTIONS.get(entry.agent_error_type or "", "")
         ),
+        hint_ladder=_ladder_out(entry.agent_hint_ladder),
+        variants=_variants_out(entry.agent_generated_variants),
     )
 
 

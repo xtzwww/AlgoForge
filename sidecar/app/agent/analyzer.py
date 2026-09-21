@@ -41,6 +41,8 @@ from app.agent.guardrails import complete_through_guardrails, guarded_chat_compl
 from app.agent.schemas import (
     ErrorAnalysisParseError,
     ErrorAnalysisResult,
+    HintLadderResult,
+    VariantResult,
     parse_error_analysis,
 )
 from app.agent.tracing import traceable_if_enabled
@@ -116,6 +118,22 @@ class AnalysisOutcome:
     # happen; keeping them on the outcome as well means a caller can show
     # what the Agent did after the fact without having captured a stream.
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
+
+    # --- S7's extra output, carried rather than dropped.
+    #
+    # These two live on the *shared* outcome even though only the ``team``
+    # orchestrator can fill them, and that is deliberate: ``pipeline``
+    # promises its callers one type regardless of which orchestrator ran,
+    # so a caller cannot branch on the type to find them. Before this they
+    # were logged and thrown away, which made the team's three-times-higher
+    # model bill buy nothing the student could see.
+    #
+    # ``None`` is the honest value for every other pipeline and for a
+    # worker that failed — ``direct`` and ``graph`` never produce either,
+    # and an empty ladder would be a claim that the model answered with
+    # nothing rather than a claim that it was never asked.
+    hint_ladder: Optional[HintLadderResult] = None
+    variant: Optional[VariantResult] = None
 
     @property
     def ok(self) -> bool:

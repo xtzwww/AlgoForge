@@ -31,6 +31,14 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.agent.schemas import (
+    HintLadderResult,
+    HintLevel,
+    VariantResult,
+    parse_error_analysis,
+)
+from app.agent.team import TeamOutcome
+from app.config import settings
 from app.eval_cases import ROOT_CAUSE_DESCRIPTIONS
 from app.llm.gateway import Completion, LLMConnectionError, ToolCall
 from app.models.base import Base
@@ -430,6 +438,149 @@ def test_to_dict_exposes_the_new_fields(engine, problem):
     assert "【错在哪】" in payload["agent_suggestion"]
     # The internal dedupe key still must not leak.
     assert "error_cause_fingerprint" not in payload
+
+
+# ------------------------------- S7's two workers get somewhere to live (T28)
+
+
+def _team_outcome_with_workers() -> TeamOutcome:
+    """A complete team run: diagnosis, ladder and variant.
+
+    Pinned as a literal rather than built from the team graph so these
+    tests exercise *recording*, not the three agents — the agents have
+    their own suite (``tests/test_agent_team.py``).
+    """
+    return TeamOutcome(
+        diagnosis=parse_error_analysis(VALID_ANALYSIS),
+        hint=HintLadderResult(
+            levels=[
+                HintLevel(level=1, text="看看 a * b 的类型"),
+                HintLevel(level=2, text="int 装得下 10^18 吗"),
+                HintLevel(level=3, text="先把一边转成 long long"),
+            ],
+            self_check=["乘法的两个操作数都看过类型了吗", "结果还溢出了吗"],
+        ),
+        variant=VariantResult(
+            statement="换成矩阵乘法，同样会溢出吗？",
+            sample_input="2 3",
+            sample_output="6",
+            knowledge_points=["整数溢出"],
+            difference="操作数来自矩阵规模，不是直接输入",
+        ),
+        attempts=3,
+        workers=["diagnose", "hint", "variant"],
+        produced=["diagnose", "hint", "variant"],
+    )
+
+
+def _run_team_recording(session, problem, monkeypatch, outcome=None):
+    """Record one WA submission through the ``team`` pipeline."""
+    monkeypatch.setattr(settings, "analysis_pipeline", "team")
+    with patch(
+        "app.agent.team.run_team",
+        return_value=outcome or _team_outcome_with_workers(),
+    ):
+        return record_submission(_wa_result(), _context(), session=session)
+
+
+def test_the_teams_ladder_and_variant_are_stored(session, problem, monkeypatch):
+    """T28: the workers' output reaches columns, not just a log line.
+
+    This is the assertion the whole ticket exists for. ``ANALYSIS_PIPELINE
+    =team`` costs roughly three times what ``direct`` costs, and until the
+    migration ``e3a71c58b2d4`` the extra output was logged and dropped —
+    money spent with nothing kept.
+    """
+    _run_team_recording(session, problem, monkeypatch)
+
+    entry = _entries(session)[0]
+
+    assert entry.agent_hint_ladder is not None
+    assert [rung["level"] for rung in entry.agent_hint_ladder["levels"]] == [1, 2, 3]
+    assert entry.agent_hint_ladder["levels"][0]["text"] == "看看 a * b 的类型"
+    assert entry.agent_hint_ladder["self_check"] == [
+        "乘法的两个操作数都看过类型了吗",
+        "结果还溢出了吗",
+    ]
+
+    assert entry.agent_generated_variants is not None
+    assert len(entry.agent_generated_variants) == 1
+    variant = entry.agent_generated_variants[0]
+    assert variant["statement"] == "换成矩阵乘法，同样会溢出吗？"
+    assert variant["knowledge_points"] == ["整数溢出"]
+    # The diagnosis still lands: the extra columns are additive.
+    assert str(entry.agent_error_type) == "overflow"
+
+
+def test_the_ladder_and_variant_reach_the_stream(session, problem, monkeypatch):
+    """The practice page sees them without re-reading the mistake book.
+
+    The feedback shown right after judging comes off the ``agent_done``
+    event, not off ``GET /mistake-book``. Storing the columns without
+    serving them here would make the feature invisible on the screen where
+    the student actually reads the diagnosis.
+    """
+    events: list[dict] = []
+    monkeypatch.setattr(settings, "analysis_pipeline", "team")
+    with patch(
+        "app.agent.team.run_team", return_value=_team_outcome_with_workers()
+    ):
+        record_submission(
+            _wa_result(), _context(), session=session, on_event=events.append
+        )
+
+    done = events[-1]
+
+    assert done["type"] == "agent_done"
+    assert done["hint_ladder"]["levels"][2]["text"] == "先把一边转成 long long"
+    assert done["variants"][0]["difference"] == "操作数来自矩阵规模，不是直接输入"
+
+
+def test_a_run_without_those_agents_serves_empty_not_missing(
+    session, problem, monkeypatch
+):
+    """``direct`` answers with the keys present and empty.
+
+    A client branches on the value; a key that appears only on a ``team``
+    run would make "this pipeline has no ladder" and "the field was
+    renamed" look identical — the same reasoning as ``recurrence``.
+    """
+    events: list[dict] = []
+    monkeypatch.setattr(settings, "analysis_pipeline", "direct")
+
+    with _stub_analysis(VALID_ANALYSIS):
+        record_submission(
+            _wa_result(), _context(), session=session, on_event=events.append
+        )
+
+    done = events[-1]
+
+    assert done["hint_ladder"] is None
+    assert done["variants"] == []
+    assert _entries(session)[0].agent_hint_ladder is None
+    assert _entries(session)[0].agent_generated_variants is None
+
+
+def test_a_later_run_clears_a_stale_ladder(session, problem, monkeypatch):
+    """A re-analysis overwrites the workers' columns, including with None.
+
+    Without this, an entry analysed once by ``team`` and later re-analysed
+    by ``direct`` would keep showing a hint ladder written for a diagnosis
+    that has since been replaced — the mistake book would describe two
+    different analyses at once.
+    """
+    _run_team_recording(session, problem, monkeypatch)
+    entry = _entries(session)[0]
+    assert entry.agent_hint_ladder is not None
+
+    monkeypatch.setattr(settings, "analysis_pipeline", "direct")
+    with _stub_analysis(VALID_ANALYSIS):
+        _analyse_and_annotate(entry, _wa_result(), _context(), "读入两个整数。")
+
+    assert entry.agent_hint_ladder is None
+    assert entry.agent_generated_variants is None
+    # ...and the diagnosis that *did* run is still written.
+    assert str(entry.agent_error_type) == "overflow"
 
 
 # ------------------------------------------- the Agent, streamed (P2-8)
