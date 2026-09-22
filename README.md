@@ -224,7 +224,7 @@
 | 前端构建 | electron-vite（vue-ts 模板）                                                                          |
 | 后端依赖 | pip + requirements.txt                                                                            |
 | 代码规范 | ESLint + Prettier（前端）/ Ruff（后端）                                                                   |
-| 测试   | pytest（后端，2026-09-20 实测 **1107 通过 / 3 跳过**（其中 6 条需 `milvus-lite`，没装时 skip），另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，2026-09-21 增至 **99 用例**） |
+| 测试   | pytest（后端，2026-09-22 实测 **1159 通过 / 11 跳过**（跳过里含 6 条需 `milvus-lite` 的、以及真 PG 的六项业务冒烟——后者要 `PG_URL`，默认 skip，得用 `bash tools/pg_business_smoke.sh` 单独跑），另 8 条 `eval_set` 默认不选）/ Vitest（前端，2026-09-19 接入，2026-09-22 实测 **148 用例 / 19 文件**） |
 | CI   | GitHub Actions（`.github/workflows/ci.yml`）                                                        |
 
 ---
@@ -654,9 +654,20 @@ pyarrow 后 `from pymilvus import MilvusClient` 仍然成功（pymilvus 3.0.2）
 
 **冻结产物能不能 import 整条分析链路，现在有运行时证据**：打包入口加了
 `--self-check`（无模型调用、无数据库、无 Milvus 连接），逐个 import
-S4 图 / S7 三智能体 / S5 检索层 / `pymilvus` / S8 的两个 PG backend，**再真正
-`build_analysis_graph()` 一次**（只 import 走不到 `StateGraph` 的组装代码）。
-打包版实测 **7/7 通过**；它也能在源码树上跑，用来区分「venv 坏了」与「包坏了」。
+S4 图 / S7 三智能体 / S5 检索层（`retriever` + `embedder` + `reranker`）/
+`pymilvus` / S8 的两个 PG backend，**再真正 `build_analysis_graph()` 一次**
+（只 import 走不到 `StateGraph` 的组装代码），最后**按真实调用方式装配检索**
+（`from app.rag import build_embedder, build_reranker, build_retriever`）。
+打包版实测 **10/10 通过**；它也能在源码树上跑，用来区分「venv 坏了」与「包坏了」。
+
+⚠️ **这份自检在 2026-09-22 之前是会漏报的**，值得记一笔：它当时只查
+`app.rag.retriever`，而 `app/rag/__init__.py` 在**顶层** re-export 了
+`embedder` 与 `reranker`——`pipeline.py` 的 `from app.rag import build_embedder`
+一旦因此抛 `ImportError`，会被它自己那个 `except ImportError` 吃掉，检索
+**静默关闭**（一行 info 日志，不报错，界面也看不出来），而自检照样 7/7 全绿。
+实测踩到过一次：产物 09-21 10:36 打的，这两个模块 09-22 凌晨才加进去。
+→ **教训：自检全绿只说明「它查的那几项在」，不等于「包是新的」。**
+判断产物新旧要 `stat` mtime 跟源文件比。
 
 **明确不做**（经方向讨论确定）：独立的 AI 检测服务、检测准确率研究、
   
@@ -1031,8 +1042,8 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **`CodeEditor` 测的是「怎么用 Monaco」，不是 Monaco** | 真 Monaco 在 jsdom 里跑不起来（要 canvas / worker），所以 `../monaco` 换成假实现，断言的是**组件怎么调用它**：挂载时开新会话、普通输入按尺寸记账、撤销不记事件、`isFlush` 走 `reset`、粘贴改写上一条、卸载 `dispose`。**未验**：真 Monaco 下这些回调的触发时机与 `isFlush` / `isUndoing` 的真实取值（`CodeEditor` 的注释记录了它们的语义，但没有对着真编辑器跑过） |
 | **安装包尚未产出**               | sidecar 已打成 PyInstaller onedir（**113 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 **C++ / Python / Java 三种语言的判题**；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出                                         |
 | **onedir 产物的限制**          | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准）                                                                                                                                                                                                              |
-| **打包版只验到「能 import」**        | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（9 条，2026-09-21 在重打包产物上复跑全绿）、密钥未进产物、**冻结产物能 import 整条分析链路**（`algoforge-sidecar.exe --self-check` 实测 7/7：S4 图 / S7 三智能体 / S5 检索层 / `pymilvus` / S8 的两个 PG backend，并真正组装了一次 `build_analysis_graph()`）。**未验**：冻结后在**真 PostgreSQL + 已落库题目**下跑完一次 `ANALYSIS_PIPELINE=graph` 分析（要先起 PG 造数据，见队列 T26）；`pymilvus` 只验到「能 import」，没验「能连上 Milvus 服务」；桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条） |
-| **`--self-check` 是 import 级证据，不是端到端** | 它证明的是「模块都在、图能组装」，**不能**替代「真的跑一次分析」。之所以不做端到端：那需要 PG + 已落库题目 + 一次付费模型调用，属于 T26 的范围。反过来说它的价值正在于此——失败原因只有「包缺了模块」一种，而一次真分析的失败可能是 key、网络、模型、数据库任一环 |
+| **打包版只验到「能 import」**        | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（9 条，2026-09-22 在重打包产物上复跑全绿）、密钥未进产物、**冻结产物能 import 整条分析链路**（`algoforge-sidecar.exe --self-check` 实测 **10/10**：S4 图 / S7 三智能体 / S5 检索层 + 向量模型 + 重排器 / `pymilvus` / S8 的两个 PG backend，并真正组装了一次 `build_analysis_graph()`、装配了一次检索）。**未验**：冻结后在**真 PostgreSQL + 已落库题目**下跑完一次 `ANALYSIS_PIPELINE=graph` 分析（要先起 PG 造数据，见队列 T26）；`pymilvus` 只验到「能 import」，没验「能连上 Milvus 服务」；桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条） |
+| **`--self-check` 是 import 级证据，不是端到端** | 它证明的是「模块都在、图能组装」，**不能**替代「真的跑一次分析」。之所以不做端到端：那需要 PG + 已落库题目 + 一次付费模型调用，属于 T26 的范围。反过来说它的价值正在于此——失败原因只有「包缺了模块」一种，而一次真分析的失败可能是 key、网络、模型、数据库任一环。⚠️ **它只覆盖它列举的那几项**：2026-09-22 之前它漏了 `app.rag.embedder` / `app.rag.reranker`，而这两个缺失会让检索**静默关闭**，自检仍 7/7 全绿（详见 §七 打包小节）。所以别把全绿当成「包是新的」——要看 `stat` mtime 与源文件的先后 |
 
 ---
 

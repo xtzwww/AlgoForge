@@ -62,6 +62,14 @@ _SELF_CHECK_MODULES = (
     ("S4 编排图", "app.agent.graph"),
     ("S7 三智能体", "app.agent.team"),
     ("S5 检索层", "app.rag.retriever"),
+    # 2026-09-22 补：这两个是「把文字变成向量」与「两遍检索的第二遍」的所在。
+    # 它们不是懒导入 —— `app/rag/__init__.py` 在**顶层**就 re-export 它们，
+    # 而 `pipeline.py` 的 `from app.rag import build_embedder` 又包在
+    # `try/except ImportError` 里。三者叠加的后果：包体缺这两个模块时，冻结版
+    # 的检索**静默关闭**（一行 info 日志，不报错，界面也看不出来），而只查
+    # `app.rag.retriever` 的自检照样全绿。实测踩到过一次（产物早于模块）。
+    ("S5 向量模型", "app.rag.embedder"),
+    ("S5 重排器", "app.rag.reranker"),
     ("S5 Milvus 客户端", "pymilvus"),
     ("S8 短期记忆（PG）", "langgraph.checkpoint.postgres"),
     ("S8 长期记忆（PG）", "langgraph.store.postgres"),
@@ -116,7 +124,28 @@ def self_check() -> int:
     else:
         print(f"OK   {graph_step:<20} build_analysis_graph()")
 
-    total = len(_SELF_CHECK_MODULES) + 1
+    # 按**真实调用方式**装配检索，而不是只 import 模块。`pipeline.py` 用的是
+    # `from app.rag import build_embedder, ...`，而 `app/rag/__init__.py` 顶层
+    # re-export 了 embedder 与 reranker —— 缺任何一个，这里的 ImportError 就
+    # 是线上那份静默降级。只 import `app.rag.retriever` 是抓不到的。
+    retrieval_step = "S5 检索装配"
+    try:
+        from app.rag import (
+            build_embedder,
+            build_reranker,
+            build_retriever,
+        )
+    except Exception as exc:  # noqa: BLE001 — reporting is the whole job
+        failed += 1
+        print(f"FAIL {retrieval_step:<20} {type(exc).__name__}: {exc}")
+    else:
+        # 只取对象，不调用 —— 调用会去连向量模型端点，那是真分析的事。
+        assert callable(build_embedder)
+        assert callable(build_reranker)
+        assert callable(build_retriever)
+        print(f"OK   {retrieval_step:<20} app.rag.build_embedder/reranker/retriever")
+
+    total = len(_SELF_CHECK_MODULES) + 2
     print(f"self-check: {total - failed}/{total} 通过")
     return 1 if failed else 0
 
