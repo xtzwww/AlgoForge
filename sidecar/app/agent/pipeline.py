@@ -22,10 +22,14 @@ switch rather than as a replacement:
   may run a second round). That spend happens while a student waits for
   ``judge_done``.
 * AGENTS.md §三 makes S2's "20 道真题准确率 ≥ 60%" a go/no-go line, and
-  the only way to measure it is ``pytest -m eval_set`` — a paid,
-  metered run that neither the daily suite nor the nightly automation
-  performs. Switching the orchestrator without running that would leave
-  nobody able to say whether accuracy moved.
+  **nothing in the suite measures it today**. ``pytest -m eval_set`` — for
+  a long time described here as the way to measure accuracy — in fact runs
+  only the local C++ judge: it checks that each case's reference solution
+  ACs and that each labelled bug reproduces its verdict, i.e. that the
+  **evaluation set itself is trustworthy**. It makes no model calls, so it
+  says nothing about accuracy on that set. Switching the orchestrator
+  without a run that actually invokes a model would still leave nobody
+  able to say whether accuracy moved.
 
 So the wiring lands here, tested on both branches, and flipping
 ``ANALYSIS_PIPELINE=graph`` stays a deliberate, supervised act.
