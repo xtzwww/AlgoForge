@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.config import DATA_ROOT
+
 # Canonical root-cause labels. These are the values the Agent must emit
 # and the values eval cases are scored against.
 #
@@ -162,8 +164,10 @@ class EvalCase:
             )
 
 
-# Default location of the eval set, relative to the repository root.
-DEFAULT_EVAL_DIR = Path(__file__).resolve().parents[2] / "corpus" / "eval_cases"
+# Default location of the eval set. Anchored on ``app.config.DATA_ROOT``
+# rather than ``__file__`` so a frozen build does not look for ``corpus/``
+# inside its own bundle (found 2026-09-22; see ``app.config._project_root``).
+DEFAULT_EVAL_DIR = DATA_ROOT / "corpus" / "eval_cases"
 
 
 def _case_from_mapping(data: dict[str, Any], *, source: Path) -> EvalCase:

@@ -39,12 +39,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-#: Default location of the card corpus, relative to the repository root.
-#: ``parents[3]`` walks ``rag/`` → ``app/`` → ``sidecar/`` → repo root. Note
-#: this is one deeper than ``app.problems_corpus.DEFAULT_PROBLEMS_DIR`` uses
-#: (``parents[2]``) purely because this module sits one directory deeper —
-#: getting it wrong points at ``sidecar/corpus``, which does not exist.
-DEFAULT_CARDS_DIR = Path(__file__).resolve().parents[3] / "corpus" / "knowledge_cards"
+from app.config import DATA_ROOT
+
+#: Default location of the card corpus.
+#:
+#: Anchored on ``app.config.DATA_ROOT`` rather than on ``__file__``: the
+#: latter points *inside the bundle* once frozen, so ``parents[3]`` resolved
+#: to a directory with no ``corpus/`` in it. That made a packaged build
+#: unable to see any knowledge card — quietly, since retrieval degrades to
+#: "no context" instead of raising (found 2026-09-22).
+DEFAULT_CARDS_DIR = DATA_ROOT / "corpus" / "knowledge_cards"
 
 #: Files that live in the corpus directory without being cards.
 #: ``README.md`` documents the format; indexing it would put prose *about*

@@ -99,7 +99,12 @@ def test_self_check_reports_one_line_per_step_and_passes(capsys):
     assert entry.self_check() == 0
 
     out = capsys.readouterr().out
-    expected = len(entry._SELF_CHECK_MODULES) + 1  # modules + graph build
+    # ``+ 2``: the module imports, plus two checks that are not plain imports —
+    # building the graph, and assembling the RAG stack the way production does
+    # (`from app.rag import ...`). Keep this in step with `self_check`; the
+    # assertion below is what catches it drifting (it did, on 2026-09-22:
+    # the assembly line was added and this still said `+ 1`).
+    expected = len(entry._SELF_CHECK_MODULES) + 2
     assert out.count("OK") == expected
     assert "FAIL" not in out
     assert f"{expected}/{expected}" in out

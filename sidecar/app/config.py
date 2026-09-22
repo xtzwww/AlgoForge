@@ -34,6 +34,57 @@ _DEFAULT_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 _ENV_FILE = Path(os.environ.get("ALGOFORGE_ENV_FILE") or _DEFAULT_ENV_FILE)
 
 
+def _project_root() -> Path:
+    """Where the repository's data lives: `corpus/`, `sidecar/data/`.
+
+    In the source tree this is the checkout root, found by walking up from
+    this file. **Under PyInstaller it is not**, and that is the whole reason
+    this function exists.
+
+    A frozen build reports ``__file__`` as a path *inside its own bundle*
+    (``<dist>/algoforge-sidecar/_internal/app/config.py``), so
+    ``parents[1]``/``parents[2]``/``parents[3]`` all resolve to directories
+    that hold only the bundle's contents — no ``corpus/``, no
+    ``sidecar/data/``. Every default built that way points at a path that
+    does not exist, and each caller fails differently and quietly:
+
+    * the knowledge base degrades to "no context" (retrieval off, no error);
+    * the problem catalogue raises ``FileNotFoundError`` on first use;
+    * the embedded Milvus path is simply absent, so retrieval cannot open.
+
+    None of these are caught by ``--self-check``, which imports modules
+    rather than reading data — that is exactly how a packaged build passed
+    every check while unable to retrieve anything (found 2026-09-22).
+
+    So a frozen build falls back to ``sys._MEIPASS`` — PyInstaller's own
+    name for the bundle directory, which is also the base that
+    ``--add-data`` targets are resolved against. Anchoring on it is what
+    makes the packaged ``corpus/`` land exactly where
+    ``DATA_ROOT / "corpus" / ...`` looks for it. (An earlier attempt used
+    the *executable's* directory instead, which cannot work: PyInstaller
+    rejects ``--add-data`` destinations that escape the bundle, so the data
+    would have had to be copied there by hand.)
+
+    ``ALGOFORGE_DATA_ROOT`` overrides the whole thing, for a machine that
+    keeps the corpus outside the bundle.
+    """
+    override = (os.environ.get("ALGOFORGE_DATA_ROOT") or "").strip()
+    if override:
+        return Path(override)
+    if getattr(sys, "frozen", False):
+        # `_MEIPASS` is the onedir bundle directory (`<dist>/<name>/_internal`),
+        # i.e. exactly where `--add-data` puts things.
+        bundle = getattr(sys, "_MEIPASS", None)
+        if bundle:
+            return Path(bundle)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1].parent
+
+
+#: Repository root (source tree) or the onedir folder (frozen build).
+DATA_ROOT = _project_root()
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables / .env file."""
 
@@ -249,11 +300,14 @@ class Settings(BaseSettings):
     #
     # 默认指向项目内的 data/ 而不是留空，是因为本机 Docker 不通
     # （``wsl.exe`` 被安全策略拉黑），留空等于检索永久不可用。
+    #
+    # ⚠️ 用 ``DATA_ROOT`` 而不是 ``Path(__file__).parents[1]``：冻结后后者
+    # 指向产物内部的 ``_internal/data``，那个目录不存在 —— 打包版的检索
+    # 因此从来没能打开过向量库（2026-09-22 实测发现）。详见 ``_project_root``。
     milvus_lite_path: str = Field(
-        default=str(Path(__file__).resolve().parents[1] / "data" / "milvus.db"),
+        default=str(DATA_ROOT / "sidecar" / "data" / "milvus.db"),
         description="Embedded Milvus database file; empty means use MILVUS_URI.",
     )
-
     # ------------------------------------------------- Knowledge retrieval
     # 检索层能不能用，取决于有没有一个「把文字变成向量」的模型。没有它，
     # :func:`app.rag.retriever.build_retriever` 只能降级成空检索，检索节点

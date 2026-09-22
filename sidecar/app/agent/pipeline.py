@@ -304,6 +304,21 @@ def _retrieve_context(
         logger.warning("knowledge retrieval failed (%s); continuing without", exc)
         return "", []
 
+    if not candidates:
+        # An empty collection is not the same as "nothing relevant". The
+        # index is a *derived* artefact — gitignored, produced by
+        # `tools/index_knowledge_base.py` — so a fresh checkout, or a
+        # packaged build on a machine that never ran that script, starts
+        # with no index at all and would answer every question with
+        # silence. Build it once, here, and retry; the cards themselves ARE
+        # shipped (see `build_sidecar.sh`), so this always has source data.
+        #
+        # Only on an empty result: a populated collection that returns
+        # nothing for a query is a normal outcome (the corpus is 12 cards),
+        # and rebuilding on every such miss would cost an embedding call
+        # per analysis to reach the same answer.
+        candidates = _build_index_and_search(retriever, embedder, query, tags, wanted)
+
     cards = rerank_cards(query, candidates, reranker, DEFAULT_LIMIT)
     context = format_context(cards)
     titles = [card.title for card in cards if card.title]
@@ -314,6 +329,63 @@ def _retrieve_context(
             ", ".join(titles),
         )
     return context, titles
+
+
+def _build_index_and_search(
+    retriever: Any,
+    embedder: Any,
+    query: str,
+    tags: Sequence[str],
+    wanted: int,
+) -> list[Any]:
+    """Build the knowledge index if it is missing, then search again.
+
+    Separated from :func:`_retrieve_context` to keep the failure handling
+    obvious: everything here is best-effort, and any problem returns an
+    empty list so the caller degrades exactly as it did before. Building an
+    index means embedding 12 cards — a handful of requests — so it is
+    acceptable to do inline once, and it only happens when the collection is
+    empty (i.e. at most once per machine, not once per submission).
+
+    Why this exists at all: the index is gitignored derived data. Nothing
+    generated it automatically, so a packaged build — which cannot ship the
+    developer's ``sidecar/data/milvus.db`` — had a knowledge base that could
+    never answer anything, silently. Shipping the *cards* and building the
+    index from them on first use removes the dependency on a manual step
+    (found 2026-09-22).
+    """
+    try:
+        from app.rag import (
+            DEFAULT_COLLECTION,
+            index_cards,
+            load_knowledge_cards,
+        )
+
+        client = getattr(retriever, "client", None)
+        if client is None:
+            return []
+
+        cards = load_knowledge_cards()
+        if not cards:
+            logger.warning("knowledge index is empty and no cards were found")
+            return []
+
+        written = index_cards(client, DEFAULT_COLLECTION, cards, embedder)
+        logger.info(
+            "knowledge index was empty; built it from %d card(s) on first use",
+            written,
+        )
+    except Exception as exc:  # noqa: BLE001 — best effort, degrade as before
+        logger.warning(
+            "could not build the knowledge index (%s); continuing without", exc
+        )
+        return []
+
+    try:
+        return retriever.search(query, tags=tuple(tags or ()), limit=wanted)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("knowledge retrieval failed after indexing (%s)", exc)
+        return []
 
 
 def _via_graph(

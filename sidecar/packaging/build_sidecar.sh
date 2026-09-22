@@ -53,6 +53,33 @@ for f in "$REPO"/sidecar/app/prompts/*.md; do
 done
 echo "      打包数据文件：${#ADD_DATA[@]} 个提示模板"
 
+# ---- 语料：题目 / 知识卡片 / 评估集 -------------------------------------
+#
+# ⚠️ 这三样**曾经没被打进包**，而它们的默认路径是按 `__file__` 算的 ——
+# 冻结后 `__file__` 在产物内部，于是打包版既找不到题目也找不到知识卡片，
+# 且**一声不响**（检索降级成空上下文、题库在首次使用时才抛 FileNotFound）。
+# 2026-09-22 由 `--self-check-retrieval` 报出来，此前所有 import 级检查
+# 全绿。修法有两半：路径改用 `app.config.DATA_ROOT`（见 config._project_root），
+# 文件在这里跟着进包。
+#
+# 目标目录写成 `./corpus/...`：`--add-data` 的目标是相对 **bundle 目录**
+# （onedir 下就是 `_internal/`）的，而 `app.config.DATA_ROOT` 冻结时正是
+# `sys._MEIPASS`，即同一个目录 —— 两边对得上，语料就落在
+# `DATA_ROOT/corpus/...`，与源码树里的相对位置一致。
+#
+# ⚠️ 别写 `../corpus`：PyInstaller 会拒绝（"DEST_DIR must not point outside
+# of application's top-level directory"），因为 `--add-data` 不允许写到包外。
+# 2026-09-22 实测踩到，同一轮才把 DATA_ROOT 从「exe 所在目录」改成 `_MEIPASS`。
+for dirname in problems knowledge_cards eval_cases; do
+  src="$REPO/corpus/$dirname"
+  if [ -d "$src" ]; then
+    ADD_DATA+=(--add-data "$src;corpus/$dirname")
+    echo "      打包语料：corpus/$dirname"
+  else
+    echo "⚠️  缺少语料目录：$src" >&2
+  fi
+done
+
 # ---- 懒导入的模块：显式声明，别指望字节码扫描 --------------------------
 #
 # 下面这些模块在源码里都是**函数体内**才 import 的：
@@ -96,34 +123,47 @@ py -m PyInstaller \
   --hidden-import "uvicorn.logging" \
   --hidden-import "sqlalchemy.dialects.postgresql.asyncpg" \
   --hidden-import "asyncpg" \
-  --exclude-module "milvus_lite" \
-  --exclude-module "faiss" \
-  --exclude-module "pyarrow" \
+  --hidden-import "milvus_lite" \
+  --hidden-import "faiss" \
+  --copy-metadata "milvus-lite" \
   --log-level WARN \
   packaging/sidecar_main.py
 
-# ⚠️ 那两个 --exclude-module 是必需的，不是洁癖。
-# `pip install milvus-lite` 会带进 faiss-cpu 与 pyarrow（上百 MB），而它只是
-# tests/test_rag_milvus_live.py 用来对着真实 Milvus 引擎验检索层的**测试**依赖
-# ——sidecar 生产走的是 Milvus **服务**（MILVUS_URI），永远不 import 它。
-# PyInstaller 做的是静态扫描，不看 import 是否真的会执行，所以只要某个开发者
-# 装过 milvus-lite，产物就会莫名胖上百 MB。显式排除后，产物体积不再取决于
-# 谁跑过那条测试。
+# ---- 内嵌向量库：带上 milvus-lite（2026-09-22 决定）---------------------
+#
+# 这里曾经同时排除 `milvus_lite` / `faiss` / `pyarrow`，理由是「sidecar 生产
+# 走 Milvus **服务**（MILVUS_URI），永远不 import 它」。**那个理由与代码和
+# 配置都不符**：`settings.milvus_lite_path` 默认指向 `sidecar/data/milvus.db`，
+# `.env` 也没把它留空，所以运行时走的一直是内嵌引擎。结果是打包版**两条路
+# 都不通** —— 没有 `milvus_lite` 包，也没有 Milvus 服务 —— 检索只能静默降级，
+# 界面上「参考资料」永远是空的。
+#
+# 现在按用户 2026-09-22 的决定：**内嵌库打进产物**，目标机不需要 Docker、
+# 不需要起服务，开箱即用。
+#
+# ⚠️ **`pyarrow` 不能排除**，这也是 2026-09-22 实测推翻的一条旧结论：
+# `milvus_lite/engine/collection.py` 在**模块级** `import pyarrow`，排除它
+# 会让 `import milvus_lite` 直接 `ModuleNotFoundError: No module named
+# 'pyarrow'` —— 而 `pymilvus` 把这个 ImportError 翻译成
+# 「milvus-lite is required for local database connections，请 pip install
+# pymilvus[milvus_lite]」，指向一个**已经装好的包**，误导性极强。
+# 排查办法：`algoforge-sidecar.exe --probe-import milvus_lite.server_manager`
+# 会打印真实异常链（这条参数就是为这次排查留下的）。
+#
+# 所以：内嵌引擎的真实代价是 `milvus_lite`(1.8 MB) + `faiss`(15 MB) +
+# `pyarrow`(85.6 MB) ≈ 102 MB，另加一条 `--copy-metadata`（见下）。
+#
+# ⚠️ `--copy-metadata "milvus-lite"` 也是必需的，这是第三个坑：
+# `milvus_lite/_version.py` 的 ``get_version()`` 先找源码树里的
+# ``pyproject.toml``（打包后没有），再退回 ``importlib.metadata.version()``。
+# PyInstaller 默认**只打包代码、不带包的元数据**，于是那一步抛
+# ``PackageNotFoundError: No package metadata was found for milvus-lite`` ——
+# 又一个被 pymilvus 吞成「请 pip install」的错误。
+# ``--copy-metadata`` 把 ``*.dist-info`` 一并带进产物，问题消失。
+# 名字要用**发行名** ``milvus-lite``（连字符），不是 import 名 ``milvus_lite``。
+
 # 同理别去改 packaging/*.spec：它是每次构建重新生成的（--noconfirm），
 # 而且 .gitignore 里就排除了 *.spec，改了不进版本库。
-#
-# `--exclude-module pyarrow` 与上面两个同一个道理，但它是 2026-09-21 才发现的：
-# 一旦显式 `--hidden-import pymilvus`，PyInstaller 就会扫到
-# `pymilvus/bulk_writer/`，而那里**模块级** `import pyarrow`（buffer.py:21、
-# constants.py:16）——实测产物因此从 **113 MB 涨到 194 MB**，多出来的 81 MB
-# 全是 `pyarrow/`（81 MB）+ `pyarrow.libs/`（1 MB）。
-#
-# bulk_writer 是 pymilvus 的「批量导入」功能，AlgoForge 用的是 MilvusClient 的
-# 建库/检索，永远不碰它；`pymilvus/client/type_info.py` 还专门写了注释说自己
-# **不** import pyarrow（"Return symbolic Arrow layout facts without importing
-# pyarrow"）。所以排除是安全的——已实测：屏蔽 pyarrow 后
-# `from pymilvus import MilvusClient` 仍然成功（pymilvus 3.0.2）。
-# 排除后产物回到 ~113 MB 量级。
 
 echo ""
 echo "产物：$REPO/dist/algoforge-sidecar/algoforge-sidecar.exe"

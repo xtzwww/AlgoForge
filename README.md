@@ -468,17 +468,19 @@
 
 **阶段 7 进展**：打包已经实际落地并验到判题层——sidecar 打成 PyInstaller onedir
   
-（**113 MB**），`/health` 与 **C++ / Python / Java 三种语言的判题**都在**打包版**上跑通，
+（**258 MB**），`/health` 与 **C++ / Python / Java 三种语言的判题**都在**打包版**上跑通，
   
 密钥确认未进产物，过程中还修掉两个只在打包版出现的缺陷（Python 判题整条链路、
   
 Java 的 CE 输出乱码，见下方完成定义表）。
   
-2026-09-21 重打包后又补了一条**运行时**证据：冻结产物能 import 整条分析链路
-（`algoforge-sidecar.exe --self-check`，**7/7**），且三种语言 9 条判定在重打包产物上
-复跑全绿。同一次重打包还推翻了「`langgraph` / `pymilvus` 没进产物」这个旧诊断，
-详见下方「重建打包产物」。
-  
+2026-09-22 又补了一条**端到端**证据：冻结产物不仅能 import 整条分析链路
+（`algoforge-sidecar.exe --self-check`，**10/10**），还能**真的取回知识卡片**——
+`--self-check-retrieval` 在打包版上实跑，`二分查找的边界条件` → **3 张卡片 / 4715 字符
+上下文**；三种语言 9 条判定在重打包产物上复跑全绿。体积从 113 MB 涨到 258 MB 是
+**有意决策**：把内嵌向量库（`milvus-lite`，不依赖 Docker）打进产物，换来目标机
+开箱即用。见下方「重建打包产物」。
+
 **仍未闭合的只有第 3 条（安装包）**，原因是本机沙箱禁止从 Bash 调用 PowerShell，
   
 而 electron-builder 在 Windows 上硬编码靠它收集依赖树——**是环境限制，不是配置缺陷**。
@@ -526,7 +528,7 @@ Milvus 需要 Docker 而本机 Docker 不通——**检索层代码已经写好�
 | 3 | 桌面端打成 **electron-builder** 安装包    | 装上后主进程能拉起打包版 sidecar（而不是 dev 的 uvicorn），走通一次提交                                 | ⬜ 未产出。本机沙箱禁止从 Bash 调用 PowerShell，而 electron-builder 的依赖收集器在 Windows 上硬编码走 `powershell.exe`，因此本机跑不出安装包——**配置本身没问题，是环境限制**，详见 `.workbuddy-ai/night-queue.md` 的 T3                                   |
 | 4 | **密钥不进产物**                        | `.env` / `SIDECAR_TOKEN` 不写进包体；token 仍按既有约定运行时生成或由用户配置。打进去等于把共享密钥公开            | ✅ `dist/` 内 grep 不到任何 `.env`；打包脚本与 `electron-builder.yml` 两边都显式排除，改走 `ALGOFORGE_ENV_FILE`                                                                                                         |
 | 5 | 前置条件写清楚                           | README 写明目标机需要什么（g++ 的路径配置、PostgreSQL 是否必需、非必需时的降级表现）                          | ✅ 见 §七「目标机前置要求」                                                                                                                                                                                   |
-| 6 | 体积与限制记录在案                         | 打包产物体积、已知限制（如首次启动慢、杀毒软件误报）写进 README                                            | ✅ sidecar onedir 实测 **113 MB**（2026-09-20 重建后；此前的 48 MB 是**缺 Agent 依赖**的旧产物。2026-09-21 再重建一次仍是 **113 MB**——中间曾因显式声明 `pymilvus` 而涨到 194 MB，排除 `pyarrow` 后回落，见下方「重建打包产物」），限制见 §九                                                                                                   |
+| 6 | 体积与限制记录在案                         | 打包产物体积、已知限制（如首次启动慢、杀毒软件误报）写进 README                                            | ✅ sidecar onedir 实测 **258 MB**（2026-09-22 重建后；此前的 113 MB 是**没把内嵌向量库打进产物**的版本，检索在打包版里静默失效——见下方「重建打包产物」）。体积换的是**目标机开箱即用**：不需要 Docker、不需要另起 Milvus 服务，限制见 §九                                                                                                   |
 
 **打包后 Python 判题曾经是坏的**（2026-09-20 修，提交 `b70ea20`）
 
@@ -648,9 +650,26 @@ PyInstaller 只跟静态 import，所以跟不到」。**这句话是错的**，
 因为显式声明会让 PyInstaller 扫到 `pymilvus/bulk_writer/`，而那里是**模块级**
 `import pyarrow`（`buffer.py:21`、`constants.py:16`）。bulk_writer 是 pymilvus 的
 「批量导入」功能，本项目只用 `MilvusClient` 建库与检索，永远不碰它；
-`pymilvus/client/type_info.py` 自己还专门注释了「不 import pyarrow」。实测屏蔽
-pyarrow 后 `from pymilvus import MilvusClient` 仍然成功（pymilvus 3.0.2），于是照
-`milvus_lite` / `faiss` 的样子加了 `--exclude-module pyarrow`，产物回到 **113 MB**。
+`pymilvus/client/type_info.py` 自己还专门注释了「不 import pyarrow」。
+
+⚠️ **但「屏蔽 pyarrow」这个结论在 2026-09-22 被推翻了**，而且推翻得很有教育意义：
+当时加 `--exclude-module pyarrow` 后产物回到 113 MB，验证方式是
+`from pymilvus import MilvusClient` ——**它成功，于是记成「结论：屏蔽后仍可用」**。
+那句话只覆盖了「连 Milvus **服务**」这条路。本轮决定把**内嵌**向量库
+（`milvus-lite`）打进产物后，`import milvus_lite` 立刻炸：
+
+```
+ModuleNotFoundError: No module named 'pyarrow'
+```
+
+来源是 `milvus_lite/engine/collection.py` 的**模块级** `import pyarrow`——而它还会
+被 pymilvus 包成一句极具误导性的
+「milvus-lite is required for local database connections，请 pip install
+`pymilvus[milvus_lite]`」，看着像依赖没装，实际是**我们把它的依赖排除了**。
+
+→ **教训：`--exclude-module` 的验证必须覆盖「所有会用到它的路径」，而不是当前
+默认路径。** 默认路径是最不容易暴露问题的那条。所以现在 `pyarrow` 与
+`milvus_lite` / `faiss` 一起**必须进包**，产物 258 MB。
 
 **冻结产物能不能 import 整条分析链路，现在有运行时证据**：打包入口加了
 `--self-check`（无模型调用、无数据库、无 Milvus 连接），逐个 import
@@ -668,6 +687,66 @@ S4 图 / S7 三智能体 / S5 检索层（`retriever` + `embedder` + `reranker`�
 实测踩到过一次：产物 09-21 10:36 打的，这两个模块 09-22 凌晨才加进去。
 → **教训：自检全绿只说明「它查的那几项在」，不等于「包是新的」。**
 判断产物新旧要 `stat` mtime 跟源文件比。
+
+**还有两个自检，覆盖自检覆盖不到的层面**（都要联网，所以单独开关、不默认跑）：
+
+| 开关 | 查什么 | 依赖 |
+|---|---|---|
+| `--self-check-embedding` | 向量模型端点本身：provider/model/base_url、密钥在不在、调一次拿回多少维 | 只要模型端点 |
+| `--self-check-retrieval` | 语料在不在、向量库在不在、**真的检索一次**并列出取回的卡片 | 模型端点 + 语料 |
+
+上线后「分析里没有参考资料」时，这两个能二分定位：**先跑 embedding 那个**——
+它绿说明端点没问题、问题在索引侧；它红就直接告诉你端点是哪个、连不上为什么。
+
+⚠️ **打包版检索曾经整整一轮静默失效，根因是配置而不是代码**，值得记一笔。
+症状是 `[WinError 10061] 由于目标计算机积极拒绝，无法连接。`——看着像 Milvus
+连不上，实际是**向量模型端点没配**：`.env` 里配的是云端端点，源码树读得到；
+而产物**刻意不带 `.env`**（里面有密钥），于是落回 `config.py` 的默认值
+`ollama` + `http://127.0.0.1:11434`（本机 Ollama，没开）。这个异常被检索的
+「出错即返回空上下文」约定吞成一行 warning，**界面上只表现为「分析里没有参考
+资料」**，完全看不出是配置问题。
+
+所以打包版交付时要明确一件事：**产物需要外部提供向量模型的两个选择之一**
+（云端四个环境变量，或本机跑着 Ollama），`.env.example` 里已写清，详见
+`sidecar/.env.example` 的 RAG 段。
+
+顺带修掉一个只在打包版出现的崩溃：Windows 控制台默认代码页是 GBK，
+`--self-check-embedding` 里的 `↳` 字符 GBK 收不下，直接
+`UnicodeEncodeError` 把进程带走——**报错指向 `print`，看起来像被检查的东西坏了**。
+修法是在入口把 stdout/stderr 重配成 UTF-8（`errors="replace"`），而不是躲避
+特殊字符。
+
+**2026-09-22：把内嵌向量库与语料打进产物，打包版检索从「静默失效」变成「可用」**
+
+这一轮的起因是解包复核：产物里的 `app.rag.*` 只有 5 个模块，源码有 7 个——
+少的正是 `embedder` 与 `reranker`。于是做了三件事：
+
+**① 让数据文件跟着进包。** 题目语料 / 知识卡片 / 评估集三处的默认路径原先都是
+`Path(__file__).resolve().parents[N]`，**冻结后 `__file__` 指向产物内部**，于是
+打包版既找不到题目也找不到知识卡片。修法是引入 `app.config.DATA_ROOT`：源码树
+按 `__file__` 算，冻结时用 `sys._MEIPASS`（onedir 下就是 `_internal/`，也正是
+`--add-data` 的目标基准），另给 `ALGOFORGE_DATA_ROOT` 作为逃生口。
+`build_sidecar.sh` 里对应加了三条 `--add-data`。⚠️ 目标**不能写 `../corpus`**：
+PyInstaller 会拒绝（`DEST_DIR must not point outside of application's top-level
+directory`）。
+
+**② 决定把 `milvus-lite` 打进产物。** 两条路里选了内嵌（另一条是让目标机
+自己跑 Milvus 服务，本机 Docker 不通）。代价是体积 113 → 258 MB，换来的是
+**目标机开箱即用**——不需要 Docker、不需要另起服务。为此踩满三个连环坑：
+`milvus_lite` 要 `faiss`、要 `pyarrow`（见上）、还要 `--copy-metadata "milvus-lite"`
+（`milvus_lite/_version.py` 的 `get_version()` 先找 `pyproject.toml`——打包后没有，
+再退回 `importlib.metadata.version()`，而 PyInstaller 默认不带 `*.dist-info`；
+报错是 `PackageNotFoundError: No package metadata was found for milvus-lite`）。
+
+**③ 给向量库目录做自动创建 + 索引自动重建。** `build_retriever` 在打开文件型
+Milvus 前会建父目录（新检出与全新产物都没有 `sidecar/data/`，而原报错
+「Open local milvus failed, dir: ... not exists」读起来像安装坏了）；`pipeline`
+在检索**空结果**时调一次 `_build_index_and_search` 自动建索引重试——因为索引是
+派生数据（gitignored），新机器上必然为空。这条自愈在产物上被**真实触发过**
+（首跑日志里能看到 `collection ... does not exist` → 建索引 → 取回 3 张卡片）。
+
+最后那个「向量模型端点没配」的坑见上文——它才是整轮排查里最费时间的一环，
+因为错误信息（`WinError 10061`）指向的方向完全是错的。
 
 **明确不做**（经方向讨论确定）：独立的 AI 检测服务、检测准确率研究、
   
@@ -1067,10 +1146,10 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **无检测验证集**                | AI 使用检测缺少人工标注样本，因此不以准确率为目标                                                                                                                                                                                                                                                                                                                                            |
 | **视图层（`views/`）只覆盖了 3/7**       | Vitest 共 **148 个用例 / 19 个文件**：api 层纯逻辑 26 个、组件行为 91 个、视图行为 31 个。**`components/` 下 11 个组件已全部覆盖**（2026-09-21 补齐 `CodeEditor` / `RadarChart` / `AppSidebar` / `AppTopbar` / `EmptyState` / `PageHeader` 六个，+42 个用例）。⚠️ **7 个视图（共 5577 行）里已覆盖 3 个**——`MistakesView` 995（T31）、`ProfileView` 475（T37）与 `PlanView` 633（T38）；**仍未覆盖的是另外 4 个，共 3474 行**（`TeacherView` 1573 / `Practice` 1162 / `ProblemListView` 698 / `ProblemPracticeView` 41）——它们既持有状态又直接发请求，测它们等于先把整页的数据流搭起来。现有做法是**把纯展示部分抽成子组件再测**（`AttentionAlerts` / `ProblemStatement` / `EmptyState` / `PageHeader` 都是这么来的），剩下的编排逻辑仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」 |
 | **`CodeEditor` 测的是「怎么用 Monaco」，不是 Monaco** | 真 Monaco 在 jsdom 里跑不起来（要 canvas / worker），所以 `../monaco` 换成假实现，断言的是**组件怎么调用它**：挂载时开新会话、普通输入按尺寸记账、撤销不记事件、`isFlush` 走 `reset`、粘贴改写上一条、卸载 `dispose`。**未验**：真 Monaco 下这些回调的触发时机与 `isFlush` / `isUndoing` 的真实取值（`CodeEditor` 的注释记录了它们的语义，但没有对着真编辑器跑过） |
-| **安装包尚未产出**               | sidecar 已打成 PyInstaller onedir（**113 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 **C++ / Python / Java 三种语言的判题**；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出                                         |
+| **安装包尚未产出**               | sidecar 已打成 PyInstaller onedir（**258 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 **C++ / Python / Java 三种语言的判题**；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出                                         |
 | **onedir 产物的限制**          | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准）                                                                                                                                                                                                              |
-| **打包版只验到「能 import」**        | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（9 条，2026-09-22 在重打包产物上复跑全绿）、密钥未进产物、**冻结产物能 import 整条分析链路**（`algoforge-sidecar.exe --self-check` 实测 **10/10**：S4 图 / S7 三智能体 / S5 检索层 + 向量模型 + 重排器 / `pymilvus` / S8 的两个 PG backend，并真正组装了一次 `build_analysis_graph()`、装配了一次检索）。**未验**：冻结后在**真 PostgreSQL + 已落库题目**下跑完一次 `ANALYSIS_PIPELINE=graph` 分析（要先起 PG 造数据，见队列 T26）；`pymilvus` 只验到「能 import」，没验「能连上 Milvus 服务」；桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条） |
-| **`--self-check` 是 import 级证据，不是端到端** | 它证明的是「模块都在、图能组装」，**不能**替代「真的跑一次分析」。之所以不做端到端：那需要 PG + 已落库题目 + 一次付费模型调用，属于 T26 的范围。反过来说它的价值正在于此——失败原因只有「包缺了模块」一种，而一次真分析的失败可能是 key、网络、模型、数据库任一环。⚠️ **它只覆盖它列举的那几项**：2026-09-22 之前它漏了 `app.rag.embedder` / `app.rag.reranker`，而这两个缺失会让检索**静默关闭**，自检仍 7/7 全绿（详见 §七 打包小节）。所以别把全绿当成「包是新的」——要看 `stat` mtime 与源文件的先后 |
+| **打包版的验证边界**        | 已验：`/health`、**C++ / Python / Java 三种语言的判题**（9 条，2026-09-22 在重打包产物上复跑全绿）、密钥未进产物、**冻结产物能 import 整条分析链路**（`algoforge-sidecar.exe --self-check` 实测 **10/10**：S4 图 / S7 三智能体 / S5 检索层 + 向量模型 + 重排器 / `pymilvus` / S8 的两个 PG backend，并真正组装了一次 `build_analysis_graph()`、装配了一次检索）、**冻结产物能真的取回知识卡片**（`--self-check-retrieval` 实测：`二分查找的边界条件` → 3 张卡片 / 4715 字符上下文，向量模型配云端端点时）。**未验**：冻结后在**真 PostgreSQL + 已落库题目**下跑完一次 `ANALYSIS_PIPELINE=graph` 分析（要先起 PG 造数据，见队列 T26）；桌面端安装后能否拉起打包版 sidecar（依赖上面第 3 条）。⚠️ 另有一条**交付前提**：产物不带 `.env`，所以向量模型必须由外部环境提供（云端四个变量或本机 Ollama），否则检索静默为空——见 §七 |
+| **`--self-check` 是 import 级证据，不是端到端** | 它证明的是「模块都在、图能组装」，**不能**替代「真的跑一次分析」。之所以不做端到端：那需要 PG + 已落库题目 + 一次付费模型调用，属于 T26 的范围。要验「检索这条链在产物里真的通」用 `--self-check-embedding` / `--self-check-retrieval`（2026-09-22 加，见 §七）。⚠️ **它只覆盖它列举的那几项**：2026-09-22 之前它漏了 `app.rag.embedder` / `app.rag.reranker`，而这两个缺失会让检索**静默关闭**，自检仍 7/7 全绿（详见 §七 打包小节）。所以别把全绿当成「包是新的」——要看 `stat` mtime 与源文件的先后 |
 
 ---
 

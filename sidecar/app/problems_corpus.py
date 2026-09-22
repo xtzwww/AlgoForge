@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.config import DATA_ROOT
 from app.eval_cases import ROOT_CAUSE_LABELS
 
 #: Allowed ``difficulty`` values — mirrors ``Problem.DIFFICULTIES``.
@@ -282,10 +283,13 @@ class CatalogueProblem:
         return problems
 
 
-#: Default location of the catalogue, relative to the repository root.
-DEFAULT_PROBLEMS_DIR = (
-    Path(__file__).resolve().parents[2] / "corpus" / "problems"
-)
+#: Default location of the catalogue.
+#:
+#: Anchored on ``app.config.DATA_ROOT`` rather than ``__file__`` — the latter
+#: points inside the bundle when frozen, so the packaged sidecar looked for
+#: ``corpus/`` next to its own ``_internal/`` and found nothing. See
+#: ``app.config._project_root`` (found 2026-09-22).
+DEFAULT_PROBLEMS_DIR = DATA_ROOT / "corpus" / "problems"
 
 #: Fields the loader understands. Anything else is preserved in
 #: ``extra`` so a future field is not silently dropped.

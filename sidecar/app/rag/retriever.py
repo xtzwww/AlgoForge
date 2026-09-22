@@ -43,6 +43,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from app.rag.schema import OUTPUT_FIELDS, Embedder
@@ -295,6 +296,20 @@ def build_retriever(
         return NullRetriever()
 
     uri = milvus_uri or "http://localhost:19530"
+
+    # A file-backed Milvus (milvus-lite) needs its parent directory to exist
+    # *before* the client opens it. A fresh checkout and a packaged build
+    # both start without one — `sidecar/data/` is gitignored derived data —
+    # and the failure is unhelpful: "Open local milvus failed, dir: ... not
+    # exists", which reads as a broken installation rather than a missing
+    # folder we can simply create. Creating it costs nothing when the path
+    # already exists, and a Milvus *server* URI is skipped entirely.
+    if not uri.startswith(("http://", "https://")):
+        try:
+            Path(uri).parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning("could not create the Milvus data directory (%s)", exc)
+
     try:
         client = MilvusClient(uri=uri)
         _ensure_loaded(client, collection)
