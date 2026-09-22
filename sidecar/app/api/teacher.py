@@ -39,7 +39,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.auth import require_teacher
 from app.api.mistake_book import get_session
@@ -339,3 +339,150 @@ def add_student(
             return user.to_dict()
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+class ImportStudentsRequest(BaseModel):
+    """A pasted roster (阶段 5).
+
+    ``csv`` is the raw text, not a parsed list. Letting the client parse
+    would put the column order, the header handling and the quoting
+    rules in the browser — where the same file would then import
+    differently from a different client. Parsing lives here so there is
+    one answer to "what does this file mean".
+    """
+
+    csv: str = Field(min_length=1, max_length=200_000)
+    #: Applied to every created account. A default rather than a column:
+    #: a class roster imported in one go shares one, and requiring it per
+    #: row would make the file format carry a value nobody varies.
+    default_password: str = Field(default="123456", min_length=1)
+    #: Treat the first line as column names. Detected by the caller rather
+    #: than guessed here — see `import_students`.
+    has_header: bool = True
+
+
+class ImportedStudentOut(BaseModel):
+    username: str
+    display_name: str
+    ok: bool
+    #: Why it failed, in Chinese. `''` when `ok`.
+    error: str = ""
+
+
+class ImportStudentsResult(BaseModel):
+    created: int
+    skipped: int
+    results: list[ImportedStudentOut]
+
+
+def _parse_roster_csv(csv_text: str, has_header: bool) -> list[tuple[str, str]]:
+    """``text`` → ``[(username, display_name), ...]``.
+
+    Accepts two columns (`username,display_name`) or three
+    (`username,password,display_name`) — the second is ignored because
+    the request carries one password for the batch. That tolerance is
+    deliberate: rosters get exported from wherever the school keeps them,
+    and refusing a whole file over a column nobody needed would mean
+    hand-editing it.
+
+    Blank lines and whitespace-only lines are dropped rather than
+    reported: an exported file reliably ends with one, and calling that
+    a failure would put a meaningless row in the preview.
+    """
+    import csv as csv_mod
+    import io as io_mod
+
+    reader = csv_mod.reader(io_mod.StringIO(csv_text))
+    rows = [r for r in reader if any(cell.strip() for cell in r)]
+    if not rows:
+        return []
+    if has_header:
+        rows = rows[1:]
+
+    out: list[tuple[str, str]] = []
+    for row in rows:
+        username = row[0].strip() if len(row) > 0 else ""
+        if len(row) >= 3:
+            display_name = row[2].strip()
+        elif len(row) == 2:
+            display_name = row[1].strip()
+        else:
+            display_name = ""
+        out.append((username, display_name))
+    return out
+
+
+@router.post("/students/import", response_model=ImportStudentsResult)
+def import_students(
+    req: ImportStudentsRequest, _teacher: User = Depends(require_teacher)
+) -> ImportStudentsResult:
+    """Add a whole roster at once (阶段 5).
+
+    **Per-row results, not all-or-nothing.** A roster of forty with one
+    taken username must still create the other thirty-nine — a transaction
+    that rolls back the batch would make the teacher find and fix the
+    conflict before anything happens, and the failure they can act on is
+    one name, not the file.
+
+    Duplicates inside the file itself are reported rather than silently
+    collapsed: "ok" for a row that was dropped as a repeat of the row
+    above it would be a lie about what is in the database.
+    """
+    pairs = _parse_roster_csv(req.csv, req.has_header)
+    if not pairs:
+        raise HTTPException(status_code=422, detail="没有解析出任何一行")
+
+    results: list[ImportedStudentOut] = []
+    seen: set[str] = set()
+    with get_session() as session:
+        for username, display_name in pairs:
+            if not username:
+                results.append(
+                    ImportedStudentOut(
+                        username="",
+                        display_name=display_name,
+                        ok=False,
+                        error="用户名为空",
+                    )
+                )
+                continue
+            if username in seen:
+                results.append(
+                    ImportedStudentOut(
+                        username=username,
+                        display_name=display_name,
+                        ok=False,
+                        error="文件里重复出现",
+                    )
+                )
+                continue
+            seen.add(username)
+            try:
+                user = create_user(
+                    session,
+                    username=username,
+                    password=req.default_password,
+                    role=ROLE_STUDENT,
+                    display_name=display_name or username,
+                )
+                results.append(
+                    ImportedStudentOut(
+                        username=username,
+                        display_name=user.display_name or username,
+                        ok=True,
+                    )
+                )
+            except ValueError as exc:
+                results.append(
+                    ImportedStudentOut(
+                        username=username,
+                        display_name=display_name,
+                        ok=False,
+                        error=str(exc),
+                    )
+                )
+
+    created = sum(1 for r in results if r.ok)
+    return ImportStudentsResult(
+        created=created, skipped=len(results) - created, results=results
+    )

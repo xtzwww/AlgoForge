@@ -246,6 +246,11 @@ def list_problems(
     difficulty: Optional[str] = Query(
         default=None, description="easy | medium | hard"
     ),
+    q: Optional[str] = Query(
+        default=None,
+        max_length=128,
+        description="Case-insensitive substring of the title",
+    ),
     include_inactive: bool = Query(
         default=False,
         description="Include soft-deleted problems (default: active only)",
@@ -259,6 +264,12 @@ def list_problems(
     ``json_array_elements_text`` on PostgreSQL — see
     ``app.models.tag_values``). Keeping it here means there is one
     implementation to fix rather than one per client.
+
+    **``q`` searches the title only**, not the statement. Two reasons:
+    the statement is long prose that a teacher searching "排序" does not
+    want every mention of, and matching it would mean the search box
+    returns problems whose title has nothing to do with the query —
+    which reads as a broken search rather than a thorough one.
 
     Note:
         ``knowledge_tag`` matches an exact tag, not a substring. The
@@ -280,6 +291,15 @@ def list_problems(
             filters.append(Problem.is_active.is_(True))
         if difficulty is not None:
             filters.append(Problem.difficulty == difficulty)
+        if q and q.strip():
+            # `ilike` with an escaped pattern. The escape matters: a
+            # teacher typing `100%` should search for that text, not for
+            # "100" followed by anything — an unescaped `%` silently
+            # widens the query and the result looks like a working search.
+            needle = q.strip()
+            needle = needle.replace("\\", "\\\\")
+            needle = needle.replace("%", "\\%").replace("_", "\\_")
+            filters.append(Problem.title.ilike(f"%{needle}%", escape="\\"))
         if knowledge_tag:
             # JSON array membership. The expansion is dialect-specific and
             # shared with the profile page's aggregation — see
@@ -426,5 +446,89 @@ def create_problem(req: ProblemCreate) -> ProblemDetailOut:
             # The response is the same shape as GET detail, so it inherits
             # the same filter: a caller that posts a hidden case must not
             # read it back out of the creation response.
+            test_cases=[_case_to_out(c) for c in visible],
+        )
+
+
+@router.post("/{problem_id}/duplicate", status_code=201)
+def duplicate_problem(problem_id: int) -> ProblemDetailOut:
+    """Copy a problem, cases and all (阶段 5).
+
+    The reason this exists: a term's worth of problems is mostly last
+    term's problems with a case added or a limit loosened, and re-entering
+    one by hand is where the hidden cases get lost — a problem that looks
+    fine and then judges everything as WA because it has no cases.
+
+    **Copies the hidden cases too.** That is the entire point: a copy
+    that silently dropped them would produce exactly the failure above,
+    and it would do it invisibly. It is the one place this module writes
+    hidden cases out without filtering, and it is safe because nothing
+    leaves the process — the response is built by the same
+    ``samples_only`` filter as every other detail response.
+
+    The copy starts **active**. A teacher duplicating something is about
+    to edit it, and an inactive copy is one they then cannot find.
+    """
+    from app.models.test_case import TestCase as TestCaseModel
+
+    with get_session() as session:
+        source = session.get(Problem, problem_id)
+        if source is None:
+            raise HTTPException(
+                status_code=404, detail=f"no problem with id {problem_id}"
+            )
+
+        copy = Problem(
+            title=f"{source.title}（副本）",
+            knowledge_tags=list(source.knowledge_tags or []),
+            description=source.description,
+            input_format=source.input_format,
+            output_format=source.output_format,
+            samples=list(source.samples or []),
+            time_limit=source.time_limit,
+            memory_limit=source.memory_limit,
+            difficulty=source.difficulty,
+            source=source.source,
+            is_active=True,
+        )
+        session.add(copy)
+        session.flush()
+
+        cases = (
+            session.execute(
+                select(TestCaseModel)
+                .where(TestCaseModel.problem_id == problem_id)
+                .order_by(TestCaseModel.ordinal)
+            )
+            .scalars()
+            .all()
+        )
+        for case in cases:
+            session.add(
+                TestCaseModel(
+                    problem_id=copy.id,
+                    ordinal=case.ordinal,
+                    input=case.input,
+                    expected_output=case.expected_output,
+                    is_sample=case.is_sample,
+                )
+            )
+
+        session.commit()
+        session.refresh(copy)
+        visible = _ordered_cases(session, copy.id, samples_only=True)
+        return ProblemDetailOut(
+            id=copy.id,
+            title=copy.title,
+            knowledge_tags=list(copy.knowledge_tags or []),
+            description=copy.description,
+            input_format=copy.input_format,
+            output_format=copy.output_format,
+            samples=list(copy.samples or []),
+            time_limit=copy.time_limit,
+            memory_limit=copy.memory_limit,
+            difficulty=copy.difficulty,
+            source=copy.source,
+            is_active=copy.is_active,
             test_cases=[_case_to_out(c) for c in visible],
         )

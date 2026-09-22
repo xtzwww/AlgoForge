@@ -506,3 +506,154 @@ def test_a_new_student_can_log_in(client: TestClient, session: Session) -> None:
         "/api/v1/auth/login", json={"username": "stu", "password": "pw"}
     )
     assert resp.status_code == 200
+
+
+# --- 名单批量导入（阶段 5）----------------------------------------------
+
+
+def _teacher_auth(session: Session) -> dict[str, str]:
+    teacher = create_user(session, username="t", password="a", role=ROLE_TEACHER)
+    return {"Authorization": f"Bearer {issue_session(session, teacher)}"}
+
+
+def test_import_creates_one_account_per_row(
+    client: TestClient, session: Session
+) -> None:
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "username,display_name\ns1,张三\ns2,李四\n"},
+        headers=_teacher_auth(session),
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["created"] == 2
+    assert body["skipped"] == 0
+    assert [r["username"] for r in body["results"]] == ["s1", "s2"]
+
+
+def test_import_keeps_going_after_a_conflict(
+    client: TestClient, session: Session
+) -> None:
+    """一行冲突不能带走整批。
+
+    **这是这个接口最重要的一条。** 四十人的名单里有一个重名，若整批回滚，
+    老师必须先把冲突找出来修掉才能导入任何人——而他真正能处理的是那一个
+    名字，不是整个文件。
+    """
+    create_user(session, username="taken", password="a", role=ROLE_STUDENT)
+
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "username\ns1\ntaken\ns3\n"},
+        headers=_teacher_auth(session),
+    )
+
+    body = resp.json()
+    assert body["created"] == 2, body
+    assert body["skipped"] == 1
+    by_name = {r["username"]: r for r in body["results"]}
+    assert by_name["s1"]["ok"] is True
+    assert by_name["taken"]["ok"] is False
+    assert by_name["taken"]["error"] != ""
+    assert by_name["s3"]["ok"] is True
+
+
+def test_import_reports_duplicates_inside_the_file(
+    client: TestClient, session: Session
+) -> None:
+    """文件里重复的行要报出来，不能悄悄合并。
+
+    把重复行报成 ok，就是对着数据库的实际内容说谎。
+    """
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "username\ns1\ns1\n"},
+        headers=_teacher_auth(session),
+    )
+
+    body = resp.json()
+    assert body["created"] == 1
+    assert body["skipped"] == 1
+    assert body["results"][1]["ok"] is False
+    assert "重复" in body["results"][1]["error"]
+
+
+def test_import_accepts_a_three_column_export(
+    client: TestClient, session: Session
+) -> None:
+    """三列（带密码）的导出文件也要能吃。
+
+    名单往往是从学校系统导出来的，为了一个没人用的列拒掉整个文件，
+    等于让老师手工改一遍文件。
+    """
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "username,password,display_name\ns1,whatever,张三\n"},
+        headers=_teacher_auth(session),
+    )
+
+    body = resp.json()
+    assert body["created"] == 1
+    assert body["results"][0]["display_name"] == "张三"
+    # 密码用请求里给的，不是文件里那个。
+    assert body["results"][0]["ok"] is True
+
+
+def test_import_works_without_a_header(client: TestClient, session: Session) -> None:
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "s1,张三\ns2,李四\n", "has_header": False},
+        headers=_teacher_auth(session),
+    )
+
+    body = resp.json()
+    assert body["created"] == 2
+    assert body["results"][0]["display_name"] == "张三"
+
+
+def test_import_ignores_blank_lines(client: TestClient, session: Session) -> None:
+    """导出的文件末尾总有一个空行，不该报成一条失败。"""
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "username\ns1\n\n   \n"},
+        headers=_teacher_auth(session),
+    )
+
+    body = resp.json()
+    assert body["created"] == 1
+    assert body["skipped"] == 0
+
+
+def test_import_uses_the_given_password(client: TestClient, session: Session) -> None:
+    auth = _teacher_auth(session)
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "username\ns1\n", "default_password": "hello123"},
+        headers=auth,
+    )
+    assert resp.json()["created"] == 1
+
+    login = client.post(
+        "/api/v1/auth/login", json={"username": "s1", "password": "hello123"}
+    )
+    assert login.status_code == 200
+
+
+def test_import_of_nothing_is_422(client: TestClient, session: Session) -> None:
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "username\n\n  \n"},
+        headers=_teacher_auth(session),
+    )
+    assert resp.status_code == 422
+
+
+def test_import_is_teacher_only(client: TestClient, session: Session) -> None:
+    student = create_user(session, username="s1", password="a", role=ROLE_STUDENT)
+    resp = client.post(
+        "/api/v1/teacher/students/import",
+        json={"csv": "username\nx\n"},
+        headers={"Authorization": f"Bearer {issue_session(session, student)}"},
+    )
+    assert resp.status_code in (401, 403)

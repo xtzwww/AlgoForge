@@ -735,3 +735,206 @@ def test_create_does_not_mutate_existing_problem(
 
     original = client.get("/api/v1/problems/1").json()
     assert original["title"] == "Original"
+
+
+# --- 题目搜索（阶段 5）--------------------------------------------------
+
+
+def test_search_filters_by_title_substring(
+    client: TestClient, db_session: Session
+) -> None:
+    _seed_problem(db_session, problem_id=1, title="快速排序")
+    _seed_problem(db_session, problem_id=2, title="归并排序")
+    _seed_problem(db_session, problem_id=3, title="二分查找")
+    db_session.commit()
+
+    body = client.get("/api/v1/problems", params={"q": "排序"}).json()
+
+    assert {p["title"] for p in body["items"]} == {"快速排序", "归并排序"}
+
+
+def test_search_is_case_insensitive(client: TestClient, db_session: Session) -> None:
+    _seed_problem(db_session, problem_id=1, title="Longest Substring")
+    db_session.commit()
+
+    body = client.get("/api/v1/problems", params={"q": "substring"}).json()
+
+    assert len(body["items"]) == 1
+
+
+def test_search_shows_total_of_matches_not_of_catalogue(
+    client: TestClient, db_session: Session
+) -> None:
+    """分页的 total 必须是**命中数**。
+
+    用全库总数的话，搜出来 1 条却显示 total=3，翻页按钮就会指向一个
+    空页——看起来像搜索坏了。
+    """
+    _seed_problem(db_session, problem_id=1, title="快速排序")
+    _seed_problem(db_session, problem_id=2, title="归并排序")
+    _seed_problem(db_session, problem_id=3, title="二分查找")
+    db_session.commit()
+
+    body = client.get("/api/v1/problems", params={"q": "排序"}).json()
+
+    assert body["total"] == 2
+    assert len(body["items"]) == 2
+
+
+def test_search_escapes_the_wildcard_characters(
+    client: TestClient, db_session: Session
+) -> None:
+    """百分号要按字面搜索，不能当通配符。
+
+    选数据是这条测试的关键。第二道题**必须同时含 100 和不含 100%**：
+    ``%`` 只会漏配到它之后的部分，所以拿一道压根不含 100 的题来对照，
+    转不转义的结果一模一样——测试会通过，而它什么都没测。
+    （实测：最初的版本就是这样，注入「去掉转义」后 44 条全绿。）
+    """
+    _seed_problem(db_session, problem_id=1, title="进度 100% 的题")
+    _seed_problem(db_session, problem_id=2, title="100 个数的和")
+    db_session.commit()
+
+    body = client.get("/api/v1/problems", params={"q": "100%"}).json()
+
+    assert [p["title"] for p in body["items"]] == ["进度 100% 的题"]
+
+
+def test_search_escapes_the_underscore_wildcard(
+    client: TestClient, db_session: Session
+) -> None:
+    """下划线同理：``_`` 在 LIKE 里是「任意一个字符」。"""
+    _seed_problem(db_session, problem_id=1, title="a_b")
+    _seed_problem(db_session, problem_id=2, title="axb")
+    db_session.commit()
+
+    body = client.get("/api/v1/problems", params={"q": "a_b"}).json()
+
+    assert [p["title"] for p in body["items"]] == ["a_b"]
+
+
+def test_search_combines_with_the_tag_filter(
+    client: TestClient, db_session: Session
+) -> None:
+    _seed_problem(db_session, problem_id=1, title="排序一", knowledge_tags=["排序"])
+    _seed_problem(db_session, problem_id=2, title="排序二", knowledge_tags=["查找"])
+    db_session.commit()
+
+    body = client.get(
+        "/api/v1/problems", params={"q": "排序", "knowledge_tag": "排序"}
+    ).json()
+
+    assert [p["title"] for p in body["items"]] == ["排序一"]
+
+
+def test_blank_search_does_not_filter(client: TestClient, db_session: Session) -> None:
+    """空搜索框等于没搜索，而不是搜「空字符串」。"""
+    _seed_problem(db_session, problem_id=1, title="A")
+    _seed_problem(db_session, problem_id=2, title="B")
+    db_session.commit()
+
+    body = client.get("/api/v1/problems", params={"q": "   "}).json()
+
+    assert body["total"] == 2
+
+
+# --- 复制题目（阶段 5）--------------------------------------------------
+
+
+def test_duplicate_copies_the_hidden_cases_too(
+    client: TestClient, db_session: Session
+) -> None:
+    """**隐藏用例必须跟着复制。**
+
+    这是这个接口存在的全部理由：一份看起来正常、但没有判题用例的题，
+    会让每一次提交都判错，而且从界面上完全看不出来。
+    """
+    _seed_problem(
+        db_session,
+        problem_id=1,
+        title="原题",
+        cases=[
+            ("1 2", "3", True),
+            (HIDDEN_INPUT, HIDDEN_OUTPUT, False),
+        ],
+    )
+    db_session.commit()
+
+    resp = client.post("/api/v1/problems/1/duplicate")
+
+    assert resp.status_code == 201, resp.text
+    new_id = resp.json()["id"]
+    assert new_id != 1
+
+    cases = db_session.query(TestCase).filter(TestCase.problem_id == new_id).all()
+    assert len(cases) == 2
+    assert sum(1 for c in cases if not c.is_sample) == 1
+    hidden = next(c for c in cases if not c.is_sample)
+    assert hidden.expected_output == HIDDEN_OUTPUT
+
+
+def test_duplicate_response_does_not_leak_hidden_cases(
+    client: TestClient, db_session: Session
+) -> None:
+    """复制接口的**响应**仍然只给可见用例。
+
+    上一条保证隐藏用例进了库，这一条保证它没有跟着响应出去——两件事必须
+    分别成立，而只看「库里有几条」是看不出泄漏的。
+    """
+    _seed_problem(
+        db_session,
+        problem_id=1,
+        title="原题",
+        cases=[("1 2", "3", True), (HIDDEN_INPUT, HIDDEN_OUTPUT, False)],
+    )
+    db_session.commit()
+
+    resp = client.post("/api/v1/problems/1/duplicate")
+
+    assert HIDDEN_OUTPUT not in resp.text
+    assert HIDDEN_INPUT not in resp.text
+
+
+def test_duplicate_copies_the_statements_fields(
+    client: TestClient, db_session: Session
+) -> None:
+    _seed_problem(
+        db_session,
+        problem_id=1,
+        title="原题",
+        knowledge_tags=["排序", "分治"],
+        description="把两个数加起来",
+        time_limit=3.5,
+        memory_limit=512,
+        difficulty="hard",
+        source="课程A",
+    )
+    db_session.commit()
+
+    body = client.post("/api/v1/problems/1/duplicate").json()
+
+    assert body["knowledge_tags"] == ["排序", "分治"]
+    assert body["description"] == "把两个数加起来"
+    assert body["time_limit"] == 3.5
+    assert body["memory_limit"] == 512
+    assert body["difficulty"] == "hard"
+    assert body["source"] == "课程A"
+    assert body["title"] == "原题（副本）"
+
+
+def test_duplicate_starts_active(client: TestClient, db_session: Session) -> None:
+    """复制出来的是可用的。
+
+    老师复制一份是为了改它——如果副本是停用状态，他在列表里找不到它，
+    而「复制了但看不见」比「复制失败」更难排查。
+    """
+    _seed_problem(db_session, problem_id=1, title="原题", is_active=False)
+    db_session.commit()
+
+    body = client.post("/api/v1/problems/1/duplicate").json()
+
+    assert body["is_active"] is True
+
+
+def test_duplicate_of_a_missing_problem_is_404(client: TestClient) -> None:
+    assert client.post("/api/v1/problems/999/duplicate").status_code == 404
