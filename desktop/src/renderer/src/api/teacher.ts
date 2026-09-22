@@ -245,3 +245,43 @@ export interface SessionUserLike {
   display_name: string
   role: string
 }
+
+export interface ImportStudentsRequest {
+  /** Raw CSV text. Two columns (username,display_name) or three (…,password). */
+  csv: string
+  /** Used for rows that did not carry their own password. */
+  default_password?: string
+  /** When true the first non-empty line is treated as a column header. */
+  has_header?: boolean
+}
+
+/** The outcome of one CSV row. */
+export interface ImportedStudent {
+  username: string
+  display_name: string
+  ok: boolean
+  /** Empty when `ok`. */
+  error: string
+}
+
+export interface ImportStudentsResult {
+  created: number
+  skipped: number
+  /** One entry per data row, in file order. */
+  results: ImportedStudent[]
+}
+
+/**
+ * Bulk-add students from pasted CSV text.
+ *
+ * Per-row results rather than all-or-nothing: one malformed line must
+ * not stop a whole class from being imported. Duplicates inside the
+ * file itself are reported too, not just collisions with existing
+ * usernames — a name pasted twice would otherwise look like a success.
+ *
+ * Rejects only when nothing at all could be parsed (422).
+ */
+export async function importStudents(req: ImportStudentsRequest): Promise<ImportStudentsResult> {
+  const res = await http.post<ImportStudentsResult>('/api/v1/teacher/students/import', req)
+  return res.data
+}

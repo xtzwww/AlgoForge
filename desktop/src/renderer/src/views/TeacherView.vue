@@ -76,11 +76,14 @@ import {
   getOverview,
   getStudents,
   getStudentTimeline,
+  importStudents,
   reviewFlag,
   type AlertOut,
   type ClassOverview,
   type ErrorCount,
   type FlaggedSubmission,
+  type ImportedStudent,
+  type ImportStudentsResult,
   type KnowledgeStatOut,
   type StudentOut,
   type TimelineEntryOut
@@ -557,6 +560,64 @@ async function submitNewStudent(): Promise<void> {
     addError.value =
       statusOf(err) === 409 ? '该用户名已被占用，换一个试试' : messageOf(err, '创建失败')
   }
+}
+
+// --- Roster import ------------------------------------------------------
+
+const importingStudents = ref(false)
+const importCsv = ref('')
+const importDefaultPassword = ref('123456')
+const importHasHeader = ref(true)
+const importError = ref('')
+const importResult = ref<ImportStudentsResult | null>(null)
+
+/**
+ * Per-row failures from the last import, so the form can show a
+ * short list of exactly what to fix instead of one aggregate line.
+ */
+const importFailures = computed<ImportedStudent[]>(
+  () => importResult.value?.results.filter((r) => !r.ok) ?? []
+)
+
+const importSample = `username,display_name
+2025021120058,刘爱重
+2025021120059,张三`
+
+function fillImportSample(): void {
+  importCsv.value = importSample
+  importResult.value = null
+  importError.value = ''
+}
+
+async function submitImportStudents(): Promise<void> {
+  if (!importCsv.value.trim()) {
+    importError.value = '请先粘贴名单'
+    return
+  }
+  importError.value = ''
+  importResult.value = null
+  try {
+    const result = await importStudents({
+      csv: importCsv.value,
+      default_password: importDefaultPassword.value || undefined,
+      has_header: importHasHeader.value
+    })
+    importResult.value = result
+    // Only clear the box when something landed. Re-importing a roster
+    // with one bad line is the normal case, and wiping the text would
+    // force the teacher to paste it again to fix that line.
+    if (result.created > 0) importCsv.value = ''
+    await load()
+  } catch (err) {
+    importError.value = messageOf(err, '导入失败')
+  }
+}
+
+function closeImport(): void {
+  importingStudents.value = false
+  importCsv.value = ''
+  importResult.value = null
+  importError.value = ''
 }
 
 // --- Formatting -------------------------------------------------------
@@ -1258,16 +1319,26 @@ onMounted(() => {
               学生不能自己注册——花名册由任课老师建立，这也是这套系统里唯一会写入学生记录的操作。
             </p>
 
-            <button
-              v-if="!addingStudent"
-              class="primary"
-              type="button"
-              @click="addingStudent = true"
-            >
-              添加学生
-            </button>
+            <div class="roster-toolbar">
+              <button
+                v-if="!addingStudent"
+                class="primary"
+                type="button"
+                @click="addingStudent = true"
+              >
+                添加学生
+              </button>
+              <button
+                v-if="!importingStudents"
+                class="ghost"
+                type="button"
+                @click="importingStudents = true"
+              >
+                批量导入名单
+              </button>
+            </div>
 
-            <form v-else class="roster-form" @submit.prevent="submitNewStudent">
+            <form v-if="addingStudent" class="roster-form" @submit.prevent="submitNewStudent">
               <label class="field">
                 <span class="field-label">用户名</span>
                 <input v-model="newName" class="input" type="text" placeholder="登录用" />
@@ -1291,6 +1362,54 @@ onMounted(() => {
               </div>
               <p v-if="addError" class="gate-error">{{ addError }}</p>
               <p v-if="addNotice" class="notice">{{ addNotice }}</p>
+            </form>
+
+            <!-- Bulk import. Per-row results: one bad line in a class
+                 list must not stop the other forty from landing. -->
+            <form
+              v-if="importingStudents"
+              class="roster-form"
+              @submit.prevent="submitImportStudents"
+            >
+              <label class="field">
+                <span class="field-label">
+                  名单（每行一个学生，逗号分隔）
+                  <button class="link-btn" type="button" @click="fillImportSample">填入示例</button>
+                </span>
+                <textarea
+                  v-model="importCsv"
+                  class="input import-textarea"
+                  rows="7"
+                  spellcheck="false"
+                  placeholder="username,display_name&#10;2025021120058,刘爱重"
+                />
+                <span class="field-note">
+                  两列是「用户名,姓名」；也可写三列「用户名,姓名,密码」覆盖下面的初始密码。
+                </span>
+              </label>
+              <label class="field">
+                <span class="field-label">初始密码（没写密码的行用这个）</span>
+                <input v-model="importDefaultPassword" class="input" type="text" />
+              </label>
+              <label class="field field-inline">
+                <input v-model="importHasHeader" type="checkbox" />
+                <span class="field-note">第一行是表头，跳过</span>
+              </label>
+              <div class="roster-actions">
+                <button class="primary" type="submit">导入</button>
+                <button class="ghost" type="button" @click="closeImport">取消</button>
+              </div>
+              <p v-if="importError" class="gate-error">{{ importError }}</p>
+              <div v-if="importResult" class="import-result">
+                <p class="notice">
+                  成功 {{ importResult.created }} 人，跳过 {{ importResult.skipped }} 人。
+                </p>
+                <ul v-if="importFailures.length" class="import-failures">
+                  <li v-for="(f, i) in importFailures" :key="i">
+                    {{ f.username || '（空用户名）' }} · {{ f.display_name }} — {{ f.error }}
+                  </li>
+                </ul>
+              </div>
             </form>
           </section>
         </template>
@@ -1813,6 +1932,62 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.5;
   color: var(--af-text-muted);
+}
+
+/* --- roster: the two entry points and the bulk-import form --- */
+
+.roster-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+/* A checkbox and its caption sit on one line, unlike the stacked
+   `.field` above — the label is a sentence, not a column header. */
+.field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.import-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Reset a `.field-note` sitting next to a checkbox back to inline flow. */
+.field-inline .field-note {
+  margin: 0;
+}
+
+.link-btn {
+  margin-left: 6px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--af-accent, #3b82f6);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.import-result {
+  margin-top: 4px;
+}
+
+/* Failures are listed rather than counted: the teacher has to fix them
+   one by one, so the rows they need to edit should be on screen. */
+.import-failures {
+  margin: 6px 0 0 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--af-text-secondary);
 }
 
 .error-inline {

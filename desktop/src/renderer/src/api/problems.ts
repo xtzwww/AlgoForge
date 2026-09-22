@@ -88,9 +88,11 @@ export interface ProblemCreateRequest {
   difficulty?: 'easy' | 'medium' | 'hard' | null
   source?: string | null
   /** Ordinals are assigned server-side from this order, starting at 1. */
-  test_cases?: Array<Pick<ProblemTestCase, 'input' | 'expected_output'> & {
-    is_sample?: boolean
-  }>
+  test_cases?: Array<
+    Pick<ProblemTestCase, 'input' | 'expected_output'> & {
+      is_sample?: boolean
+    }
+  >
 }
 
 export interface ListProblemsParams {
@@ -101,6 +103,14 @@ export interface ListProblemsParams {
   knowledge_tag?: string
   difficulty?: 'easy' | 'medium' | 'hard'
   include_inactive?: boolean
+  /**
+   * Case-insensitive substring of the **title** (server-side `q`).
+   *
+   * Titles only — the statement prose is not searched, so a phrase that
+   * appears only inside a description will not match. `%` and `_` in the
+   * needle are escaped server-side and match literally.
+   */
+  q?: string
 }
 
 /**
@@ -109,9 +119,7 @@ export interface ListProblemsParams {
  * Rows carry no statement prose and no cases, so this is safe to call
  * for a list view without dragging every problem's full text across.
  */
-export async function listProblems(
-  params?: ListProblemsParams,
-): Promise<ProblemList> {
+export async function listProblems(params?: ListProblemsParams): Promise<ProblemList> {
   const res = await http.get<ProblemList>('/api/v1/problems', { params })
   return res.data
 }
@@ -135,12 +143,8 @@ export async function getProblem(problemId: number): Promise<ProblemDetail> {
  * never leave the server; reach for this only when a UI genuinely has to
  * show all cases — e.g. an authoring screen.
  */
-export async function getProblemTestCases(
-  problemId: number,
-): Promise<ProblemTestCaseList> {
-  const res = await http.get<ProblemTestCaseList>(
-    `/api/v1/problems/${problemId}/test-cases`,
-  )
+export async function getProblemTestCases(problemId: number): Promise<ProblemTestCaseList> {
+  const res = await http.get<ProblemTestCaseList>(`/api/v1/problems/${problemId}/test-cases`)
   return res.data
 }
 
@@ -151,9 +155,27 @@ export async function getProblemTestCases(
  * together rather than leaving a half-finished problem behind if the
  * second request never happens.
  */
-export async function createProblem(
-  req: ProblemCreateRequest,
-): Promise<ProblemDetail> {
+export async function createProblem(req: ProblemCreateRequest): Promise<ProblemDetail> {
   const res = await http.post<ProblemDetail>('/api/v1/problems', req)
+  return res.data
+}
+
+/**
+ * Copy a problem — statement, cases, and authoring settings — into a
+ * new row.
+ *
+ * **Hidden cases are copied too.** That is the point: a teacher who has
+ * already built a hidden case set for a problem wants the derived
+ * problem to be judgeable without rebuilding it. The response is a
+ * {@link ProblemDetail}, whose `test_cases` holds the *visible* cases
+ * only, so calling this does not leak the hidden set back to the
+ * client.
+ *
+ * The copy is active even if the source was not: the teacher has to be
+ * able to edit what they just created, and an inactive row is one they
+ * then cannot find.
+ */
+export async function duplicateProblem(problemId: number): Promise<ProblemDetail> {
+  const res = await http.post<ProblemDetail>(`/api/v1/problems/${problemId}/duplicate`)
   return res.data
 }

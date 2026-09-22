@@ -68,6 +68,21 @@ const difficultyFilter = ref<DifficultyFilter>('all')
 const statusFilter = ref<StatusFilter>('all')
 const selectedTag = ref<string | null>(null)
 
+/**
+ * Title search text.
+ *
+ * Filtered client-side, matching the rest of this bar, because the
+ * whole catalogue is already in memory (one page at the 100 ceiling).
+ * The server *does* accept `q` — see `ListProblemsParams.q` — but using
+ * it here would mean a request per keystroke to narrow a list we
+ * already have, and typing "排序" would empty the view for the length
+ * of a round trip.
+ *
+ * Lowercased on both sides so the match is case-insensitive; the server
+ * has no opinion about which collation SQLite happens to be using.
+ */
+const searchQuery = ref('')
+
 /** Difficulty in the facet's display order, not alphabetical. */
 const DIFFICULTIES: { value: DifficultyFilter; label: string }[] = [
   { value: 'all', label: '全部难度' },
@@ -112,6 +127,10 @@ const filteredProblems = computed<ProblemSummary[]>(() =>
     // an extra chip competing with them.
     if (activeAssignment.value !== null && !activeAssignment.value.problem_ids.includes(p.id)) {
       return false
+    }
+    if (searchQuery.value.trim() !== '') {
+      const needle = searchQuery.value.trim().toLowerCase()
+      if (!p.title.toLowerCase().includes(needle)) return false
     }
     if (difficultyFilter.value !== 'all' && p.difficulty !== difficultyFilter.value) {
       return false
@@ -213,6 +232,7 @@ function resetFilters(): void {
   statusFilter.value = 'all'
   selectedTag.value = null
   activeAssignmentId.value = null
+  searchQuery.value = ''
 }
 
 function dueText(dueAt: string | null): string {
@@ -274,12 +294,24 @@ onMounted(load)
           </select>
         </label>
 
+        <label class="filter-group filter-group-search">
+          <span class="filter-label">搜索</span>
+          <input
+            v-model="searchQuery"
+            type="search"
+            class="filter-input"
+            placeholder="按题目标题搜索"
+            aria-label="按题目标题搜索"
+          />
+        </label>
+
         <button
           v-if="
             difficultyFilter !== 'all' ||
             statusFilter !== 'all' ||
             selectedTag !== null ||
-            activeAssignmentId !== null
+            activeAssignmentId !== null ||
+            searchQuery.trim() !== ''
           "
           class="reset-btn"
           @click="resetFilters"
@@ -320,7 +352,10 @@ onMounted(load)
       题库为空。请先运行 <code>python tools/load_problems.py</code> 导入题目。
     </div>
     <div v-else-if="!errorMsg && filteredProblems.length === 0" class="empty">
-      没有符合当前筛选条件的题目。
+      <template v-if="searchQuery.trim() !== ''">
+        没有标题包含「{{ searchQuery.trim() }}」的题目。
+      </template>
+      <template v-else>没有符合当前筛选条件的题目。</template>
     </div>
 
     <!-- Problem cards -->
@@ -512,6 +547,64 @@ onMounted(load)
   border: 1px solid #374151;
   border-radius: 4px;
   cursor: pointer;
+}
+
+/* The search field is the only free-text control in this bar, so it
+   gets to be wider than the selects — a title fragment is longer than
+   a dropdown label. `flex: 1` lets it take the leftover row width. */
+.filter-group-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.filter-input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #e5e7eb;
+  background: #16213e;
+  border: 1px solid #374151;
+  border-radius: 4px;
+}
+
+.filter-input::placeholder {
+  color: #6b7280;
+}
+
+.filter-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.filter-input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+/* The search field is the only free-text control in this bar, so it
+   gets to be wider than the selects — a title fragment is longer than
+   a dropdown label. */
+.filter-group-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+
+.filter-input {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #e5e7eb;
+  background: #16213e;
+  border: 1px solid #374151;
+  border-radius: 4px;
+}
+
+.filter-input::placeholder {
+  color: #6b7280;
+}
+
+.filter-input:focus {
+  outline: none;
+  border-color: #3b82f6;
 }
 
 .reset-btn {
