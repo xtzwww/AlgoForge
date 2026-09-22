@@ -264,9 +264,13 @@ def _retrieve_context(
 
     try:
         from app.rag import (  # noqa: PLC0415 — see note below
+            DEFAULT_LIMIT,
             build_embedder,
+            build_reranker,
             build_retriever,
             format_context,
+            rerank_candidate_limit,
+            rerank_cards,
             resolve_milvus_uri,
         )
     except ImportError:
@@ -280,13 +284,27 @@ def _retrieve_context(
     if embedder is None:
         return "", []
 
+    # Two passes: the vector search proposes, the cross-encoder decides.
+    # With a reranker, fetch more candidates than we will show — the
+    # second pass can only choose among what the first one returned.
+    # Without one, asking for more than we use would only add cards
+    # nobody selected.
+    reranker = build_reranker()
+    wanted = rerank_candidate_limit() if reranker else DEFAULT_LIMIT
+    if wanted < DEFAULT_LIMIT:
+        # A misconfigured candidate count must not shrink the context to
+        # nothing; fall back to plain vector search.
+        reranker = None
+        wanted = DEFAULT_LIMIT
+
     try:
         retriever = build_retriever(resolve_milvus_uri(), embedder=embedder)
-        cards = retriever.search(query, tags=tuple(tags or ()))
+        candidates = retriever.search(query, tags=tuple(tags or ()), limit=wanted)
     except Exception as exc:  # noqa: BLE001 — degradation is the contract
         logger.warning("knowledge retrieval failed (%s); continuing without", exc)
         return "", []
 
+    cards = rerank_cards(query, candidates, reranker, DEFAULT_LIMIT)
     context = format_context(cards)
     titles = [card.title for card in cards if card.title]
     if context:

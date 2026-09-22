@@ -31,6 +31,7 @@ from app.config import settings  # noqa: E402
 from app.rag import (  # noqa: E402
     DEFAULT_COLLECTION,
     build_embedder,
+    describe_reranker,
     format_context,
     index_cards,
     load_knowledge_cards,
@@ -63,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"embedding endpoint : {settings.embedding_base_url}")
     print(f"milvus             : {uri}")
     print(f"collection         : {DEFAULT_COLLECTION}")
+    # Reported because it changes what the check below *means*: with a
+    # reranker the order comes from a cross-encoder, without one it is raw
+    # vector similarity — the same cards, in a different order.
+    print(f"rerank             : {describe_reranker()}")
 
     if not settings.rag_enabled:
         print("\nRAG_ENABLED is off — refusing to index.", file=sys.stderr)
@@ -104,13 +109,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"indexed            : {written}")
 
-    from app.rag import build_retriever  # noqa: PLC0415 — after the path setup
+    from app.rag import (  # noqa: PLC0415 — after the path setup
+        DEFAULT_LIMIT,
+        build_reranker,
+        build_retriever,
+        rerank_candidate_limit,
+        rerank_cards,
+    )
 
     retriever = build_retriever(uri, embedder=embedder)
+    reranker = build_reranker()
+    wanted = rerank_candidate_limit() if reranker else DEFAULT_LIMIT
+
     queries = (args.probe,) if args.probe else PROBE_QUERIES
     print("\n--- retrieval check ---")
     for query in queries:
-        hits = retriever.search(query)
+        # The same two passes the analysis path runs, so what this prints
+        # is what a student's submission would actually retrieve.
+        hits = rerank_cards(
+            query,
+            retriever.search(query, limit=wanted),
+            reranker,
+            DEFAULT_LIMIT,
+        )
         print(f"\nquery: {query}")
         if not hits:
             print("  (no hits — the collection is empty or the embedder is wrong)")

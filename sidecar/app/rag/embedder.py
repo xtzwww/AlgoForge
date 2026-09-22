@@ -31,12 +31,15 @@ exception.
 
 The proxy trap
 --------------
-``httpx`` honours ``HTTP_PROXY`` / ``HTTPS_PROXY``. This machine sets them,
-and a proxied request to ``127.0.0.1`` fails with a handshake error that
-looks exactly like "the service is not running" — the same failure that
-made Ollama and Milvus look broken during setup. Hence
-``trust_env=False``: an embedder talks to one configured host and must not
-be routed through whatever proxy the surrounding shell happens to export.
+``httpx`` honours ``HTTP_PROXY`` / ``HTTPS_PROXY``, and this machine sets
+them — which breaks one direction and is required by the other. A proxied
+request to ``127.0.0.1`` fails with a handshake error that reads exactly
+like "the service is not running" (the same failure that made Ollama and
+Milvus look broken during setup), while a hosted endpoint may only be
+reachable *through* the proxy. So the choice is made per endpoint by
+:func:`is_local_endpoint` rather than once for the whole module: getting
+this backwards turns a working configuration into a timeout, and the error
+names neither the proxy nor the endpoint.
 """
 
 from __future__ import annotations
@@ -77,6 +80,24 @@ def reset_client_cache() -> None:
     _client_key = None
 
 
+#: Markers that mean "this address is on this machine".
+_LOCAL_MARKERS = ("127.0.0.1", "localhost", "0.0.0.0", "::1")
+
+
+def is_local_endpoint(base_url: str) -> bool:
+    """Whether *base_url* points at this machine.
+
+    Decides proxy handling, and the two cases want opposite answers. A
+    proxied request to localhost fails with a handshake error that reads
+    exactly like "the service is not running" — that is what made Ollama
+    and Milvus look broken during setup. A hosted endpoint, on the other
+    hand, often *requires* the proxy the surrounding shell exports, and
+    disabling it there turns a working configuration into a timeout.
+    """
+    lowered = (base_url or "").lower()
+    return any(marker in lowered for marker in _LOCAL_MARKERS)
+
+
 def _http_client(base_url: str, api_key: str, timeout: float) -> Any:
     """Return a pooled client for *base_url*, creating it at most once.
 
@@ -98,8 +119,9 @@ def _http_client(base_url: str, api_key: str, timeout: float) -> Any:
         base_url=base_url,
         headers=headers,
         timeout=timeout,
-        # See the module docstring: a proxied localhost request fails.
-        trust_env=False,
+        # See is_local_endpoint: localhost must bypass the proxy, a hosted
+        # endpoint usually needs it.
+        trust_env=not is_local_endpoint(base_url),
     )
     _client_key = key
     return _client

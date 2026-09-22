@@ -280,6 +280,24 @@ class Settings(BaseSettings):
     # 52 秒的加载；留长了占内存（bge-m3 约 1.2 GB）。
     embedding_keep_alive: str = Field(default="30m")
 
+    # 重排序（cross-encoder）：向量检索先取一批候选，再让重排序模型挑出
+    # 最相关的几条。向量比的是「摘要的相似度」，两个不同知识点的卡片可能
+    # 因为用词接近而排在一起；重排序把问题和卡片放在一起读，准得多。
+    #
+    # 实测必要性：问「二分查找」，向量检索的前 3 名里混进了「枚举与暴力」
+    # 和「图的遍历」，而这两条会作为背景资料被模型读到。
+    #
+    # 需要端点支持 /rerank。Ollama 没有这个接口，此时自动跳过（不报错）。
+    rerank_enabled: bool = Field(default=True)
+    rerank_model: str = Field(default="BAAI/bge-reranker-v2-m3")
+    # 重排序前先取多少条候选。必须 ≥ 最终要用的条数（DEFAULT_LIMIT=3），
+    # 否则第二轮没有可挑的余地。留空或写错都退化成「不重排序」。
+    rerank_candidates: int = Field(default=10)
+    # 留空则复用 embedding 的端点与密钥：提供向量服务的厂商通常也从同一个
+    # 地方提供重排序。要单独配时再填。
+    rerank_base_url: str = Field(default="")
+    rerank_api_key: str = Field(default="")
+
     # ------------------------------------------------------- C++ Compiler
     # These are intentionally env-driven (see .env.example). The previous
     # hardcoded default pointed at one specific machine's MinGW install,

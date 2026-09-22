@@ -22,7 +22,7 @@ import pytest
 from app.agent import pipeline
 from app.agent.analyzer import AnalysisOutcome
 from app.config import settings
-from app.rag import build_embedder, resolve_milvus_uri
+from app.rag import build_embedder, is_local_endpoint, resolve_milvus_uri
 from app.rag import embedder as embedder_module
 from app.rag.retriever import RetrievedCard
 
@@ -272,6 +272,22 @@ def test_outcome_names_the_material_it_drew_on(monkeypatch):
     )
 
     assert outcome.knowledge_sources == [CARD.title]
+
+
+def test_proxy_handling_follows_the_endpoint():
+    """Localhost must bypass the proxy; a hosted endpoint must not.
+
+    Both directions fail quietly. A proxied localhost request comes back
+    as a handshake error that reads like "the service is not running",
+    and a hosted endpoint with the proxy disabled reads as a timeout —
+    neither error mentions the proxy, so the wrong setting is
+    indistinguishable from a broken service.
+    """
+    assert is_local_endpoint("http://127.0.0.1:11434")
+    assert is_local_endpoint("http://localhost:11434")
+    assert is_local_endpoint("http://0.0.0.0:8000")
+    assert not is_local_endpoint("https://api.siliconflow.cn/v1")
+    assert not is_local_endpoint("https://api.deepseek.com")
 
 
 def test_failed_retrieval_leaves_no_source_claims(monkeypatch):

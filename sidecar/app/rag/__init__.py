@@ -30,10 +30,17 @@ from app.rag.documents import (
 )
 from app.rag.embedder import (
     build_embedder,
+    is_local_endpoint,
     reset_client_cache,
     resolve_milvus_uri,
 )
 from app.rag.indexer import build_records, index_cards
+from app.rag.reranker import (
+    build_reranker,
+    describe_reranker,
+    rerank_candidate_limit,
+    rerank_cards,
+)
 from app.rag.retriever import (
     DEFAULT_COLLECTION,
     DEFAULT_LIMIT,
@@ -74,12 +81,17 @@ __all__ = [
     "Retriever",
     "build_embedder",
     "build_records",
+    "build_reranker",
     "build_retriever",
     "cards_for_tags",
+    "describe_reranker",
     "format_context",
     "index_cards",
+    "is_local_endpoint",
     "load_knowledge_cards",
     "parse_card",
+    "rerank_candidate_limit",
+    "rerank_cards",
     "reset_client_cache",
     "resolve_milvus_uri",
 ]
