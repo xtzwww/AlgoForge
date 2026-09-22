@@ -32,6 +32,98 @@ const GRACEFUL_SHUTDOWN_MS = 4000
 const FORCE_SHUTDOWN_MS = 2000
 
 /**
+ * How many trailing lines of sidecar output to keep for diagnostics.
+ *
+ * The sidecar's own stdout/stderr is the only place a failed start says
+ * *why* it failed (a missing dependency, a bad `DATABASE_URL`, a syntax
+ * error in a module). Until now that output went only to the terminal
+ * that launched Electron — so a user whose splash said "分析引擎未就绪"
+ * had nothing to look at and nothing to report. Keeping the tail lets
+ * the startup screen show the real reason instead of a shrug.
+ *
+ * Bounded because a sidecar that starts successfully still logs steadily
+ * for the life of the session; only the tail is ever useful.
+ */
+const LOG_TAIL_LINES = 40
+
+/** Rolling tail of the current sidecar's output, for failure reporting. */
+let sidecarLogTail: string[] = []
+
+/** Append child output to the rolling tail without letting it grow. */
+function recordLog(chunk: string): void {
+  // Split on either newline so CRLF output does not arrive as one line.
+  const lines = chunk.split(/\r?\n/)
+  for (const line of lines) {
+    if (line.length === 0) continue
+    sidecarLogTail.push(line)
+  }
+  if (sidecarLogTail.length > LOG_TAIL_LINES) {
+    sidecarLogTail = sidecarLogTail.slice(-LOG_TAIL_LINES)
+  }
+}
+
+/** The last few lines of sidecar output, newest last. */
+export function getSidecarLogTail(): string[] {
+  return [...sidecarLogTail]
+}
+
+/**
+ * Reset the diagnostic tail.
+ *
+ * Exported for the tests, which drive the recording path directly rather
+ * than through a real spawn: the interesting behaviour is which line gets
+ * quoted, and reproducing that via `startSidecar()` would mean waiting
+ * out the 15-second health poll to observe a failure.
+ */
+export function resetSidecarLogTail(): void {
+  sidecarLogTail = []
+}
+
+/**
+ * Record one chunk of child output.
+ *
+ * Exported for the same reason as {@link resetSidecarLogTail}: this is
+ * the whole of the recording logic, and it is the part that can be wrong
+ * in a way nobody notices until the day they need it.
+ */
+export function recordSidecarLog(chunk: string): void {
+  recordLog(chunk)
+}
+
+/**
+ * Pull the most informative line out of a failure tail.
+ *
+ * Python puts the exception type and message on the **last** line of a
+ * traceback, and that is the one a reader wants ("ModuleNotFoundError:
+ * No module named 'x'"). Falling back to the last non-empty line covers
+ * the non-Python failures (a missing exe, a port clash).
+ */
+function summarizeLogTail(): string {
+  return summarizeLines(sidecarLogTail)
+}
+
+/**
+ * Pick the most informative line out of a failure tail.
+ *
+ * Split out from the module state so it can be tested directly: the
+ * choice of line is the whole of the diagnostic value, and it is
+ * invisible when wrong (a plausible-looking traceback line reads fine
+ * until you try to act on it).
+ */
+export function summarizeLines(lines: string[]): string {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].trim()
+    if (line.length === 0) continue
+    // Skip uvicorn's own shutdown noise; the cause is above it.
+    if (/^(INFO|WARNING):\s+(Shutting down|Waiting for application shutdown)/.test(line)) {
+      continue
+    }
+    return line.length > 200 ? `${line.slice(0, 200)}…` : line
+  }
+  return ''
+}
+
+/**
  * How many times to restart the sidecar after it dies on its own.
  *
  * Bounded, and the bound is the point: a sidecar that cannot start at all
@@ -175,7 +267,7 @@ function resolveSidecarLaunch(): { program: string; args: string[]; cwd: string 
     return {
       program: join(projectRoot, 'sidecar', '.venv', 'Scripts', 'python.exe'),
       args: ['-m', 'uvicorn', 'app.main:app'],
-      cwd: join(projectRoot, 'sidecar'),
+      cwd: join(projectRoot, 'sidecar')
     }
   }
 
@@ -184,7 +276,7 @@ function resolveSidecarLaunch(): { program: string; args: string[]; cwd: string 
   return {
     program: join(process.resourcesPath, 'sidecar', 'algoforge-sidecar', exeName),
     args: [],
-    cwd: join(process.resourcesPath, 'sidecar'),
+    cwd: join(process.resourcesPath, 'sidecar')
   }
 }
 
@@ -252,6 +344,10 @@ async function spawnSidecar(): Promise<SidecarInfo> {
   // restarted its sidecar would never recover from a later crash.
   intentionallyStopped = false
 
+  // A failure report must describe *this* attempt; carrying the previous
+  // run's tail over would attribute an old error to a new start.
+  sidecarLogTail = []
+
   const port = await getAvailablePort()
   const token = crypto.randomBytes(32).toString('hex')
   const { program, args, cwd } = resolveSidecarLaunch()
@@ -262,33 +358,31 @@ async function spawnSidecar(): Promise<SidecarInfo> {
 
   const isWindows = process.platform === 'win32'
 
-  sidecarProcess = spawn(
-    program,
-    [...args, '--host', '127.0.0.1', '--port', String(port)],
-    {
-      cwd,
-      env: {
-        ...process.env,
-        SIDECAR_PORT: String(port),
-        SIDECAR_TOKEN: token,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // PU-1: never flash a console window. Without this, spawning a
-      // console-subsystem exe (python.exe) briefly opens a black box.
-      windowsHide: true,
-      // PU-1: on POSIX this makes the child a process-group leader so
-      // `kill(-pid)` can take uvicorn's workers down with it. On Windows
-      // `detached` would allocate a new console — the opposite of what
-      // we want; `taskkill /T` covers the tree there instead.
-      detached: !isWindows,
+  sidecarProcess = spawn(program, [...args, '--host', '127.0.0.1', '--port', String(port)], {
+    cwd,
+    env: {
+      ...process.env,
+      SIDECAR_PORT: String(port),
+      SIDECAR_TOKEN: token
     },
-  )
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // PU-1: never flash a console window. Without this, spawning a
+    // console-subsystem exe (python.exe) briefly opens a black box.
+    windowsHide: true,
+    // PU-1: on POSIX this makes the child a process-group leader so
+    // `kill(-pid)` can take uvicorn's workers down with it. On Windows
+    // `detached` would allocate a new console — the opposite of what
+    // we want; `taskkill /T` covers the tree there instead.
+    detached: !isWindows
+  })
 
   sidecarProcess.stdout?.on('data', (data) => {
     process.stdout.write(`[sidecar] ${data.toString()}`)
+    recordLog(data.toString())
   })
   sidecarProcess.stderr?.on('data', (data) => {
     process.stderr.write(`[sidecar] ${data.toString()}`)
+    recordLog(data.toString())
   })
   sidecarProcess.on('exit', (code, signal) => {
     // Ignore exits caused by our own teardown — stopSidecar() owns the
@@ -329,13 +423,17 @@ async function spawnSidecar(): Promise<SidecarInfo> {
   try {
     await waitForHealth(`${url}/health`)
   } catch (err) {
+    const detail = summarizeLogTail()
     console.error('[sidecar] health check failed:', (err as Error).message)
+    if (detail) console.error(`[sidecar] last output: ${detail}`)
     // Kill this attempt without setting `intentionallyStopped`: the
     // reason we are here may be transient (a slow first import), and a
     // restart must still be allowed to try again.
     await killCurrent()
     if (!intentionallyStopped) scheduleRestart()
-    throw err
+    // Carried out to the caller so the startup screen can show the real
+    // reason rather than "未就绪" with nothing behind it.
+    throw new Error(detail ? `${(err as Error).message} — ${detail}` : (err as Error).message)
   }
 
   restartAttempts = 0
@@ -367,7 +465,7 @@ async function killCurrent(): Promise<void> {
   killProcessTreeSync(pid, false)
   const timedOut = await Promise.race([
     exited.then(() => false),
-    delay(GRACEFUL_SHUTDOWN_MS).then(() => true),
+    delay(GRACEFUL_SHUTDOWN_MS).then(() => true)
   ])
   if (timedOut) {
     killProcessTreeSync(pid, true)
@@ -463,7 +561,7 @@ export async function stopSidecar(): Promise<void> {
 
   const gracefulTimedOut = await Promise.race([
     exited.then(() => false),
-    delay(GRACEFUL_SHUTDOWN_MS).then(() => true),
+    delay(GRACEFUL_SHUTDOWN_MS).then(() => true)
   ])
 
   // 2. Force: SIGKILL / taskkill /F.

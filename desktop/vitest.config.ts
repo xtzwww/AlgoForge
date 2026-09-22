@@ -47,7 +47,12 @@ export default defineConfig({
     environment: 'node',
     // 只认 `*.spec.ts`。测试与被测文件同级放在 src/ 下，而不是另开
     // `tests/`：一个改名/移动过的模块，它的测试不会悄悄留在原地测不存在的代码。
-    include: ['src/renderer/src/**/*.spec.ts'],
+    //
+    // `src/main/**` 从 2026-09-22 起也在范围内：主进程里有一批**纯逻辑**
+    // 值得钉（sidecar 的失败诊断、devserver 的 pid 解析），它们不需要
+    // Electron 运行时，只需要把 `electron` 模块换掉。真正的进程管理不
+    // 试图在这里测——那只在真机启动时才说得清。
+    include: ['src/renderer/src/**/*.spec.ts', 'src/main/**/*.spec.ts'],
     globals: false
   }
 })

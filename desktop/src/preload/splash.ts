@@ -14,6 +14,15 @@ const algoforgeSplash = {
   onStatus: (callback: (text: string) => void): void => {
     ipcRenderer.on('splash:status', (_event: IpcRendererEvent, text: string) => callback(text))
   },
+  /**
+   * Subscribe to the secondary line under the caption.
+   *
+   * Carries the consequence and the next step of a failed stage — the
+   * caption says what failed, this says what it means and what to do.
+   */
+  onDetail: (callback: (text: string) => void): void => {
+    ipcRenderer.on('splash:detail', (_event: IpcRendererEvent, text: string) => callback(text))
+  },
   /** Ask the splash to play its fade-out. */
   onFadeOut: (callback: () => void): void => {
     ipcRenderer.on('splash:fade-out', () => callback())

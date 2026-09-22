@@ -51,6 +51,12 @@
           <div class="bar-fill"></div>
         </div>
         <p class="status" id="status">初始化运行时…</p>
+        <!--
+          Reserved row for the consequence-and-next-step line. It is
+          always present (even when empty) so the caption above never
+          shifts when a failure message appears.
+        -->
+        <p class="detail" id="detail"></p>
       </div>
     </div>
 
@@ -59,11 +65,20 @@
       // timer). Exposed through a dedicated preload that only carries
       // this one channel.
       const statusEl = document.getElementById('status')
+      const detailEl = document.getElementById('detail')
       const splashEl = document.getElementById('splash')
 
       if (window.algoforgeSplash) {
         window.algoforgeSplash.onStatus((text) => {
           statusEl.textContent = text
+        })
+
+        // Empty means "no detail" — collapse the row rather than leaving
+        // a gap, and mark the block so the caption can take the warning
+        // colour without the layout noticing.
+        window.algoforgeSplash.onDetail((text) => {
+          detailEl.textContent = text
+          splashEl.classList.toggle('has-detail', Boolean(text))
         })
 
         // Main process asks for the fade-out once the real window is

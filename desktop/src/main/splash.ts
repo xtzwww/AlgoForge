@@ -57,8 +57,8 @@ export function createSplashWindow(): BrowserWindow | null {
         preload: join(__dirname, '../preload/splash.js'),
         sandbox: false,
         contextIsolation: true,
-        nodeIntegration: false,
-      },
+        nodeIntegration: false
+      }
     })
 
     // Purely presentational — never let it navigate anywhere.
@@ -97,6 +97,19 @@ export function createSplashWindow(): BrowserWindow | null {
 export function setSplashStatus(stage: string): void {
   if (!splashWindow || splashWindow.isDestroyed()) return
   splashWindow.webContents.send('splash:status', stage)
+}
+
+/**
+ * Show (or clear) a second, smaller line under the status caption.
+ *
+ * Added for the same reason the caption was: a failure has a cause and a
+ * next step, and both need somewhere to live. The caption line is one
+ * line by design — making it two would push the layout around — so the
+ * detail gets its own reserved row. Pass an empty string to clear it.
+ */
+export function setSplashDetail(detail: string): void {
+  if (!splashWindow || splashWindow.isDestroyed()) return
+  splashWindow.webContents.send('splash:detail', detail)
 }
 
 /**

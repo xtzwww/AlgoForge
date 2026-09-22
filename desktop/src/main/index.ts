@@ -7,10 +7,11 @@ import {
   stopSidecar,
   getSidecarInfo,
   installExitHook,
-  onSidecarInfoChanged,
+  onSidecarInfoChanged
 } from './sidecar'
 import { ensurePostgres, stopPostgres } from './pg'
-import { createSplashWindow, setSplashStatus, closeSplash } from './splash'
+import { reclaimDevPort } from './devserver'
+import { createSplashWindow, setSplashStatus, setSplashDetail, closeSplash } from './splash'
 
 // PU-1: catch abnormal exits (crash, uncaught exception) that would
 // otherwise skip the orderly teardown and leave uvicorn running.
@@ -35,6 +36,18 @@ const REVEAL_MS = 250
  * showing the app by a fraction of a second.
  */
 const MIN_SPLASH_MS = 700
+
+/**
+ * How long to hold the splash when a startup step failed.
+ *
+ * A failure caption is the only place the user learns what went wrong,
+ * and the splash normally disappears the moment the window can be shown
+ * — which, when the sidecar dies instantly, is immediate. Without this
+ * floor the explanation flashes for a few frames and is gone, leaving
+ * only the downstream symptom ("every page says Network Error") and no
+ * cause. Long enough to read a sentence and take a screenshot.
+ */
+const FAILURE_HOLD_MS = 5000
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -171,6 +184,24 @@ app.whenReady().then(async () => {
   createSplashWindow()
   setSplashStatus('初始化运行时…')
 
+  // Reclaim the dev-server port before vite starts (PU-8).
+  //
+  // electron-vite *silently reuses* a dev server already listening on
+  // 5173 instead of failing with "port in use". If that listener is a
+  // leftover from a previous session, the new Electron main process is
+  // handed the old server's URL and then dies on its own startup (the
+  // `@electron-toolkit/utils` environment it expects is not there) —
+  // leaving the OLD window frame on screen with NO sidecar behind it.
+  // That is the exact shape of the "界面能开，但每一页都 Network Error"
+  // report: the UI is real, the engine is gone, and nothing in either
+  // log says so. Dev only; a packaged build has no dev server.
+  if (is.dev) {
+    const reclaimed = await reclaimDevPort((message) => setSplashStatus(message))
+    if (reclaimed) {
+      console.log(`[main] reclaimed dev server port (killed stale pid ${reclaimed})`)
+    }
+  }
+
   // Build the window now (hidden) so its renderer loads while the
   // sidecar is still booting.
   let mainWindow: BrowserWindow
@@ -189,9 +220,10 @@ app.whenReady().then(async () => {
   // healthy while every page hangs and reports "Network Error".
   const dbReady = await ensurePostgres((message) => setSplashStatus(message))
 
-  setSplashStatus(dbReady ? '启动分析引擎…' : '数据库未就绪，将继续启动…')
+  setSplashStatus('启动分析引擎…')
 
   let sidecarFailed = false
+  let sidecarFailureReason = ''
   try {
     const info = await startSidecar()
     console.log(`[main] sidecar ready: ${info.url} (health check passed)`)
@@ -199,12 +231,30 @@ app.whenReady().then(async () => {
     // A dead sidecar means no judging, but the app is still worth
     // showing — the UI surfaces the failure and env-check explains it.
     sidecarFailed = true
-    console.error('[main] failed to start sidecar:', (err as Error).message)
+    sidecarFailureReason = (err as Error).message
+    console.error('[main] failed to start sidecar:', sidecarFailureReason)
   }
 
-  setSplashStatus(
-    sidecarFailed ? '分析引擎未就绪，将继续启动…' : dbReady ? '准备就绪' : '数据库未就绪，将继续启动…'
-  )
+  if (sidecarFailed) {
+    // Say why, on the screen, and hold it there long enough to read.
+    //
+    // The previous copy was "分析引擎未就绪，将继续启动…" — true, and
+    // useless: it named no cause and no next step, so the user's only
+    // recourse was to report "它不工作". The reason is knowable (the
+    // sidecar's own last output, carried out by startSidecar), so show
+    // it and say what to do about it.
+    setSplashStatus(`分析引擎未能启动：${sidecarFailureReason || '原因不明'}`)
+    setSplashDetail('数据库功能与判题将不可用。请把这一行连同终端里的 [sidecar] 日志一起截图反馈。')
+    // Rule 2 of splash.ts applies: a failure is real information, not a
+    // decorative stage, so it must not be flashed and taken away. See
+    // FAILURE_HOLD_MS.
+    await delay(FAILURE_HOLD_MS)
+  } else {
+    setSplashStatus(dbReady ? '准备就绪' : '数据库未就绪，将继续启动…')
+    if (!dbReady) {
+      setSplashDetail('题库、错题本与教师端需要数据库，相关页面可能报错。')
+    }
+  }
 
   // See MIN_SPLASH_MS.
   const elapsed = Date.now() - splashShownAt

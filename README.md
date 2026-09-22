@@ -782,7 +782,34 @@ npm run dev:web
 所以看到的现象是「引擎看起来是好的，但每一页都报错」。2026-09-20 实际发生过一次。
 **排查第一步永远是 `netstat -ano \| findstr 5432`** —— 而不是去翻 sidecar 日志。
 
+**第二种「每页 Network Error」，成因完全不同，2026-09-22 定位**：上一次关窗口时
+dev server 没退干净，**5173 一直有人占着**。`electron-vite` 遇到端口被占**不报错**，
+而是直接复用那个旧服务，然后把新起的 Electron 主进程交给一个它不适配的环境 ——
+主进程在模块初始化阶段就崩了：
+
+```
+TypeError: Cannot read properties of undefined (reading 'isPackaged')
+    at @electron-toolkit/utils/dist/index.cjs:6
+```
+
+于是**你看到的窗口是旧服务的（能正常渲染），而后端（sidecar）根本不存在** ——
+现象和上面一模一样，日志却指向别处。这个坑的排查口诀：
+
+- 崩在 `@electron-toolkit/utils` 且提到 `isPackaged` → **先看 5173 有没有人占**；
+- `netstat -ano | findstr 5173`，比 `npm run dev` 的输出更能说明问题。
+
+**已加防护**（`desktop/src/main/devserver.ts`，2026-09-22）：dev 模式启动时先探一次
+5173，若被别的进程占着就杀掉它再启动（只认这一个端口、只杀占用它的那个进程、
+绝不杀自己；认不出占用者时宁可不杀）。所以正常情况下不会再撞上，但**下面这条习惯
+仍然值得保持**：重启前先在原终端 `Ctrl+C`，等它完全退出，别在窗口还开着时直接再启一次。
+
 数据库状态本身可以用 `GET /api/v1/env-check` 看（它会真的去连库）。
+
+**启动失败现在会说出来。** 后端拉不起来时，启动画面不再只写「分析引擎未就绪，
+将继续启动…」——那句话真实但无用，既没原因也没下一步。现在会显示
+**具体是哪个错误**（取 sidecar 自己的最后一行输出，Python 把原因放在 traceback
+末尾），并停留约 5 秒供你截图（`desktop/src/main/index.ts` 的 `FAILURE_HOLD_MS`）。
+排错时也可以直接贴这一行，不用再去翻终端。
 
 另一个坑：**崩溃恢复很慢，而且会累积。** 硬杀 PostgreSQL 后它会 fsync 整个数据
 目录才接受连接，实测 40 秒以上，**每硬杀一次就更慢**（每次都排一次全量 sync）。
