@@ -28,12 +28,26 @@ asserts the hidden case's expected output does not appear in the detail
 response body, at the raw-text level, so a future refactor that leaks it
 through a different field still fails the test.
 
-Security boundary: this design assumes single-user local deployment
-------------------------------------------------------------------
+Security boundary: reads are open, writes are not
+-------------------------------------------------
 ``GET /problems/{id}/test-cases`` hands the hidden cases to whoever asks.
 That is acceptable here because the user is the problem author and the
 server is on their own machine, and it is called out in the response
 docstring so the assumption is visible rather than implicit.
+
+The two **write** routes (``POST /problems`` and ``POST /problems/{id}/duplicate``)
+are a different matter and are guarded with ``Depends(require_teacher)``,
+matching every route in ``app/api/teacher.py``. They were unguarded until
+2026-09-22: anyone who could reach the sidecar could author or copy a
+problem, including its hidden cases. The reads stay open on purpose —
+practising does not require an account in this deployment — so the rule
+is "reads open, writes gated", not "teacher-only module". A future
+deployment that closes the reads too should do it deliberately, and this
+paragraph is the place to record that decision.
+
+``test_problems_api.py`` enumerates both write routes and asserts 401
+without a token and 403 with a student's, because "the dependency is
+correct" is not the same as "every write route depends on it".
 
 Judging is nonetheless designed the
 multi-user-safe way *now*: the judge accepts a ``problem_id`` and reads
@@ -51,15 +65,17 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.auth import require_teacher
 from app.db import get_session
 from app.models.problem import DIFFICULTIES, Problem
 from app.models.tag_values import knowledge_tag_values
 from app.models.test_case import TestCase
+from app.models.user import User
 
 router = APIRouter(prefix="/api/v1/problems", tags=["problems"])
 
@@ -393,11 +409,18 @@ def get_problem_test_cases(problem_id: int) -> TestCaseListOut:
 
 
 @router.post("", response_model=ProblemDetailOut, status_code=201)
-def create_problem(req: ProblemCreate) -> ProblemDetailOut:
+def create_problem(
+    req: ProblemCreate, _teacher: User = Depends(require_teacher)
+) -> ProblemDetailOut:
     """Create a problem and its cases in one transaction.
 
     Ordinals are assigned from the request order, 1-based, so the caller
     does not have to supply them and cannot supply a duplicate by mistake.
+
+    Teacher-only. The read routes above stay open because practising does
+    not require an account, but authoring does — a student who could POST
+    here could write a problem whose hidden cases they choose, which is
+    the same hole as leaking the cases in the other direction.
     """
     with get_session() as session:
         problem = Problem(
@@ -451,7 +474,9 @@ def create_problem(req: ProblemCreate) -> ProblemDetailOut:
 
 
 @router.post("/{problem_id}/duplicate", status_code=201)
-def duplicate_problem(problem_id: int) -> ProblemDetailOut:
+def duplicate_problem(
+    problem_id: int, _teacher: User = Depends(require_teacher)
+) -> ProblemDetailOut:
     """Copy a problem, cases and all (阶段 5).
 
     The reason this exists: a term's worth of problems is mostly last

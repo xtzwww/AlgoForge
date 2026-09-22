@@ -1,19 +1,29 @@
 """Tests for the problem catalogue API (PU-12).
 
-Covers the four endpoints in ``app/api/problems.py``:
+Covers the endpoints in ``app/api/problems.py``:
 
 - GET  /api/v1/problems                    — paged catalogue listing
 - GET  /api/v1/problems/{id}               — detail, **visible** cases only
 - GET  /api/v1/problems/{id}/test-cases    — every case (judging input)
 - POST /api/v1/problems                    — problem + cases in one transaction
+- POST /api/v1/problems/{id}/duplicate     — copy, hidden cases included
 
-The load-bearing test in this module is
-:func:`test_detail_never_leaks_hidden_case_output`. ``TestCase.is_sample``
-is what separates practicing from cheating, and the model enforces
-nothing on its own — the guarantee lives entirely in the SQL each route
-runs. That test asserts at the raw-response-text level, so a future
-refactor that leaks a hidden case's ``expected_output`` through some
-*other* field still fails rather than silently passing.
+Two boundaries are load-bearing here, and they run in opposite directions:
+
+* **Reads stay open.** ``/test-cases`` deliberately hands the hidden cases
+  to whoever asks. That is the deployment assumption, and
+  :func:`test_detail_never_leaks_hidden_case_output` pins the part that
+  matters: the *detail* route must not leak them. ``TestCase.is_sample``
+  separates practising from cheating, and the model enforces nothing on
+  its own — the guarantee lives entirely in the SQL each route runs. The
+  assertion is at the raw-response-text level, so a refactor that leaks a
+  hidden case's ``expected_output`` through some *other* field still fails
+  rather than silently passing.
+* **Writes are gated.** Both POST routes carry ``Depends(require_teacher)``
+  (added 2026-09-22 — they had no guard at all). Every test that POSTs
+  therefore sends teacher credentials; the write-route tests at the bottom
+  assert what happens without them. This is why the POST tests take an
+  ``admin`` fixture rather than posting bare.
 
 Isolation mirrors ``tests/test_mistake_book.py``: an in-memory SQLite
 database with ``StaticPool``, plus a monkeypatch of the module-level
@@ -34,10 +44,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import problems as problems_module
+from app.auth import create_user, issue_session
 from app.main import app
 from app.models.base import Base
 from app.models.problem import Problem
 from app.models.test_case import TestCase
+from app.models.user import ROLE_TEACHER
 from conftest import TEST_SIDECAR_HEADERS
 
 #: Distinctive strings used as hidden-case payloads. They are unlikely to
@@ -79,18 +91,55 @@ def client(db_session: Session) -> Iterator[TestClient]:
     ``problems_module``, not ``app.db``: ``from app.db import get_session``
     binds the function into the route module's namespace at import time,
     so patching ``app.db.get_session`` afterwards would have no effect.
+
+    **Two modules need patching, not one** (added 2026-09-22 with the write
+    guard). ``Depends(require_teacher)`` resolves through
+    ``app.api.auth``, which looks the session up in *its own* namespace —
+    so patching only ``problems_module`` leaves the guard reading the real
+    PostgreSQL DSN, and every authenticated request fails with 401 because
+    the token is not in that database. The symptom points at the token, not
+    at the session source, which is what makes this worth a comment.
     """
+    from app.api import auth as auth_api
+
     real_get_session = problems_module.get_session
 
     def fake_get_session() -> Session:
         return db_session
 
     problems_module.get_session = fake_get_session  # type: ignore[assignment]
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(auth_api, "get_session", fake_get_session)
     try:
         with TestClient(app, headers=TEST_SIDECAR_HEADERS) as c:
             yield c
     finally:
+        monkeypatch.undo()
         problems_module.get_session = real_get_session  # type: ignore[assignment]
+
+
+@pytest.fixture
+def admin(db_session: Session) -> dict[str, str]:
+    """Authorization headers for a teacher, for the two POST routes.
+
+    Both write routes are ``Depends(require_teacher)``, so every POST test
+    needs these. Built per-test rather than once, because ``db_session``
+    is per-test and a token issued against a torn-down session would 401
+    for the wrong reason — the test would pass its guard assertion while
+    actually failing authentication, which is the failure mode the
+    no-credentials tests at the bottom of this file exist to pin down.
+    """
+    teacher = create_user(
+        db_session, username="teacher", password="pw", role=ROLE_TEACHER
+    )
+    return {"Authorization": f"Bearer {issue_session(db_session, teacher)}"}
+
+
+@pytest.fixture
+def student_headers(db_session: Session) -> dict[str, str]:
+    """Authorization headers for a *student* — authenticated, not allowed."""
+    student = create_user(db_session, username="student", password="pw")
+    return {"Authorization": f"Bearer {issue_session(db_session, student)}"}
 
 
 def _seed_problem(
@@ -471,10 +520,13 @@ def test_test_cases_404_on_unknown_problem(client: TestClient) -> None:
 # --- POST /api/v1/problems --------------------------------------------
 
 
-def test_create_problem_with_cases(client: TestClient) -> None:
+def test_create_problem_with_cases(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """POST creates the problem and its cases in one request."""
     resp = client.post(
         "/api/v1/problems",
+        headers=admin,
         json={
             "title": "Two Sum",
             "knowledge_tags": ["哈希表"],
@@ -517,7 +569,9 @@ def test_create_problem_with_cases(client: TestClient) -> None:
     assert body["test_cases"][0]["is_sample"] is True
 
 
-def test_create_assigns_ordinals_from_request_order(client: TestClient) -> None:
+def test_create_assigns_ordinals_from_request_order(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """Ordinals are 1-based and follow request order, not caller input.
 
     The request schema has no ``ordinal`` field at all, so a caller
@@ -525,6 +579,7 @@ def test_create_assigns_ordinals_from_request_order(client: TestClient) -> None:
     """
     resp = client.post(
         "/api/v1/problems",
+        headers=admin,
         json={
             "title": "Ordinals",
             "test_cases": [
@@ -542,7 +597,9 @@ def test_create_assigns_ordinals_from_request_order(client: TestClient) -> None:
     assert [c["input"] for c in cases["test_cases"]] == ["a", "b", "c"]
 
 
-def test_create_hidden_by_default(client: TestClient) -> None:
+def test_create_hidden_by_default(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """Omitting ``is_sample`` hides the case.
 
     Fail-closed: a caller importing a catalogue must opt *in* to
@@ -551,6 +608,7 @@ def test_create_hidden_by_default(client: TestClient) -> None:
     """
     resp = client.post(
         "/api/v1/problems",
+        headers=admin,
         json={
             "title": "Fail closed",
             "test_cases": [{"input": "1 1", "expected_output": "2"}],
@@ -567,9 +625,11 @@ def test_create_hidden_by_default(client: TestClient) -> None:
     assert cases["test_cases"][0]["is_sample"] is False
 
 
-def test_create_problem_without_cases(client: TestClient) -> None:
+def test_create_problem_without_cases(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """A problem may be created with no cases yet."""
-    resp = client.post("/api/v1/problems", json={"title": "Bare"})
+    resp = client.post("/api/v1/problems", json={"title": "Bare"}, headers=admin)
     assert resp.status_code == 201
 
     body = resp.json()
@@ -583,6 +643,7 @@ def test_create_problem_without_cases(client: TestClient) -> None:
 
 def test_create_applies_model_defaults_for_empty_strings(
     client: TestClient,
+    admin: dict[str, str],
 ) -> None:
     """An omitted statement is stored as an empty string, not NULL.
 
@@ -590,7 +651,9 @@ def test_create_applies_model_defaults_for_empty_strings(
     to be the empty string rather than None — otherwise the insert fails
     on a fresh dev database whose rows predate the column.
     """
-    resp = client.post("/api/v1/problems", json={"title": "No statement"})
+    resp = client.post(
+        "/api/v1/problems", json={"title": "No statement"}, headers=admin
+    )
     body = resp.json()
     assert body["description"] == ""
     assert body["input_format"] is None
@@ -598,11 +661,12 @@ def test_create_applies_model_defaults_for_empty_strings(
 
 
 def test_create_problem_visible_to_listing_and_detail(
-    client: TestClient,
+    client: TestClient, admin: dict[str, str]
 ) -> None:
     """End-to-end: POST → appears in the listing → resolvable by detail."""
     created = client.post(
         "/api/v1/problems",
+        headers=admin,
         json={
             "title": "Round trip",
             "knowledge_tags": ["模拟"],
@@ -629,17 +693,30 @@ def test_create_problem_visible_to_listing_and_detail(
     assert cases["total"] == 2
 
 
-def test_create_rejects_blank_title(client: TestClient) -> None:
+def test_create_rejects_blank_title(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """``title`` has ``min_length=1``, so an empty string is a 422."""
-    assert client.post("/api/v1/problems", json={"title": ""}).status_code == 422
+    assert (
+        client.post("/api/v1/problems", json={"title": ""}, headers=admin)
+        .status_code
+        == 422
+    )
 
 
-def test_create_422_on_missing_title(client: TestClient) -> None:
+def test_create_422_on_missing_title(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """``title`` is required."""
-    assert client.post("/api/v1/problems", json={}).status_code == 422
+    assert (
+        client.post("/api/v1/problems", json={}, headers=admin).status_code
+        == 422
+    )
 
 
-def test_create_rejects_out_of_range_limits(client: TestClient) -> None:
+def test_create_rejects_out_of_range_limits(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """Limits are bounded so a bad import cannot make judging impossible.
 
     A zero time limit is an instant TLE for every submission, and an
@@ -647,39 +724,49 @@ def test_create_rejects_out_of_range_limits(client: TestClient) -> None:
     """
     assert (
         client.post(
-            "/api/v1/problems", json={"title": "x", "time_limit": 0}
+            "/api/v1/problems", json={"title": "x", "time_limit": 0},
+            headers=admin,
         ).status_code
         == 422
     )
     assert (
         client.post(
-            "/api/v1/problems", json={"title": "x", "time_limit": 61}
+            "/api/v1/problems", json={"title": "x", "time_limit": 61},
+            headers=admin,
         ).status_code
         == 422
     )
     assert (
         client.post(
-            "/api/v1/problems", json={"title": "x", "memory_limit": 0}
+            "/api/v1/problems", json={"title": "x", "memory_limit": 0},
+            headers=admin,
         ).status_code
         == 422
     )
     assert (
         client.post(
-            "/api/v1/problems", json={"title": "x", "memory_limit": 4096}
+            "/api/v1/problems", json={"title": "x", "memory_limit": 4096},
+            headers=admin,
         ).status_code
         == 422
     )
 
 
-def test_create_rejects_unknown_difficulty(client: TestClient) -> None:
+def test_create_rejects_unknown_difficulty(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """``difficulty`` is a Literal, so a typo is rejected at the boundary."""
     resp = client.post(
-        "/api/v1/problems", json={"title": "x", "difficulty": "impossible"}
+        "/api/v1/problems",
+        json={"title": "x", "difficulty": "impossible"},
+        headers=admin,
     )
     assert resp.status_code == 422
 
 
-def test_create_preserves_multiline_io(client: TestClient) -> None:
+def test_create_preserves_multiline_io(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """Trailing newlines are significant for judging and must survive.
 
     ``normalize_output`` trims trailing whitespace at judge time, but the
@@ -689,6 +776,7 @@ def test_create_preserves_multiline_io(client: TestClient) -> None:
     payload = "3\n1 2 3\n"
     resp = client.post(
         "/api/v1/problems",
+        headers=admin,
         json={
             "title": "Multiline",
             "test_cases": [
@@ -702,7 +790,9 @@ def test_create_preserves_multiline_io(client: TestClient) -> None:
     assert case["expected_output"] == "6\n"
 
 
-def test_create_two_problems_do_not_collide(client: TestClient) -> None:
+def test_create_two_problems_do_not_collide(
+    client: TestClient, admin: dict[str, str]
+) -> None:
     """Ordinal uniqueness is per-problem, not global.
 
     ``uq_test_cases_problem_ordinal`` is a composite constraint; a naive
@@ -711,10 +801,12 @@ def test_create_two_problems_do_not_collide(client: TestClient) -> None:
     """
     first = client.post(
         "/api/v1/problems",
+        headers=admin,
         json={"title": "One", "test_cases": [{"input": "a", "expected_output": "a"}]},
     ).json()
     second = client.post(
         "/api/v1/problems",
+        headers=admin,
         json={"title": "Two", "test_cases": [{"input": "b", "expected_output": "b"}]},
     ).json()
 
@@ -726,12 +818,12 @@ def test_create_two_problems_do_not_collide(client: TestClient) -> None:
 
 
 def test_create_does_not_mutate_existing_problem(
-    client: TestClient, db_session: Session
+    client: TestClient, db_session: Session, admin: dict[str, str]
 ) -> None:
     """Creating a second problem leaves the first untouched."""
     _seed_problem(db_session, problem_id=1, title="Original")
 
-    client.post("/api/v1/problems", json={"title": "Newcomer"})
+    client.post("/api/v1/problems", json={"title": "Newcomer"}, headers=admin)
 
     original = client.get("/api/v1/problems/1").json()
     assert original["title"] == "Original"
@@ -842,7 +934,7 @@ def test_blank_search_does_not_filter(client: TestClient, db_session: Session) -
 
 
 def test_duplicate_copies_the_hidden_cases_too(
-    client: TestClient, db_session: Session
+    client: TestClient, db_session: Session, admin: dict[str, str]
 ) -> None:
     """**隐藏用例必须跟着复制。**
 
@@ -860,7 +952,7 @@ def test_duplicate_copies_the_hidden_cases_too(
     )
     db_session.commit()
 
-    resp = client.post("/api/v1/problems/1/duplicate")
+    resp = client.post("/api/v1/problems/1/duplicate", headers=admin)
 
     assert resp.status_code == 201, resp.text
     new_id = resp.json()["id"]
@@ -874,7 +966,7 @@ def test_duplicate_copies_the_hidden_cases_too(
 
 
 def test_duplicate_response_does_not_leak_hidden_cases(
-    client: TestClient, db_session: Session
+    client: TestClient, db_session: Session, admin: dict[str, str]
 ) -> None:
     """复制接口的**响应**仍然只给可见用例。
 
@@ -889,14 +981,14 @@ def test_duplicate_response_does_not_leak_hidden_cases(
     )
     db_session.commit()
 
-    resp = client.post("/api/v1/problems/1/duplicate")
+    resp = client.post("/api/v1/problems/1/duplicate", headers=admin)
 
     assert HIDDEN_OUTPUT not in resp.text
     assert HIDDEN_INPUT not in resp.text
 
 
 def test_duplicate_copies_the_statements_fields(
-    client: TestClient, db_session: Session
+    client: TestClient, db_session: Session, admin: dict[str, str]
 ) -> None:
     _seed_problem(
         db_session,
@@ -911,7 +1003,7 @@ def test_duplicate_copies_the_statements_fields(
     )
     db_session.commit()
 
-    body = client.post("/api/v1/problems/1/duplicate").json()
+    body = client.post("/api/v1/problems/1/duplicate", headers=admin).json()
 
     assert body["knowledge_tags"] == ["排序", "分治"]
     assert body["description"] == "把两个数加起来"
@@ -922,7 +1014,9 @@ def test_duplicate_copies_the_statements_fields(
     assert body["title"] == "原题（副本）"
 
 
-def test_duplicate_starts_active(client: TestClient, db_session: Session) -> None:
+def test_duplicate_starts_active(
+    client: TestClient, db_session: Session, admin: dict[str, str]
+) -> None:
     """复制出来的是可用的。
 
     老师复制一份是为了改它——如果副本是停用状态，他在列表里找不到它，
@@ -931,10 +1025,86 @@ def test_duplicate_starts_active(client: TestClient, db_session: Session) -> Non
     _seed_problem(db_session, problem_id=1, title="原题", is_active=False)
     db_session.commit()
 
-    body = client.post("/api/v1/problems/1/duplicate").json()
+    body = client.post("/api/v1/problems/1/duplicate", headers=admin).json()
 
     assert body["is_active"] is True
 
 
-def test_duplicate_of_a_missing_problem_is_404(client: TestClient) -> None:
-    assert client.post("/api/v1/problems/999/duplicate").status_code == 404
+def test_duplicate_of_a_missing_problem_is_404(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    resp = client.post("/api/v1/problems/999/duplicate", headers=admin)
+    assert resp.status_code == 404
+
+
+# --- 写路由的守卫（2026-09-22 新增）--------------------------------------
+
+
+def test_every_write_route_is_guarded(
+    client: TestClient, student_headers: dict[str, str]
+) -> None:
+    """每个写路由都要拦住学生，一个漏了就等于全漏。
+
+    枚举而不是抽样：模块是照着上一段复制出来的，新增一条抄了全部参数
+    却忘了守卫的路由，正是评审时看不见的那种错。加了新写路由就往
+    ``write_routes`` 里补一行——这也是它写成显式列表、而不是遍历
+    ``app.routes`` 的原因：遍历只能证明「现存的路由都被守住了」，
+    证明不了「新加的那条有没有被想起来」。
+
+    用学生身份而不是匿名身份来测，是因为这两种失败必须分开：
+    匿名是 401，学生是 403。只测 401 的话，一条把守卫写成
+    ``require_user`` 的路由会照样绿。
+    """
+    write_routes: list[tuple[str, str, dict[str, object]]] = [
+        ("POST", "/api/v1/problems", {"json": {"title": "x"}}),
+        ("POST", "/api/v1/problems/1/duplicate", {}),
+    ]
+
+    for method, path, kwargs in write_routes:
+        resp = client.request(method, path, headers=student_headers, **kwargs)
+        assert resp.status_code == 403, (
+            f"{method} {path} 没拦住学生：{resp.status_code}。"
+            "写路由必须带 Depends(require_teacher)。"
+        )
+
+
+def test_write_routes_reject_anonymous_callers(client: TestClient) -> None:
+    """没有凭证是 401，不是 403——两种拒绝要能分开。
+
+    与上一条互补：上一条证明「学生被拦住」，这一条证明「匿名也被拦住」，
+    且两者用不同的状态码。合并成一条测试会让「守卫被换成 require_user」
+    这种改动静默通过。
+    """
+    write_routes: list[tuple[str, str, dict[str, object]]] = [
+        ("POST", "/api/v1/problems", {"json": {"title": "x"}}),
+        ("POST", "/api/v1/problems/1/duplicate", {}),
+    ]
+
+    for method, path, kwargs in write_routes:
+        resp = client.request(method, path, **kwargs)
+        assert resp.status_code == 401, (
+            f"{method} {path} 对匿名调用者返回 {resp.status_code}，应为 401。"
+        )
+
+
+def test_read_routes_stay_open(client: TestClient) -> None:
+    """读路由**不**要求凭证，这是有意保留的。
+
+    守卫加在写上而不是整个模块上，因为本部署里做题不需要账号
+    （练习页是免登录的）。这条测试把那个决定钉住：将来有人
+    「顺手把整个模块都加上守卫」时会红，从而必须是有意为之。
+    """
+    for path in ("/api/v1/problems", "/api/v1/problems/999"):
+        resp = client.get(path)
+        assert resp.status_code != 401, f"GET {path} 不该要求登录"
+
+
+def test_teacher_can_still_write(client: TestClient, admin: dict[str, str]) -> None:
+    """守卫不能把老师本人也拦在外面。
+
+    上三条测的都是「该拦的拦住了」；没有这一条，一条把条件写反
+    （例如 ``user.role != ROLE_STUDENT``）的守卫会让前三条全绿、
+    而功能整体不可用。
+    """
+    resp = client.post("/api/v1/problems", json={"title": "x"}, headers=admin)
+    assert resp.status_code == 201, resp.text
