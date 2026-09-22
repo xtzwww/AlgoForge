@@ -90,6 +90,72 @@ export async function deleteAssignment(id: number): Promise<void> {
   await http.delete(`/api/v1/teacher/assignments/${id}`)
 }
 
+/** Rename / re-date on copy. Both optional — see the route. */
+export interface DuplicateAssignmentRequest {
+  title?: string
+  /** ISO datetime. Omit for "no deadline on the copy". */
+  due_at?: string
+}
+
+/**
+ * Copy one assignment into a new one (阶段 5).
+ *
+ * The problem set and the assistance level are copied server-side, so
+ * the two things a teacher always changes — title and deadline — are the
+ * only two this takes. Leaving `title` out produces 「<原名>（副本）」.
+ */
+export async function duplicateAssignment(
+  id: number,
+  req: DuplicateAssignmentRequest = {}
+): Promise<AssignmentOut> {
+  const res = await http.post<AssignmentOut>(`/api/v1/teacher/assignments/${id}/duplicate`, req)
+  return res.data
+}
+
+/** One row of a student's report: how they did on one assignment. */
+export interface StudentAssignmentRow {
+  assignment_id: number
+  title: string
+  due_at: string | null
+  overdue: boolean
+  problem_count: number
+  submissions: number
+  accepted: number
+  /**
+   * Accepted problems over the assignment's problems, or `null` when
+   * nothing was submitted at all.
+   *
+   * The `null` is the point. It is not the same as `0`, which means
+   * "submitted and got none of them" — keep them apart when rendering,
+   * because "hasn't started" and "is stuck" call for different actions.
+   */
+  progress: number | null
+  last_submitted_at: string | null
+}
+
+/** One student against every assignment, set or not. */
+export interface StudentReport {
+  user_id: number
+  display_name: string
+  username: string
+  rows: StudentAssignmentRow[]
+  /** Assignments with at least one submission. */
+  completed: number
+  total_assignments: number
+}
+
+/**
+ * The per-student report (阶段 5). Teacher only.
+ *
+ * Every assignment is in `rows`, including ones the student never
+ * touched — that is the reason the route exists, since a student with no
+ * submissions has no mistakes and so is invisible in the mistake book.
+ */
+export async function getStudentReport(userId: number): Promise<StudentReport> {
+  const res = await http.get<StudentReport>(`/api/v1/teacher/students/${userId}/report`)
+  return res.data
+}
+
 /** The homework list, for anyone who asks. */
 export async function getOpenAssignments(): Promise<AssignmentOut[]> {
   const res = await http.get<AssignmentOut[]>('/api/v1/assignments')

@@ -324,3 +324,221 @@ def test_no_deadline_is_not_overdue(session: Session) -> None:
     row = Assignment(title="随便做", description="", problem_ids=[1], due_at=None)
     assert row.to_dict()["overdue"] is False
     assert row.to_dict()["due_at"] is None
+
+
+
+
+# --- 复制作业（阶段 5）-------------------------------------------------
+
+
+def test_duplicate_copies_the_problem_set_verbatim(
+    session: Session, client: TestClient
+) -> None:
+    """复制的是题目集合本身。
+
+    作业的复用方式是「同一份题再用一次」，而重新手打编号正是错题混进来的
+    时刻——复制一份不该经过人手。
+    """
+    source = _publish(session, [11, 12, 13], title="第一次作业")
+    headers = _teacher_headers(session)
+
+    resp = client.post(
+        f"/api/v1/teacher/assignments/{source}/duplicate", json={}, headers=headers
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["problem_ids"] == [11, 12, 13]
+    assert body["title"] == "第一次作业（副本）"
+    assert body["id"] != source
+
+
+def test_duplicate_keeps_the_assistance_level(
+    session: Session, client: TestClient
+) -> None:
+    """档位跟着复制。
+
+    这一条是刻意的：如果复制时落回默认档，一份一档的作业复制出来就悄悄
+    允许了 AI 对话——「比原来松」是唯一要紧的方向，所以宁可保守。
+    """
+    _problem(session, 21)
+    row = Assignment(
+        title="严格作业", description="", problem_ids=[21], assistance_level=1
+    )
+    session.add(row)
+    session.commit()
+
+    resp = client.post(
+        f"/api/v1/teacher/assignments/{row.id}/duplicate",
+        json={},
+        headers=_teacher_headers(session),
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["assistance_level"] == 1
+
+
+def test_duplicate_can_rename_and_redate(session: Session, client: TestClient) -> None:
+    """改名字和改截止时间是复制之后必然要做的两件事。
+
+    不传则沿用原标题、清掉截止时间——「同一份题换个班再发一次」是另一半用法，
+    它想要的就是原名和无截止。
+    """
+    source = _publish(session, [22])
+    headers = _teacher_headers(session)
+
+    resp = client.post(
+        f"/api/v1/teacher/assignments/{source}/duplicate",
+        json={"title": "第二次作业", "due_at": "2030-01-01T10:00"},
+        headers=headers,
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["title"] == "第二次作业"
+    assert body["due_at"].startswith("2030-01-01")
+
+
+def test_duplicate_of_a_missing_assignment_is_404(
+    session: Session, client: TestClient
+) -> None:
+    resp = client.post(
+        "/api/v1/teacher/assignments/9999/duplicate",
+        json={},
+        headers=_teacher_headers(session),
+    )
+    assert resp.status_code == 404
+
+
+# --- 学生成绩单（阶段 5）------------------------------------------------
+
+
+def test_report_lists_every_assignment_including_the_ones_not_attempted(
+    session: Session, client: TestClient
+) -> None:
+    """**没交也要出现在成绩单上。**
+
+    这条是这个接口存在的唯一理由：错题本按定义看不到「一道题都没做」的
+    学生——他没有错题。而恰恰是这样的学生最需要被看见。
+    """
+    student = _student(session, "s1")
+    _publish(session, [31], title="做过的")
+    _publish(session, [32], title="没做的")
+    _submit(session, user_id=student, problem_id=31, status=JudgeStatus.AC)
+
+    resp = client.get(
+        f"/api/v1/teacher/students/{student}/report", headers=_teacher_headers(session)
+    )
+
+    assert resp.status_code == 200, resp.text
+    titles = [r["title"] for r in resp.json()["rows"]]
+    assert "做过的" in titles
+    assert "没做的" in titles
+
+
+def test_report_distinguishes_not_attempted_from_answered_wrong(
+    session: Session, client: TestClient
+) -> None:
+    """「没做」和「做了但全错」必须是两种不同的读数。
+
+    都用 0.0 表示的话，老师分不出该催谁、该辅导谁。所以没提交是 null，
+    提交过但没通过是 0.0。
+    """
+    student = _student(session, "s1")
+    _publish(session, [41], title="全错")
+    _publish(session, [42], title="没碰")
+    _submit(session, user_id=student, problem_id=41, status=JudgeStatus.WA)
+
+    resp = client.get(
+        f"/api/v1/teacher/students/{student}/report", headers=_teacher_headers(session)
+    )
+    by_title = {r["title"]: r for r in resp.json()["rows"]}
+
+    assert by_title["全错"]["submissions"] == 1
+    assert by_title["全错"]["progress"] == 0.0
+    assert by_title["没碰"]["submissions"] == 0
+    assert by_title["没碰"]["progress"] is None
+
+
+def test_report_counts_progress_per_problem_not_per_submission(
+    session: Session, client: TestClient
+) -> None:
+    """同一题交十次仍然只算一道题。
+
+    按提交次数算的话，反复重交会把这个人的进度推上去——而这恰恰是
+    最需要帮助的学生的行为模式。
+    """
+    student = _student(session, "s1")
+    _publish(session, [51, 52], title="两题")
+    _submit(session, user_id=student, problem_id=51, status=JudgeStatus.AC)
+    for _ in range(5):
+        _submit(
+            session, user_id=student, problem_id=52, status=JudgeStatus.WA
+        )
+
+    resp = client.get(
+        f"/api/v1/teacher/students/{student}/report", headers=_teacher_headers(session)
+    )
+    row = resp.json()["rows"][0]
+
+    assert row["problem_count"] == 2
+    assert row["submissions"] == 6
+    assert row["accepted"] == 1
+    # 1 / 2，不是 1 / 6
+    assert row["progress"] == 0.5
+
+
+def test_report_completed_counts_assignments_with_any_submission(
+    session: Session, client: TestClient
+) -> None:
+    student = _student(session, "s1")
+    _publish(session, [61], title="A")
+    _publish(session, [62], title="B")
+    _publish(session, [63], title="C")
+    _submit(session, user_id=student, problem_id=61, status=JudgeStatus.WA)
+
+    resp = client.get(
+        f"/api/v1/teacher/students/{student}/report", headers=_teacher_headers(session)
+    )
+    body = resp.json()
+
+    assert body["total_assignments"] == 3
+    # 交错了也算交过：这是「有没有参与」，不是「做没做对」。
+    assert body["completed"] == 1
+
+
+def test_report_ignores_other_students_submissions(
+    session: Session, client: TestClient
+) -> None:
+    """别人的提交不能算到这个学生头上。"""
+    mine = _student(session, "s1")
+    theirs = _student(session, "s2")
+    _publish(session, [71], title="作业")
+    _submit(session, user_id=theirs, problem_id=71, status=JudgeStatus.AC)
+
+    resp = client.get(
+        f"/api/v1/teacher/students/{mine}/report", headers=_teacher_headers(session)
+    )
+    row = resp.json()["rows"][0]
+
+    assert row["submissions"] == 0
+    assert row["progress"] is None
+
+
+def test_report_of_a_missing_student_is_404(
+    session: Session, client: TestClient
+) -> None:
+    resp = client.get(
+        "/api/v1/teacher/students/9999/report", headers=_teacher_headers(session)
+    )
+    assert resp.status_code == 404
+
+
+def test_report_is_teacher_only(session: Session, client: TestClient) -> None:
+    student = _student(session, "s1")
+    _publish(session, [81], title="作业")
+
+    # 没有 Authorization：只有进程凭据，不是老师。
+    resp = client.get(f"/api/v1/teacher/students/{student}/report")
+
+    assert resp.status_code in (401, 403)

@@ -53,10 +53,13 @@ import { isLoggedIn, isTeacher, login, logout, sessionReady, sessionUser } from 
 import {
   createAssignment,
   deleteAssignment,
+  duplicateAssignment,
   getAssignmentStats,
+  getStudentReport,
   listAssignments,
   type AssignmentOut,
-  type AssignmentStats
+  type AssignmentStats,
+  type StudentReport
 } from '../api/assignments'
 import {
   getAssistanceUsage,
@@ -381,6 +384,80 @@ async function removeAssignment(assignment: AssignmentOut): Promise<void> {
   } catch (err) {
     errorMsg.value = messageOf(err, `无法删除「${assignment.title}」`)
   }
+}
+
+/**
+ * Copy an assignment (阶段 5).
+ *
+ * No confirmation dialog, and that is deliberate: duplicating adds a row
+ * and destroys nothing, so asking first would be friction on the one
+ * action here that is safe to get wrong — deleting has its own prompt
+ * for the opposite reason.
+ */
+const duplicatingId = ref<number | null>(null)
+
+async function copyAssignment(assignment: AssignmentOut): Promise<void> {
+  duplicatingId.value = assignment.id
+  try {
+    await duplicateAssignment(assignment.id)
+    await loadAssignments()
+  } catch (err) {
+    errorMsg.value = messageOf(err, `无法复制「${assignment.title}」`)
+  } finally {
+    duplicatingId.value = null
+  }
+}
+
+// --- Per-student report (阶段 5) ---------------------------------------
+
+/**
+ * One student against every assignment.
+ *
+ * Kept beside the assignment list rather than inside the student panel
+ * because the question it answers is "how are they doing over the term",
+ * which is a report-time question, not a per-mistake one. The mistake
+ * timeline stays where it is.
+ */
+const report = ref<StudentReport | null>(null)
+const reportLoading = ref(false)
+const reportError = ref('')
+
+async function openReport(userId: number, displayName: string): Promise<void> {
+  reportLoading.value = true
+  reportError.value = ''
+  report.value = {
+    user_id: userId,
+    display_name: displayName,
+    username: '',
+    rows: [],
+    completed: 0,
+    total_assignments: 0
+  }
+  try {
+    report.value = await getStudentReport(userId)
+  } catch (err) {
+    reportError.value = messageOf(err, `无法加载 ${displayName} 的成绩单`)
+    report.value = null
+  } finally {
+    reportLoading.value = false
+  }
+}
+
+function closeReport(): void {
+  report.value = null
+  reportError.value = ''
+}
+
+/**
+ * How one row reads, as text.
+ *
+ * `null` gets a word, not a dash: a missing progress means "never
+ * submitted", and a dash would read as "no data" — i.e. the very
+ * distinction the API went out of its way to preserve.
+ */
+function progressText(row: { progress: number | null; submissions: number }): string {
+  if (row.submissions === 0) return '未提交'
+  return percent(row.progress ?? 0)
 }
 
 // --- Reviewing a flag (阶段 5) ----------------------------------------
@@ -945,6 +1022,15 @@ onMounted(() => {
                   <span v-if="a.due_at" class="assignment-meta" :class="{ overdue: a.overdue }">
                     {{ a.overdue ? '已过期 · ' : '' }}{{ dateText(a.due_at) }}
                   </span>
+                  <button
+                    type="button"
+                    class="review-btn subtle"
+                    :disabled="duplicatingId === a.id"
+                    title="复制成一份新作业，题目和辅助强度一起带过去"
+                    @click="copyAssignment(a)"
+                  >
+                    {{ duplicatingId === a.id ? '复制中…' : '复制' }}
+                  </button>
                   <button type="button" class="review-btn subtle" @click="removeAssignment(a)">
                     删除
                   </button>
@@ -1102,6 +1188,66 @@ onMounted(() => {
                   </tbody>
                 </table>
               </div>
+            </template>
+          </section>
+
+          <!-- --- Per-student report (阶段 5) --- -->
+          <section class="section">
+            <h2 class="section-title">学生成绩单</h2>
+            <p class="section-note">
+              一名学生对着<strong>全部作业</strong>的完成情况。错题本看不到「一道题都没做」的学生
+              ——他没有错题——所以这个页面用作业来算，把没交的人也算进来。
+            </p>
+
+            <div class="report-picker">
+              <button
+                v-for="s in students"
+                :key="s.user_id"
+                type="button"
+                class="report-chip"
+                :class="{ active: report?.user_id === s.user_id }"
+                @click="openReport(s.user_id, s.display_name)"
+              >
+                {{ s.display_name }}
+              </button>
+            </div>
+
+            <p v-if="reportLoading" class="placeholder-inline">读取中…</p>
+            <p v-else-if="reportError" class="error-inline">{{ reportError }}</p>
+
+            <template v-else-if="report">
+              <p class="usage-total">
+                {{ report.display_name }}：{{ report.total_assignments }} 份作业中参与了
+                {{ report.completed }} 份
+              </p>
+              <div v-if="report.rows.length" class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>作业</th>
+                      <th class="num">题目数</th>
+                      <th class="num">提交</th>
+                      <th class="num">通过</th>
+                      <th class="num">进度</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in report.rows" :key="row.assignment_id">
+                      <td>
+                        {{ row.title }}
+                        <span v-if="row.overdue" class="assignment-meta overdue">已过期</span>
+                      </td>
+                      <td class="num">{{ row.problem_count }}</td>
+                      <td class="num">{{ row.submissions }}</td>
+                      <td class="num">{{ row.accepted }}</td>
+                      <!-- 未提交 / 正确率是两种读数，见 progressText -->
+                      <td class="num">{{ progressText(row) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-else class="placeholder-inline">还没有布置过作业。</p>
+              <button class="review-btn subtle" type="button" @click="closeReport">收起</button>
             </template>
           </section>
 
@@ -1710,6 +1856,37 @@ onMounted(() => {
 
 .assignment-level {
   font-variant-numeric: tabular-nums;
+}
+
+/* --- Per-student report (阶段 5) --- */
+
+.report-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.report-chip {
+  padding: 3px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--af-text-secondary);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+  cursor: pointer;
+}
+
+.report-chip:hover {
+  color: var(--af-text-primary);
+}
+
+/* The open student stays lit — with a term of assignments below it,
+   losing track of whose report is on screen is the easy mistake. */
+.report-chip.active {
+  color: var(--af-text-primary);
+  border-color: var(--af-accent);
 }
 
 /* --- The attention list (阶段 6) --- */

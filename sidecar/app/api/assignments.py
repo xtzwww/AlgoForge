@@ -167,6 +167,62 @@ def list_assignments(_teacher: User = Depends(require_teacher)) -> list[Assignme
         return [AssignmentOut(**row.to_dict()) for row in rows]
 
 
+class DuplicateAssignmentRequest(BaseModel):
+    """Renaming and re-dating are the two things a teacher always changes.
+
+    Both optional: re-publishing the same homework to a new class is the
+    other half of the use, and it wants the original title and no
+    deadline."""
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    due_at: Optional[str] = None
+
+
+@router.post(
+    "/teacher/assignments/{assignment_id}/duplicate",
+    status_code=201,
+    response_model=AssignmentOut,
+)
+def duplicate_assignment(
+    assignment_id: int,
+    req: DuplicateAssignmentRequest,
+    teacher: User = Depends(require_teacher),
+) -> AssignmentOut:
+    """Copy one assignment into a new one (阶段 5).
+
+    Homework is reused term after term with the same problem set, so the
+    costly part is re-typing the ids — and re-typing is where a wrong
+    problem silently gets included. This copies the set verbatim.
+
+    **The assistance level is copied too**, or rather: it is taken from
+    the source unless the request overrides it. The alternative — falling
+    back to the default — would mean a duplicate of a 一档 assignment
+    quietly allows AI chat, which is the one direction that matters.
+
+    Nothing about submissions is copied. The new row has no history by
+    construction, which is the point: "who has done it" restarts.
+    """
+
+    with get_session() as session:
+        source = session.get(Assignment, assignment_id)
+        if source is None:
+            raise HTTPException(
+                status_code=404, detail=f"no assignment with id {assignment_id}"
+            )
+        row = Assignment(
+            title=req.title if req.title is not None else f"{source.title}（副本）",
+            description=source.description,
+            problem_ids=list(source.problem_ids or []),
+            due_at=_parse_due_at(req.due_at) if req.due_at is not None else None,
+            assistance_level=source.assistance_level,
+            created_by=teacher.id,
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return AssignmentOut(**row.to_dict())
+
+
 @router.get(
     "/teacher/assignments/{assignment_id}/stats", response_model=AssignmentStatsOut
 )
@@ -236,3 +292,144 @@ def open_assignments() -> list[AssignmentOut]:
             .all()
         )
         return [AssignmentOut(**row.to_dict()) for row in rows]
+
+
+class StudentAssignmentRow(BaseModel):
+    """One cell of a student's report: how they did on one assignment."""
+
+    assignment_id: int
+    title: str
+    due_at: Optional[str] = None
+    overdue: bool = False
+    problem_count: int = 0
+    submissions: int = 0
+    accepted: int = 0
+    #: Accepted problems over the assignment's problems. `None` — not 0.0 —
+    #: when nothing has been submitted, because "did none of it" and
+    #: "got none of it right" are different facts about a student.
+    progress: Optional[float] = None
+    last_submitted_at: Optional[str] = None
+
+
+class StudentReportOut(BaseModel):
+    user_id: int
+    display_name: str
+    username: str
+    rows: list[StudentAssignmentRow]
+    #: Assignments with at least one submission over assignments set.
+    completed: int = 0
+    total_assignments: int = 0
+
+
+@router.get("/teacher/students/{user_id}/report", response_model=StudentReportOut)
+def student_report(
+    user_id: int, _teacher: User = Depends(require_teacher)
+) -> StudentReportOut:
+    """One student against every assignment (阶段 5).
+
+    The console's existing timeline answers "what did they get wrong, in
+    order" from the mistake book. This answers a different question the
+    same teacher asks at report time — "how is this student doing across
+    the term" — and it has to be built from assignments, because a
+    student who submitted nothing at all has no mistakes and would
+    therefore be invisible in any mistake-book view.
+
+    That is the whole reason this endpoint exists: the absent student is
+    the one worth noticing, and the timeline can never show them.
+    """
+    from sqlalchemy import case, func, select
+
+    from app.models.submission import Submission
+    from app.models.user import User as UserModel
+
+    with get_session() as session:
+        student = session.get(UserModel, user_id)
+        if student is None:
+            raise HTTPException(status_code=404, detail=f"no user with id {user_id}")
+
+        assignments = (
+            session.execute(select(Assignment).order_by(Assignment.id.desc()))
+            .scalars()
+            .all()
+        )
+
+        # One grouped query rather than one per assignment: a term of
+        # homework is a few dozen rows and this keeps it to two round
+        # trips regardless.
+        # `dict()` cannot take 3-tuples — it is the two-column case only.
+        # Keyed by problem_id, valued by (submissions, accepted).
+        #
+        # The literal is `"AC"`, the stored value — not `"Accepted"`, which
+        # is what the *response* spells it as (see `VerdictBadge`). The two
+        # differ, and a filter on the wrong one matches nothing: the count
+        # comes back 0 rather than erroring, so every student reads as
+        # having passed nothing.
+        stats: dict[int, tuple[int, int]] = {
+            row[0]: (int(row[1] or 0), int(row[2] or 0))
+            for row in session.execute(
+                select(
+                    Submission.problem_id,
+                    func.count(Submission.id),
+                    func.sum(case((Submission.status == "AC", 1), else_=0)),
+                )
+                .where(Submission.user_id == user_id)
+                .group_by(Submission.problem_id)
+            ).all()
+        }
+        last_by_assignment: dict[int, str] = {}
+        for assignment in assignments:
+            ids = list(assignment.problem_ids or [])
+            if not ids:
+                continue
+            latest = session.execute(
+                select(func.max(Submission.created_at)).where(
+                    Submission.user_id == user_id,
+                    Submission.problem_id.in_(ids),
+                )
+            ).scalar()
+            if latest is not None:
+                last_by_assignment[assignment.id] = latest.isoformat()
+
+        rows: list[StudentAssignmentRow] = []
+        for assignment in assignments:
+            ids = list(assignment.problem_ids or [])
+            submissions = 0
+            accepted = 0
+            for problem_id in ids:
+                count, ok = stats.get(problem_id, (0, 0))
+                submissions += int(count or 0)
+                accepted += int(ok or 0)
+            # `to_dict` is where "overdue" is defined (model reads the
+            # clock once, with `now` injectable). Recomputing
+            # `due_at < now` here would be a second definition that can
+            # disagree with the list view.
+            row = assignment.to_dict()
+            rows.append(
+                StudentAssignmentRow(
+                    assignment_id=assignment.id,
+                    title=assignment.title,
+                    due_at=row["due_at"],
+                    overdue=bool(row["overdue"]),
+                    problem_count=len(ids),
+                    submissions=submissions,
+                    accepted=accepted,
+                    # Per *problem*, not per submission: a student who
+                    # submitted the same problem five times has still
+                    # covered one problem.
+                    progress=(
+                        None
+                        if submissions == 0
+                        else (accepted / len(ids) if ids else 0.0)
+                    ),
+                    last_submitted_at=last_by_assignment.get(assignment.id),
+                )
+            )
+
+        return StudentReportOut(
+            user_id=student.id,
+            display_name=student.display_name or student.username,
+            username=student.username,
+            rows=rows,
+            completed=sum(1 for r in rows if r.submissions > 0),
+            total_assignments=len(rows),
+        )
