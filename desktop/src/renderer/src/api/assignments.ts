@@ -13,6 +13,7 @@
  */
 
 import { http } from './http'
+import type { AssistancePolicy } from './assistance'
 
 export interface AssignmentOut {
   id: number
@@ -24,6 +25,14 @@ export interface AssignmentOut {
   overdue: boolean
   created_by: number | null
   created_at: string | null
+  /**
+   * How much AI help this homework allows (阶段 5). The number is the
+   * authority; {@link assistance} is the same rule already expanded, so
+   * a list can render the label without a second request per row.
+   */
+  assistance_level: number
+  /** The policy behind {@link assistance_level}. */
+  assistance: AssistancePolicy
 }
 
 export interface AssignmentProblemStat {
@@ -49,6 +58,13 @@ export interface CreateAssignmentRequest {
   problem_ids: number[]
   /** ISO datetime, or omit for no deadline. */
   due_at?: string
+  /**
+   * 1–5, defaulting server-side to 3 (阶段 5). Omit to accept the
+   * default rather than duplicating the constant here: a client that
+   * hardcodes "3" drifts the day the default changes, and the drift
+   * shows up as homework that quietly allows more help than intended.
+   */
+  assistance_level?: number
 }
 
 /** Publish homework. Teacher only — 403 for anyone else. */

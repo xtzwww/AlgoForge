@@ -30,6 +30,11 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import require_teacher
 from app.api.mistake_book import get_session
+from app.assistance import (
+    DEFAULT_ASSISTANCE_LEVEL,
+    MAX_ASSISTANCE_LEVEL,
+    MIN_ASSISTANCE_LEVEL,
+)
 from app.models.assignment import Assignment
 from app.models.assignment_stats import compute_assignment_stats
 from app.models.problem import Problem
@@ -45,12 +50,25 @@ class CreateAssignmentRequest(BaseModel):
     trusted: a typo would otherwise publish an assignment pointing at a
     problem that does not exist, and it would fail as an empty stats
     screen with nothing anywhere saying why.
+
+    ``assistance_level`` is the teacher's decision about how much AI help
+    the class may use (1–5). Validated here rather than normalized
+    silently: a teacher who sends 7 made a mistake, and quietly turning
+    it into 3 would publish homework with a rule nobody chose. Reads are
+    lenient (see :func:`app.assistance.normalize_level`) because a bad
+    row must not break a page; **writes are strict** because a bad
+    request is a person, and they can be told.
     """
 
     title: str = Field(min_length=1, max_length=128)
     description: str = ""
     problem_ids: list[int] = Field(min_length=1)
     due_at: Optional[str] = None
+    assistance_level: int = Field(
+        default=DEFAULT_ASSISTANCE_LEVEL,
+        ge=MIN_ASSISTANCE_LEVEL,
+        le=MAX_ASSISTANCE_LEVEL,
+    )
 
 
 class AssignmentOut(BaseModel):
@@ -60,6 +78,13 @@ class AssignmentOut(BaseModel):
     problem_ids: list[int]
     due_at: Optional[str] = None
     overdue: bool = False
+    #: 1–5. Kept alongside the expanded policy so a client can show the
+    #: number without the object, and vice versa.
+    assistance_level: int = DEFAULT_ASSISTANCE_LEVEL
+    #: The rules for that level, expanded. Sent rather than left for the
+    #: client to look up so there is exactly one definition of what each
+    #: level allows (app/assistance.py) and both ends read the same one.
+    assistance: dict = Field(default_factory=dict)
     created_by: Optional[int] = None
     created_at: Optional[str] = None
 
@@ -119,6 +144,7 @@ def create_assignment(
             description=req.description,
             problem_ids=list(req.problem_ids),
             due_at=_parse_due_at(req.due_at),
+            assistance_level=req.assistance_level,
             created_by=teacher.id,
         )
         session.add(row)

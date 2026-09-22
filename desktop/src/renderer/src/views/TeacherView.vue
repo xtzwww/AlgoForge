@@ -59,6 +59,12 @@ import {
   type AssignmentStats
 } from '../api/assignments'
 import {
+  getAssistanceUsage,
+  listLevels,
+  type AssistancePolicy,
+  type AssistanceUsage
+} from '../api/assistance'
+import {
   createStudent,
   getAlerts,
   getErrorDistribution,
@@ -159,7 +165,7 @@ async function load(): Promise<void> {
     students.value = stud
     flagged.value = flag
     alerts.value = warn
-    await loadAssignments()
+    await Promise.all([loadAssignments(), loadAssistanceUsage(), loadAssistanceLevels()])
     // A student who has left the roster (deleted, re-roled) must not
     // leave their timeline open behind them.
     if (selected.value && !stud.some((s) => s.user_id === selected.value?.user_id)) {
@@ -211,6 +217,50 @@ const newAssignmentProblems = ref('')
 const newAssignmentDue = ref('')
 const assignmentBusy = ref(false)
 
+/**
+ * Assistant-strength level for the homework being written (阶段 5).
+ *
+ * Owned here as a plain `number | null` instead of defaulting to a
+ * literal 3. `null` is sent as "let the server decide", which keeps the
+ * one and only copy of the default server-side — a picker that starts
+ * pre-filled with a client-side 3 looks identical today and silently
+ * disagrees the day the default moves.
+ *
+ * The value is re-set to `null` after a successful publish so the next
+ * homework starts from the server's default rather than inheriting the
+ * last one. A teacher who has to remember to reset it will eventually
+ * publish a 五档 assignment by accident.
+ */
+const newAssignmentLevel = ref<number | null>(null)
+
+/** The five levels, for the picker. Fetched once — the table is static. */
+const assistanceLevels = ref<AssistancePolicy[]>([])
+
+async function loadAssistanceLevels(): Promise<void> {
+  try {
+    assistanceLevels.value = await listLevels()
+  } catch {
+    // Degrade to "no picker" rather than an error banner: without the
+    // list the server still applies its default, so homework can be
+    // published — just not tuned.
+    assistanceLevels.value = []
+  }
+}
+
+/**
+ * What the chosen level permits, in one line.
+ *
+ * Rendered under the select so the teacher reads the consequence at the
+ * moment of choosing. The level *number* alone is not a decision anyone
+ * can make: "3" means nothing until it says "可以对话，但只给提示".
+ */
+const selectedLevelPolicy = computed<AssistancePolicy | null>(
+  () =>
+    assistanceLevels.value.find((p) => p.level === newAssignmentLevel.value) ??
+    assistanceLevels.value[Math.floor(assistanceLevels.value.length / 2)] ??
+    null
+)
+
 async function loadAssignments(): Promise<void> {
   try {
     assignments.value = await listAssignments()
@@ -218,6 +268,51 @@ async function loadAssignments(): Promise<void> {
     errorMsg.value = messageOf(err, '无法加载作业列表')
   }
 }
+
+// --- AI usage trail (阶段 5) -------------------------------------------
+
+/**
+ * How much AI help the class has taken, across every homework.
+ *
+ * Read as a class-wide total rather than per assignment, because the
+ * question this panel answers is "is the strength I set being used at
+ * all" — and the answer is only comparable once it covers the same
+ * population. Per-assignment detail is available from the route but
+ * would need a selector the teacher has to operate before seeing
+ * anything, which is exactly how a panel ends up unread.
+ */
+const assistanceUsage = ref<AssistanceUsage | null>(null)
+const assistanceUsageLoading = ref(false)
+const assistanceUsageError = ref('')
+
+async function loadAssistanceUsage(): Promise<void> {
+  assistanceUsageLoading.value = true
+  assistanceUsageError.value = ''
+  try {
+    assistanceUsage.value = await getAssistanceUsage()
+  } catch (err) {
+    // Kept separate from `errorMsg` on purpose: this is one panel of the
+    // console failing, and a page-level banner would imply the whole
+    // dashboard is stale when the rest of it loaded fine.
+    assistanceUsageError.value = messageOf(err, '无法加载 AI 使用记录')
+    assistanceUsage.value = null
+  } finally {
+    assistanceUsageLoading.value = false
+  }
+}
+
+/**
+ * The per-action rows, as `[label, count]`, biggest first.
+ *
+ * Sorted here rather than server-side because the server returns a dict
+ * and Python dict order is the insertion order of the constants, not an
+ * ordering anyone chose. Reading it as a ranking without sorting would
+ * be reading a coincidence.
+ */
+const assistanceActionRows = computed<[string, number][]>(() => {
+  const labeled = assistanceUsage.value?.by_action_labeled ?? {}
+  return Object.entries(labeled).sort((a, b) => b[1] - a[1])
+})
 
 async function toggleAssignment(assignment: AssignmentOut): Promise<void> {
   if (openAssignmentId.value === assignment.id) {
@@ -257,13 +352,17 @@ async function submitAssignment(): Promise<void> {
       // ``datetime-local`` gives "YYYY-MM-DDTHH:mm" with no zone, which
       // is exactly what ``datetime.fromisoformat`` accepts. Empty means
       // "no deadline", and sending '' would be parsed as an invalid date.
-      due_at: newAssignmentDue.value ? newAssignmentDue.value : undefined
+      due_at: newAssignmentDue.value ? newAssignmentDue.value : undefined,
+      // Omitted (not sent as null) when untouched, so the server's
+      // default is what applies — see `newAssignmentLevel`.
+      assistance_level: newAssignmentLevel.value ?? undefined
     })
     addingAssignment.value = false
     newAssignmentTitle.value = ''
     newAssignmentProblems.value = ''
     newAssignmentDue.value = ''
-    await loadAssignments()
+    newAssignmentLevel.value = null
+    await Promise.all([loadAssignments(), loadAssistanceUsage()])
   } catch (err) {
     errorMsg.value = messageOf(err, '无法发布作业')
   } finally {
@@ -836,6 +935,13 @@ onMounted(() => {
                     {{ a.title }}
                   </button>
                   <span class="assignment-meta">{{ a.problem_ids.length }} 题</span>
+                  <!--
+                    The level in force, read off the row rather than
+                    guessed from the form: what a student actually gets.
+                  -->
+                  <span class="assignment-meta assignment-level" :title="a.assistance?.description">
+                    AI {{ a.assistance_level }} 档
+                  </span>
                   <span v-if="a.due_at" class="assignment-meta" :class="{ overdue: a.overdue }">
                     {{ a.overdue ? '已过期 · ' : '' }}{{ dateText(a.due_at) }}
                   </span>
@@ -909,6 +1015,32 @@ onMounted(() => {
                 <span class="field-label">截止时间（可留空）</span>
                 <input v-model="newAssignmentDue" class="input" type="datetime-local" />
               </label>
+
+              <!--
+                Assistant strength (阶段 5). Only rendered when the level
+                table loaded: a select with no options would silently
+                publish homework at whatever the browser falls back to.
+              -->
+              <label v-if="assistanceLevels.length" class="field">
+                <span class="field-label">AI 辅助强度</span>
+                <select v-model="newAssignmentLevel" class="input">
+                  <!--
+                    The empty option is "server default", not "no AI".
+                    Without it the select starts on its first option and
+                    the teacher's untouched publish would look like a
+                    deliberate choice at the strictest level.
+                  -->
+                  <option :value="null">
+                    使用默认（{{ selectedLevelPolicy?.level ?? '—' }} 档）
+                  </option>
+                  <option v-for="p in assistanceLevels" :key="p.level" :value="p.level">
+                    {{ p.level }} 档 · {{ p.label }}
+                  </option>
+                </select>
+              </label>
+              <p v-if="selectedLevelPolicy" class="field-note">
+                {{ selectedLevelPolicy.description }}
+              </p>
               <div class="roster-actions">
                 <button class="primary" type="submit" :disabled="assignmentBusy">
                   {{ assignmentBusy ? '发布中…' : '发布' }}
@@ -918,6 +1050,59 @@ onMounted(() => {
                 </button>
               </div>
             </form>
+          </section>
+
+          <!-- --- AI usage trail (阶段 5) --- -->
+          <section class="section">
+            <h2 class="section-title">AI 使用记录</h2>
+            <p class="section-note">
+              记录了每次<strong>动作</strong>，不记录对话内容——学生问了什么不是老师要看的东西，
+              「用得多不多、用的是哪一档」才是。被拒绝的请求也记：
+              反复去点被禁用的功能，正是需要留意的情况。
+            </p>
+
+            <p v-if="assistanceUsageLoading" class="placeholder-inline">读取中…</p>
+            <p v-else-if="assistanceUsageError" class="error-inline">
+              {{ assistanceUsageError }}
+            </p>
+            <!--
+              An explicit zero, not an empty panel. "Nobody used it" and
+              "the read failed" look identical when both render nothing,
+              and they call for opposite decisions.
+            -->
+            <p
+              v-else-if="!assistanceUsage || assistanceUsage.total === 0"
+              class="placeholder-inline"
+            >
+              还没有任何 AI 使用记录。
+            </p>
+
+            <template v-else>
+              <p class="usage-total">共 {{ assistanceUsage.total }} 次</p>
+              <ul class="usage-list">
+                <li v-for="[label, count] in assistanceActionRows" :key="label" class="usage-item">
+                  <span class="usage-label">{{ label }}</span>
+                  <span class="usage-count">{{ count }}</span>
+                </li>
+              </ul>
+
+              <div v-if="assistanceUsage.by_student.length" class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>学生</th>
+                      <th class="num">次数</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, i) in assistanceUsage.by_student" :key="i">
+                      <td>{{ row.display_name }}</td>
+                      <td class="num">{{ row.count }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
           </section>
 
           <!-- --- Roster --- -->
@@ -1467,6 +1652,64 @@ onMounted(() => {
   margin: 0;
   font-size: 13px;
   color: var(--af-text-muted);
+}
+
+/* --- AI assistance (阶段 5) --- */
+
+/*
+  `.field-note` sits under a control and explains it. Kept distinct from
+  `.section-note` because the two are read at different distances: this
+  one belongs to the select directly above it, and reusing the section
+  style would visually detach it from the thing it describes.
+*/
+.field-note {
+  margin: -4px 0 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--af-text-muted);
+}
+
+.error-inline {
+  margin: 0;
+  font-size: 13px;
+  color: var(--af-text-primary);
+}
+
+.usage-total {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: var(--af-text-secondary);
+}
+
+.usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.usage-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 320px;
+  font-size: 13px;
+}
+
+.usage-label {
+  color: var(--af-text-secondary);
+}
+
+.usage-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--af-text-primary);
+}
+
+.assignment-level {
+  font-variant-numeric: tabular-nums;
 }
 
 /* --- The attention list (阶段 6) --- */

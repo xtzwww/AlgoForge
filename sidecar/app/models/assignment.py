@@ -40,6 +40,7 @@ from typing import Optional
 from sqlalchemy import JSON, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.assistance import DEFAULT_ASSISTANCE_LEVEL, policy_for, policy_to_dict
 from app.models.base import Base
 
 
@@ -59,6 +60,21 @@ class Assignment(Base):
             bug waiting to be compared against.
         created_by: The teacher who published it.
         created_at: When it was published.
+        assistance_level: How much AI help a student may use while
+            working on it (1–5). See :mod:`app.assistance` for the five
+            levels and what each one permits.
+
+            Stored on the assignment rather than on the problem, and
+            that placement is the point: the *same* problem is a
+            practice exercise on Monday and an assessment on Friday.
+            Putting the level on the problem would force the teacher to
+            duplicate it to change that; putting it here makes "this
+            problem, no AI today" a property of the task they set.
+
+            Defaults to 3 (hints-only) for rows created before the
+            column existed, which is the middle of the scale — a
+            historical assignment should not silently become either
+            "no help at all" or "AI writes it for you".
     """
 
     __tablename__ = "assignments"
@@ -72,6 +88,11 @@ class Assignment(Base):
     #: assignments exist.
     problem_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
     due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    #: 1–5; see :mod:`app.assistance`. Server default 3 so the migration
+    #: can add the column to existing rows without a data backfill.
+    assistance_level: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=DEFAULT_ASSISTANCE_LEVEL, server_default="3"
+    )
     created_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
@@ -94,6 +115,8 @@ class Assignment(Base):
             "problem_ids": list(self.problem_ids or []),
             "due_at": self.due_at.isoformat() if self.due_at else None,
             "overdue": self.due_at is not None and self.due_at < now,
+            "assistance_level": self.assistance_level,
+            "assistance": policy_to_dict(policy_for(self.assistance_level)),
             "created_by": self.created_by,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

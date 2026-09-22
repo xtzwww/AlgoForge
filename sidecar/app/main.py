@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.agent.tracing import configure_tracing
 from app.api.assignments import router as assignments_router
+from app.api.assistance import router as assistance_router
 from app.api.auth import router as auth_router
 from app.api.env_check import router as env_check_router
 from app.api.health import router as health_router
@@ -100,6 +101,7 @@ app.include_router(profile_router)
 app.include_router(review_router)
 app.include_router(teacher_router)
 app.include_router(assignments_router)
+app.include_router(assistance_router)
 
 # S9: LangSmith tracing, configured once at startup from settings.
 #

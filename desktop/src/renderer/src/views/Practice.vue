@@ -58,10 +58,12 @@
  * for the topbar's breadcrumb instead, via `usePageCrumb`.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import AssistPanel from '../components/AssistPanel.vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import OutputPanel from '../components/OutputPanel.vue'
 import ProblemStatement from '../components/ProblemStatement.vue'
 import VerdictBadge from '../components/VerdictBadge.vue'
+import { listLevels, type AssistancePolicy } from '../api/assistance'
 import { runCases, submitCases, submitProblem, type JudgeEvent } from '../api/ws'
 import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
 import { getProblem, getProblemTestCases, type ProblemDetail } from '../api/problems'
@@ -78,8 +80,18 @@ const props = withDefaults(
      * `ref<number | null>` directly without an extra wrapper.
      */
     problemId?: number | null
+    /**
+     * Homework this attempt belongs to, when there is one (阶段 5).
+     *
+     * It is the **only** channel through which the assistance level is
+     * chosen: the level lives on the assignment row and the server looks
+     * it up, so this page cannot ask for more help than the teacher set.
+     * Free-run has no assignment and therefore falls on the default
+     * level — which is why the prop is nullable rather than required.
+     */
+    assignmentId?: number | null
   }>(),
-  { problemId: null }
+  { problemId: null, assignmentId: null }
 )
 
 const emit = defineEmits<{ (e: 'exit'): void }>()
@@ -274,6 +286,74 @@ const unavailableLanguages = computed<LanguageOption[]>(() =>
   languages.value.filter((o) => !o.available)
 )
 
+// --- AI assistance (阶段 5) ---
+/**
+ * The five levels, as published by the sidecar.
+ *
+ * Fetched once and kept: the rules are static (they are a table in
+ * `app/assistance.py`), so re-fetching per problem would be a request
+ * that can only ever return the same bytes. The *level in force* is a
+ * different thing and is not read here — it is decided per assignment on
+ * the server, and this page only learns it from each reply's `level`.
+ */
+const assistanceLevels = ref<AssistancePolicy[]>([])
+
+/**
+ * The policy to render.
+ *
+ * Deliberately the **default** level rather than "the level for this
+ * assignment": this page cannot know the assignment's level without
+ * asking the server, and asking by guessing a number is exactly what the
+ * design forbids. So the panel renders the default's shape, and every
+ * action it sends carries `assignment_id` — which is what actually
+ * decides. A narrower assignment turns out to need fewer buttons; the
+ * server refuses the extras with an explanation, and the panel shows it.
+ *
+ * The honest version of this is: the client may over-offer, never
+ * under-enforce.
+ */
+const assistancePolicy = computed<AssistancePolicy | null>(() => {
+  const levels = assistanceLevels.value
+  if (levels.length === 0) return null
+  // The middle of the published range, not a hardcoded 3: the constant
+  // lives in one place server-side and a second copy here would drift.
+  const mid = levels[Math.floor(levels.length / 2)]
+  return mid ?? null
+})
+
+async function loadAssistanceLevels(): Promise<void> {
+  try {
+    assistanceLevels.value = await listLevels()
+  } catch {
+    // Not surfaced as an error: a missing panel is a degraded nicety,
+    // and complaining about it would put a red banner over a page whose
+    // actual job — writing and judging code — is working fine.
+    assistanceLevels.value = []
+  }
+}
+
+/** True while code should not be edited under the user's cursor. */
+const judgeBusy = computed<boolean>(() => isRunning.value)
+
+/**
+ * Put AI-authored code into the buffer (阶段 5).
+ *
+ * **Appended, never replacing.** Four-档 asks the model for "the part the
+ * student described", so dropping it at the end of the buffer is the
+ * reading that matches the request. Overwriting would destroy the work
+ * that is actually being assessed and would do it without a confirmation
+ * — the one way an AI feature can lose a student's code for them.
+ *
+ * The blank line is what keeps the paste from welding itself to the
+ * previous statement; without it a fragment starting with `}` produces
+ * syntactically broken code that looks like the student's own mistake.
+ */
+function insertAssistanceCode(snippet: string): void {
+  const body = snippet.replace(/\s+$/, '')
+  if (body === '') return
+  code.value = `${code.value.replace(/\s+$/, '')}\n\n${body}\n`
+}
+
 // --- Judge state ---
 /**
  * Which action is in flight, or `null` when idle.
@@ -295,8 +375,10 @@ const errorMsg = ref<string>('')
 
 onMounted(async () => {
   // Language catalogue and problem load are independent; run them
-  // together so a slow env-check does not delay the statement.
-  await Promise.all([loadLanguages(), loadProblem()])
+  // together so a slow env-check does not delay the statement. The
+  // assistance rules are on the same footing — a failure there must not
+  // be able to delay the code page.
+  await Promise.all([loadLanguages(), loadProblem(), loadAssistanceLevels()])
   window.addEventListener('keydown', onKeydown)
 })
 
@@ -826,6 +908,25 @@ function submit(): Promise<void> {
           :is-scratch="lastRunKind === 'run'"
         />
       </section>
+
+      <!--
+        AI assistance (阶段 5). Sits beside the editor, not inside it: the
+        panel is a sibling column so it can be collapsed for width and so
+        the editor component stays unaware of it. It never touches `code`
+        itself — code can only enter the buffer through `insert`, which
+        this page handles by appending (see `insertAssistanceCode`).
+      -->
+      <AssistPanel
+        :policy="assistancePolicy"
+        :assignment-id="assignmentId"
+        :problem-id="problemId"
+        :language="languageId"
+        :prefix="code"
+        :current-code="code"
+        :statement="problemDescription"
+        :busy="judgeBusy"
+        @insert="insertAssistanceCode"
+      />
     </div>
   </div>
 </template>
