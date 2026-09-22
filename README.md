@@ -152,6 +152,10 @@
 | 学生个人错因时间线 | 这个学生到底卡在哪？                  | 按 user 聚合        |
 | 提交审阅      | 代码 + 错因诊断 + 过程特征标记          | 三块汇合点            |
 | 学情预警      | 哪些学生需要我关注？                  | 阈值查询，自动标红        |
+| 出题与作业管理   | 我要留什么题、什么时候交？              | 题目增删改查 + 复制、作业发布/复制/截止 |
+| 花名册维护     | 把学生加进来                        | 单个添加 + 名单批量导入（CSV 粘贴） |
+| 学生成绩单     | 这个学生每份作业做了多少？             | 逐作业进度，**含没交的也列出来** |
+| AI 辅助强度    | 这份作业允许 AI 帮到什么程度？           | 五档，发布作业时设定；用量留痕可查 |
 
 > **教师端走 Web 控制台，学生端保留 Electron 桌面应用**，两者共用同一后端。
 >   
@@ -160,6 +164,28 @@
 > 教师端以读数据为主，做成 Web 页面成本最低、演示效果最好。
 >   
 > `desktop/package.json` 已有 `dev:web` + `vite.config.web.ts`，这条路是现成的。
+
+#### AI 辅助强度：五档，由发布作业的老师决定
+
+学生做题时，编辑器旁边可以有一个 AI 助手。**帮到什么程度由老师定**，
+学生不能自己调档——档位存在作业上，前端传的是 `assignment_id`，
+档位在服务端查。越档的请求在**调用模型之前**就被拒绝。
+
+| 档 | 学生看到的名字 | 能力                          |
+| -- | ------- | --------------------------- |
+| 一  | 本机补全    | 查本机词表补全，**不联网、不调用任何模型**      |
+| 二  | AI 补全   | 联网模型补全                      |
+| 三  | 答疑      | 编辑器旁的对话框，可提问，**只给提示、不能写进代码** |
+| 四  | 代写片段    | AI 可以写一段代码，学生决定要不要采纳         |
+| 五  | 完整解法    | 连整题解法都能给                     |
+
+**能力的递增是设计出来的**：档位数字越大，能力集合越大，绝不出现
+「三档能做的事四档反而不能」。三档额外有一道内容门——如果模型的回复
+看起来像代码（代码块或函数定义），会被降级成散文提示再交给学生。
+
+**留痕**：每次请求补全 / 提问 / 采纳 AI 写的代码 / 请求完整解法都记一行
+（`assistance_usage` 表），老师能看到哪个学生、哪份作业用了多少次。
+**只记动作和次数，不记对话内容**——这是辅助教学判断，不是抓人。
 
 ### 2.3 AI 使用检测 · 反馈的信号维度
 
@@ -1144,7 +1170,9 @@ SQLite 不会替你发现方言问题**（它默认不强制外键，函数名�
 | **复核结论尚未回流**              | 教师的确认/驳回目前只改变队列与计数，**没有**反过来调整 `process_trace` 的阈值或影响学生端提示。要做自动校准，得先积累足够复核样本——这是「阈值有证据可依」的前提，不是漏实现的功能                                                                                                                                                                                                                                                                 |
 | **过程特征无验证集**              | 「粘贴后零改写」的阈值（`≥120` 字符、`≥80%` 占比、`≤15%` 改写）是设计取值，未用人工标注样本校准；因此只作**提示**交给教师复核，不作判定                                                                                                                                                                                                                                                                                      |
 | **无检测验证集**                | AI 使用检测缺少人工标注样本，因此不以准确率为目标                                                                                                                                                                                                                                                                                                                                            |
-| **视图层（`views/`）只覆盖了 3/7**       | Vitest 共 **148 个用例 / 19 个文件**：api 层纯逻辑 26 个、组件行为 91 个、视图行为 31 个。**`components/` 下 11 个组件已全部覆盖**（2026-09-21 补齐 `CodeEditor` / `RadarChart` / `AppSidebar` / `AppTopbar` / `EmptyState` / `PageHeader` 六个，+42 个用例）。⚠️ **7 个视图（共 5577 行）里已覆盖 3 个**——`MistakesView` 995（T31）、`ProfileView` 475（T37）与 `PlanView` 633（T38）；**仍未覆盖的是另外 4 个，共 3474 行**（`TeacherView` 1573 / `Practice` 1162 / `ProblemListView` 698 / `ProblemPracticeView` 41）——它们既持有状态又直接发请求，测它们等于先把整页的数据流搭起来。现有做法是**把纯展示部分抽成子组件再测**（`AttentionAlerts` / `ProblemStatement` / `EmptyState` / `PageHeader` 都是这么来的），剩下的编排逻辑仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」 |
+| **没有「题目管理」页面**            | 后端有完整的题目写接口（`POST /api/v1/problems`、`POST /api/v1/problems/{id}/duplicate` 连隐藏用例一起复制），但**前端没有页面调用它们**——`api/problems.ts` 只导出、无视图消费。题目目前靠 `python tools/load_problems.py` 从题库文件导入。所以在界面上**改不了题、复制不了题**。要接得先有一个题目管理页（列表 + 复制 + 编辑 + 隐藏用例编辑），那是一个新视图而不是一次接线；后端能力已备好。 |
+| **题目写接口没有教师守卫**            | `app/api/problems.py` 的 `create_problem` 与 `duplicate_problem` 签名里**没有任何 `Depends`**，而 `app/api/teacher.py` 的每一条路由都带 `Depends(require_teacher)`（定义在 `app/api/auth.py:116`）。也就是说**任何能连上 sidecar 的人都能建题、复制题**。单机单人部署下这不构成风险（本机只有自己），但**公开部署前必须先补守卫**——写接口和读接口的暴露面不是一回事。这两个路由的守卫我**没有补**：`app/api/problems.py` 的 session 来源是 `app.db.get_session` 而不是 `teacher.py` 那条链，加守卫要连着确认依赖注入，属于独立的一票。 |
+| **视图层（`views/`）只覆盖了 3/7**       | Vitest 共 **183 个用例 / 22 个文件**。**`components/` 下 13 个组件已全部覆盖**（2026-09-21 起补齐 `CodeEditor` / `RadarChart` / `AppSidebar` / `AppTopbar` / `EmptyState` / `PageHeader` / `HintLadder` / `VariantProblem` / `AssistPanel`）。⚠️ **7 个视图里已覆盖 3 个**——`MistakesView` 995（T31）、`ProfileView` 475（T37）与 `PlanView` 633（T38）；**仍未覆盖的是另外 4 个，共 3474 行**（`TeacherView` 1573 / `Practice` 1162 / `ProblemListView` 698 / `ProblemPracticeView` 41）——它们既持有状态又直接发请求，测它们等于先把整页的数据流搭起来。现有做法是**把纯展示部分抽成子组件再测**（`AttentionAlerts` / `ProblemStatement` / `EmptyState` / `PageHeader` / `AssistPanel` 都是这么来的），剩下的编排逻辑仍只有人眼走查过——类型检查和单测都兜不住「点了有没有反应」。**注意 `AssistPanel` 的测试只覆盖「面板按档位显示哪些入口」**，它被谁放在哪个位置、插入的代码有没有真的落到编辑器里，都没有断言 |
 | **`CodeEditor` 测的是「怎么用 Monaco」，不是 Monaco** | 真 Monaco 在 jsdom 里跑不起来（要 canvas / worker），所以 `../monaco` 换成假实现，断言的是**组件怎么调用它**：挂载时开新会话、普通输入按尺寸记账、撤销不记事件、`isFlush` 走 `reset`、粘贴改写上一条、卸载 `dispose`。**未验**：真 Monaco 下这些回调的触发时机与 `isFlush` / `isUndoing` 的真实取值（`CodeEditor` 的注释记录了它们的语义，但没有对着真编辑器跑过） |
 | **安装包尚未产出**               | sidecar 已打成 PyInstaller onedir（**258 MB**，`dist/algoforge-sidecar/`），并在打包版上验通 `/health` 与 **C++ / Python / Java 三种语言的判题**；**但 electron-builder 的安装包还没出**——本机沙箱禁止从 Bash 调用 PowerShell，而它在 Windows 上硬编码靠 `powershell.exe` 收集依赖树（报 `No JSON content found in output`）。属环境限制而非配置缺陷，换一台机器执行 `cd desktop && npm run build:win` 即可产出                                         |
 | **onedir 产物的限制**          | ① `dist/algoforge-sidecar/` 是**一个整体目录**，不能只拷那个 exe——`_internal/` 里是全部运行时依赖；② 首次启动需初始化，比后续启动慢；③ 未做代码签名，Windows SmartScreen / 杀毒软件可能拦截（**未实测**，以目标机实际表现为准）                                                                                                                                                                                                              |
