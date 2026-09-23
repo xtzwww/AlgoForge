@@ -7,7 +7,8 @@ import {
   stopSidecar,
   getSidecarInfo,
   installExitHook,
-  onSidecarInfoChanged
+  onSidecarInfoChanged,
+  seedUserEnvFile
 } from './sidecar'
 import { ensurePostgres, stopPostgres } from './pg'
 import { reclaimDevPort } from './devserver'
@@ -16,6 +17,87 @@ import { createSplashWindow, setSplashStatus, setSplashDetail, closeSplash } fro
 // PU-1: catch abnormal exits (crash, uncaught exception) that would
 // otherwise skip the orderly teardown and leave uvicorn running.
 installExitHook()
+
+/**
+ * Software rendering: needed on machines whose GPU process cannot start.
+ *
+ * Measured on the target machine (2026-09-22): the packaged app died at
+ * launch with
+ *
+ *     FATAL:gpu_data_manager_impl_private.cc:415]
+ *     GPU process isn't usable. Goodbye.
+ *
+ * after the GPU process had crashed nine times in a row. The window
+ * never appeared, so from the user's side the app simply "did not open"
+ * — the failure was entirely invisible, which is why it is worth
+ * handling rather than documenting.
+ *
+ * That machine is a laptop with an Optimus switch (Intel UHD + GTX 1650
+ * Ti) on a 2022-era NVIDIA driver (516.40). Electron's GPU sandbox is
+ * known to fail in exactly that configuration.
+ *
+ * Two things this must NOT be:
+ *
+ * 1. **A silent no-op on the machine that needs it.** So the default is
+ *    ON: the app ships configured to survive a broken GPU process, and
+ *    the switch exists to turn software rendering *off* for a machine
+ *    that wants hardware acceleration back.
+ * 2. **Too late.** ``disableHardwareAcceleration()`` has no effect once
+ *    the app is ready, and the GPU process starts before any window is
+ *    created. Hence this runs at module scope, next to the exit hook,
+ *    and not inside ``whenReady`` below.
+ *
+ * The inverse switch is deliberate rather than symmetric-looking
+ * pedantry: an earlier draft made hardware acceleration the default and
+ * required ``ALGOFORGE_SOFTWARE_RENDER=1`` to escape the crash. That
+ * would have shipped a build that still could not open on the very
+ * machine it was diagnosed on, unless the user learned an env var first.
+ */
+function wantsHardwareAcceleration(): boolean {
+  const raw = process.env.ALGOFORGE_HARDWARE_ACCELERATION
+  if (raw === undefined) return false
+  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase())
+}
+
+const HARDWARE_ACCELERATION = wantsHardwareAcceleration()
+
+if (!HARDWARE_ACCELERATION) {
+  app.disableHardwareAcceleration()
+  // The four switches below were measured individually on the machine
+  // described above (2026-09-22) because the original set did not
+  // actually work. Result, running the packaged app and grepping for
+  // "GPU process isn't usable":
+  //
+  //   --disable-gpu-sandbox          still crashed (1x, then survived)
+  //   --use-angle=swiftshader        crashed
+  //   --use-gl=swiftshader           crashed
+  //   --disable-features=Vulkan      crashed
+  //   --no-sandbox                   still crashed (1x, then survived)
+  //   --in-process-gpu               0 crashes
+  //
+  // So `disable-gpu` + `disable-gpu-compositing` + `disable-software-
+  // rasterizer` alone were NOT enough — the GPU process was still
+  // spawned and still died, and after nine deaths Electron aborts the
+  // whole app with "GPU process isn't usable. Goodbye." That is the
+  // exact shape of the user-visible "it does not open": no window, no
+  // error dialog, nothing.
+  //
+  // ``--in-process-gpu`` is the one that works, and for a structural
+  // reason rather than a lucky one: it stops a separate GPU process
+  // from being created at all, so the crash it would have hit has
+  // nowhere to happen. The remaining context-creation warnings
+  // (``ContextResult::kFatalFailure: Failed to create shared context``)
+  // are non-fatal and the window comes up.
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-gpu-compositing')
+  app.commandLine.appendSwitch('disable-software-rasterizer')
+  app.commandLine.appendSwitch('in-process-gpu')
+  // Printed rather than silent. The whole reason this code exists is
+  // that the original failure left no trace a user could report; a
+  // startup line saying which renderer path was taken is what turns the
+  // next occurrence into a one-look diagnosis.
+  console.log('[render] software rendering (set ALGOFORGE_HARDWARE_ACCELERATION=1 to opt out)')
+}
 
 /**
  * PU-1: guards the two-pass quit sequence below. `before-quit` fires,
@@ -147,7 +229,7 @@ app.whenReady().then(async () => {
   // Set app user model id for windows (PU-2: was the electron-vite
   // template default 'com.electron', which made the taskbar group the
   // app under a generic identity).
-  electronApp.setAppUserModelId('com.algoforge.desktop')
+  electronApp.setAppUserModelId('com.codelab.desktop')
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
@@ -221,6 +303,10 @@ app.whenReady().then(async () => {
   const dbReady = await ensurePostgres((message) => setSplashStatus(message))
 
   setSplashStatus('启动分析引擎…')
+
+  // Seed the engine's config into userData before it boots, so the first
+  // run has something to read and later runs can be edited in place.
+  seedUserEnvFile()
 
   let sidecarFailed = false
   let sidecarFailureReason = ''

@@ -28,16 +28,30 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { join } from 'path'
 
 // `vi.mock` factories are hoisted above these imports, so anything they
 // close over has to be created in `vi.hoisted` rather than as a normal
 // top-level binding.
 const stubs = vi.hoisted(() => ({
-  spawn: vi.fn()
+  spawn: vi.fn(),
+  electronApp: {
+    isPackaged: false,
+    getAppPath: () => '/tmp/app',
+    getPath: () => '/tmp/userData'
+  },
+  existsSync: vi.fn<(p: string) => boolean>(() => false),
+  copyFileSync: vi.fn()
 }))
 
 vi.mock('electron', () => ({
-  app: { isPackaged: false, getAppPath: () => '/tmp/app' }
+  app: stubs.electronApp
+}))
+
+vi.mock('fs', () => ({
+  existsSync: stubs.existsSync,
+  copyFileSync: stubs.copyFileSync,
+  unlinkSync: vi.fn()
 }))
 
 vi.mock('child_process', () => ({
@@ -45,11 +59,24 @@ vi.mock('child_process', () => ({
   spawnSync: vi.fn(() => ({ status: 0, stdout: '' }))
 }))
 
-import { getSidecarLogTail, recordSidecarLog, resetSidecarLogTail, summarizeLines } from './sidecar'
+import {
+  getSidecarLogTail,
+  recordSidecarLog,
+  resetSidecarLogTail,
+  summarizeLines,
+  resolveEnvFile,
+  seedUserEnvFile
+} from './sidecar'
 
 beforeEach(() => {
   resetSidecarLogTail()
   stubs.spawn.mockReset()
+  stubs.electronApp.isPackaged = false
+  stubs.existsSync.mockReset()
+  stubs.existsSync.mockReturnValue(false)
+  stubs.copyFileSync.mockReset()
+  // Windows-only in real use, but read by `resolveEnvFile` in packaged mode.
+  ;(process as unknown as { resourcesPath: string }).resourcesPath = '/tmp/resources'
 })
 
 describe('挑出真正的原因行', () => {
@@ -122,5 +149,65 @@ describe('日志尾巴的采集', () => {
     // And a failure from the new attempt cannot quote the old one.
     recordSidecarLog('new_attempt_error\n')
     expect(summarizeLines(getSidecarLogTail())).toBe('new_attempt_error')
+  })
+})
+
+/**
+ * The `.env` lookup, pinned because getting it wrong is invisible.
+ *
+ * electron-builder excludes dotfiles, so a packaged build has no `.env`
+ * next to the sidecar and `app.config`'s source-tree default resolves to
+ * nothing. Nothing raises: the engine boots on field defaults and the
+ * configured LLM provider, embedding endpoint and compiler path are all
+ * simply absent. So the main process has to name the file, and these
+ * tests pin which one it names.
+ */
+describe('引擎配置文件的定位', () => {
+  it('开发模式下指向仓库里的 sidecar/.env', () => {
+    stubs.electronApp.isPackaged = false
+    const wanted = join('/tmp/app', '..', 'sidecar', '.env')
+    stubs.existsSync.mockImplementation((p) => p === wanted)
+    expect(resolveEnvFile()).toBe(wanted)
+  })
+
+  it('打包模式下 userData 里的副本优先，装到只读目录也能改配置', () => {
+    stubs.electronApp.isPackaged = true
+    const userCopy = join('/tmp/userData', '.env')
+    const shipped = join('/tmp/resources', 'sidecar', '.env')
+    // Both exist; the user's copy has to win or their edits are ignored.
+    stubs.existsSync.mockImplementation((p) => p === userCopy || p === shipped)
+    expect(resolveEnvFile()).toBe(userCopy)
+  })
+
+  it('打包模式下没有 userData 副本时回退到随包发布的那个', () => {
+    stubs.electronApp.isPackaged = true
+    const shipped = join('/tmp/resources', 'sidecar', '.env')
+    stubs.existsSync.mockImplementation((p) => p === shipped)
+    expect(resolveEnvFile()).toBe(shipped)
+  })
+
+  it('一个都找不到时返回 undefined，而不是一个不存在的路径', () => {
+    // A nonexistent path would be handed to the child as a real setting
+    // and would fail deeper in, blaming the wrong thing.
+    expect(resolveEnvFile()).toBeUndefined()
+  })
+
+  it('首次运行把随包配置复制到 userData', () => {
+    const userCopy = join('/tmp/userData', '.env')
+    const shipped = join('/tmp/resources', 'sidecar', '.env')
+    // Only the shipped one exists — i.e. first run.
+    stubs.existsSync.mockImplementation((p) => p === shipped)
+
+    seedUserEnvFile()
+    expect(stubs.copyFileSync).toHaveBeenCalledWith(shipped, userCopy)
+  })
+
+  it('userData 里已有配置时不覆盖，用户改过的 key 不会被冲掉', () => {
+    const userCopy = join('/tmp/userData', '.env')
+    const shipped = join('/tmp/resources', 'sidecar', '.env')
+    stubs.existsSync.mockImplementation((p) => p === userCopy || p === shipped)
+
+    seedUserEnvFile()
+    expect(stubs.copyFileSync).not.toHaveBeenCalled()
   })
 })

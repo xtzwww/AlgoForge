@@ -19,13 +19,25 @@
  * So the app looks healthy and every page is broken. This module removes
  * that state by starting the database before the sidecar is spawned.
  *
- * Dev only, and deliberately so
- * -----------------------------
- * Guarded by `app.isPackaged`: a packaged build talks to a real,
- * separately-managed PostgreSQL and must not go looking for a zip install
- * on the user's disk. The path is overridable with `PG_HOME` and the
- * helper gives up quietly when the install is not there — this is a
- * convenience for a developer's machine, not a deployment mechanism.
+ * Dev only? No — shipped, if a database ships with it
+ * --------------------------------------------------
+ * It used to be guarded by `app.isPackaged`: a packaged build talks to a
+ * real, separately-managed PostgreSQL and must not go looking for a zip
+ * install on the user's disk. On this machine that assumption was wrong,
+ * and the failure it produced was the worst kind:
+ *
+ *  - the packaged build skipped the start entirely and reported success;
+ *  - nothing started PostgreSQL, but `/health` does not touch the
+ *    database, so the engine still looked ready;
+ *  - every page that queries the database answered **500**, and the user
+ *    had no way to connect that to the database never having started.
+ *
+ * The distinction is not "packaged vs dev", it is "is there a database on
+ * this machine for us to start". So a packaged build now starts the local
+ * install **when one is present** (`PG_HOME`, default `D:/pg`) and stays
+ * out of the way when there isn't — which is what "managed outside the
+ * app" actually means. Overridable with `PG_HOME`; gives up quietly when
+ * the install is not there.
  *
  * Two traps, both of which make this fail silently
  * ------------------------------------------------
@@ -125,9 +137,26 @@ function postgresIsRunning(): boolean {
  * database is reachable afterwards — never rejects, because a missing
  * local install is a warning, not a reason to abort the launch.
  */
+/**
+ * Whether a PostgreSQL install we are allowed to start is present.
+ *
+ * Decides the `isPackaged` question (see the header): a packaged build
+ * skips the database **only when there is nothing local to start**. The
+ * two files checked are exactly the ones the start path needs, so a
+ * `true` here cannot be followed by a failure further down.
+ */
+export function hasLocalPostgres(): boolean {
+  const home = process.env.PG_HOME ?? 'D:/pg'
+  return (
+    existsSync(join(home, 'pgsql', 'bin', 'postgres.exe')) &&
+    existsSync(join(home, 'data', 'PG_VERSION'))
+  )
+}
+
 export async function ensurePostgres(onProgress?: (message: string) => void): Promise<boolean> {
-  // Production: the database is managed outside the app. See the header.
-  if (app.isPackaged) return true
+  // A packaged build leaves an externally-managed database alone — but
+  // only when there is no local install to start. See the header.
+  if (app.isPackaged && !hasLocalPostgres()) return true
 
   if (await isListening()) {
     console.log('[pg] already listening on 5432')

@@ -17,6 +17,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'child_process'
 import * as net from 'net'
 import * as crypto from 'crypto'
+import { existsSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { app } from 'electron'
 
@@ -255,7 +256,7 @@ function waitForHealth(url: string, timeoutMs = 15000): Promise<void> {
  *
  * The packaged path is a **directory**, not a single file: the sidecar is
  * frozen with PyInstaller `onedir` (AGENTS.md §一 工具链锁定), so
- * `resources/sidecar/` holds `algoforge-sidecar/` with the exe and its
+ * `resources/sidecar/` holds `codelab-sidecar/` with the exe and its
  * `_internal` dependencies inside.
  */
 function resolveSidecarLaunch(): { program: string; args: string[]; cwd: string } {
@@ -272,11 +273,60 @@ function resolveSidecarLaunch(): { program: string; args: string[]; cwd: string 
   }
 
   // Production (阶段 7 · 打包): PyInstaller onedir 产物整目录随包发布。
-  const exeName = process.platform === 'win32' ? 'algoforge-sidecar.exe' : 'algoforge-sidecar'
+  const exeName = process.platform === 'win32' ? 'codelab-sidecar.exe' : 'codelab-sidecar'
   return {
-    program: join(process.resourcesPath, 'sidecar', 'algoforge-sidecar', exeName),
+    program: join(process.resourcesPath, 'sidecar', 'codelab-sidecar', exeName),
     args: [],
     cwd: join(process.resourcesPath, 'sidecar')
+  }
+}
+
+/**
+ * Where the sidecar should read its `.env` from, if anywhere.
+ *
+ * This exists because the sidecar cannot work it out for itself in a
+ * packaged build. `app.config` anchors its default next to the source
+ * tree (`sidecar/.env`), which is a path that **does not exist once
+ * packaged** — electron-builder excludes dotfiles outright
+ * (`files: ['!{.env,.env.*,...}']`). Nothing errors; the frozen sidecar
+ * just falls back to every field default, so the configured LLM provider,
+ * the embedding endpoint and the C++ compiler path are silently gone and
+ * each feature fails with a message that blames the wrong thing.
+ *
+ * So the main process names the file explicitly. A copy under `userData`
+ * wins: the install directory may be read-only, and a copy outside it
+ * survives a reinstall. The one shipped next to the sidecar is the
+ * default it is seeded from.
+ */
+export function resolveEnvFile(): string | undefined {
+  const candidates = app.isPackaged
+    ? [join(app.getPath('userData'), '.env'), join(process.resourcesPath, 'sidecar', '.env')]
+    : [join(app.getAppPath(), '..', 'sidecar', '.env')]
+
+  return candidates.find((p) => existsSync(p))
+}
+
+/**
+ * Seed `userData/.env` from the copy shipped with the app.
+ *
+ * Only on first run, and never overwriting: once a file is there it
+ * belongs to the machine, and clobbering it would undo a user's own
+ * edit (an API key they replaced) on the next launch — which is exactly
+ * the kind of change nobody thinks to blame the updater for.
+ */
+export function seedUserEnvFile(): void {
+  const target = join(app.getPath('userData'), '.env')
+  if (existsSync(target)) return
+
+  const shipped = join(process.resourcesPath, 'sidecar', '.env')
+  if (!existsSync(shipped)) return
+
+  try {
+    copyFileSync(shipped, target)
+    console.log(`[sidecar] seeded config at ${target}`)
+  } catch (err) {
+    // Non-fatal: the shipped copy is still read directly.
+    console.warn(`[sidecar] could not seed ${target}: ${(err as Error).message}`)
   }
 }
 
@@ -352,9 +402,16 @@ async function spawnSidecar(): Promise<SidecarInfo> {
   const token = crypto.randomBytes(32).toString('hex')
   const { program, args, cwd } = resolveSidecarLaunch()
 
+  const envFile = resolveEnvFile()
   console.log(`[sidecar] starting on port ${port}`)
   console.log(`[sidecar] program: ${program}`)
   console.log(`[sidecar] cwd: ${cwd}`)
+  if (envFile) {
+    console.log(`[sidecar] env file: ${envFile}`)
+  } else {
+    // Worth saying out loud: the engine will still boot, but on defaults.
+    console.warn('[sidecar] no .env found — the engine will run on built-in defaults')
+  }
 
   const isWindows = process.platform === 'win32'
 
@@ -362,6 +419,10 @@ async function spawnSidecar(): Promise<SidecarInfo> {
     cwd,
     env: {
       ...process.env,
+      // Only set when found: an `undefined` value here would be handed to
+      // the child as the literal string "undefined", which `app.config`
+      // would then treat as a real (nonexistent) path.
+      ...(envFile ? { ALGOFORGE_ENV_FILE: envFile } : {}),
       SIDECAR_PORT: String(port),
       SIDECAR_TOKEN: token
     },

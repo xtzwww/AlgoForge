@@ -27,6 +27,7 @@ modules), which keeps them fast, hermetic, and free of a live Postgres.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Optional
 
 from sqlalchemy import Engine, create_engine
@@ -41,8 +42,12 @@ logger = logging.getLogger(__name__)
 # that importing this module never touches a database (tests can patch
 # get_session() before anything is constructed) and so a misconfigured
 # DSN only fails when a request actually needs the DB.
+#
+# They are published **together, under a lock, and only on success** —
+# see `_ensure_engine` for why.
 _engine: Optional[Engine] = None
 _SessionFactory: Optional[sessionmaker[Session]] = None
+_engine_lock = threading.Lock()
 
 # Driver prefixes that indicate an async SQLAlchemy driver. The routes in
 # this project are synchronous, so these are mapped to their blocking
@@ -70,15 +75,32 @@ def _resolve_sync_url(url: str) -> str:
     return url
 
 
+#: How long to wait for a TCP connection to PostgreSQL before giving up.
+#:
+#: Measured, not guessed: with the database down, one request was observed
+#: to hang for **over 90 seconds** before failing. A page that hangs for
+#: ninety seconds and then fails is worse than one that fails in five —
+#: it looks like the application is broken rather than that the database
+#: is not running. Five seconds is far above any sane local connect time
+#: and still short enough to read as "the database is not there".
+_CONNECT_TIMEOUT_SECONDS = 5
+
+
 def _connect_args(url: str) -> dict:
     """Driver-specific connect args.
 
     SQLite needs ``check_same_thread=False`` because the session may be
     used from a different thread than the one that created the
     connection (the judge runs in a worker thread).
+
+    PostgreSQL gets a connect timeout so that a database which is not
+    running is reported as such instead of stalling the request — see
+    ``_CONNECT_TIMEOUT_SECONDS``.
     """
     if url.startswith("sqlite"):
         return {"check_same_thread": False}
+    if url.startswith("postgresql"):
+        return {"connect_timeout": _CONNECT_TIMEOUT_SECONDS}
     return {}
 
 
@@ -113,13 +135,42 @@ def _ensure_engine() -> None:
     out of step. Alembic remains the source of truth for schema changes
     (AGENTS.md §二); this is a development convenience, not a migration
     strategy.
+
+    Two invariants, both learned from a real outage
+    ----------------------------------------------
+    1. **`_engine` is published only once `_SessionFactory` exists.** The
+       old code assigned `_engine` first and built the factory last. If
+       anything in between was slow or raised — and `create_all` against
+       a database that is not accepting connections takes **over a
+       minute** to give up — every later request found `_engine` set,
+       skipped initialisation, and died on the `assert` in
+       `get_session()`. One slow first request therefore turned the
+       whole process permanently into `500 Internal Server Error` with a
+       bare `AssertionError` that named neither the database nor the
+       cause. This is the single worst failure shape in the codebase:
+       unrecoverable, and unexplainable from the outside.
+    2. **Initialisation is retried, not cached as a failure.** Building
+       into locals and assigning at the end means a failed attempt
+       leaves the module exactly as it was, so the next request tries
+       again and reports the *real* error instead of a stale one.
     """
     global _engine, _SessionFactory
-    if _engine is not None:
+    # Fast path, taken by every request after the first: no lock needed
+    # once both are published.
+    if _engine is not None and _SessionFactory is not None:
         return
-    _engine = build_engine()
-    Base.metadata.create_all(_engine)
-    _SessionFactory = sessionmaker(_engine, expire_on_commit=False)
+
+    with _engine_lock:
+        # Re-checked inside the lock: another thread may have finished
+        # the work while this one waited for it.
+        if _engine is not None and _SessionFactory is not None:
+            return
+        engine = build_engine()
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(engine, expire_on_commit=False)
+        # Published together, and only after both succeeded.
+        _engine = engine
+        _SessionFactory = factory
 
 
 def get_session() -> Session:
