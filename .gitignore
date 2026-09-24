@@ -114,6 +114,12 @@ dist-desktop/
 # 见 night-queue.md 的 T3）。都不是源码，不进版本库。
 dist-desktop2/
 dist-fresh/
+# dist-app / dist-app2 / ... / dist-app-final 是打包调优期间反复试出来的几轮产物
+# （改 `--exclude-module`、调 PyInstaller 参数时各出一份，用来对比体积与自检结果）。
+# 每一份都能用 `npm run build:sidecar` 或等价命令重建，且合计约 3.7 GB，
+# 进版本库没有意义——它们此前一直以「未跟踪文件」的身份污染 `git status`。
+dist-app/
+dist-app*/
 sidecar/packaging/*.spec
 
 # 内嵌向量库（milvus-lite）的运行产物。它是 sidecar/data/milvus.db，由

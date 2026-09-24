@@ -1,0 +1,89 @@
+id: p021-pass-rate-count
+title: 及格人数统计
+knowledge_tags:
+  - 数组
+  - 循环
+  - 条件分支
+  - 计数
+difficulty: easy
+source: 经典入门题
+description: |
+  某次考试共 $n$ 名学生，成绩以整数给出。及格线为 $60$ 分，
+  **成绩大于等于 60 分**者为及格。
+
+  请统计及格的人数。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $s_1, s_2, \dots, s_n$，表示每名学生的成绩。
+
+  **输出格式**
+
+  一行，一个整数，表示及格人数。
+
+  **数据范围**
+
+  $1 \le n \le 1000$，$0 \le s_i \le 100$
+input_format: 第一行 n，第二行 n 个整数表示成绩。
+output_format: 一行一个整数，及格人数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\n50 60 70\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "4\n40 80 59 61\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "1\n60\n"
+    expected_output: "1\n"
+  - input: "1\n59\n"
+    expected_output: "0\n"
+  - input: "5\n100 100 100 0 0\n"
+    expected_output: "3\n"
+  - input: "4\n60 60 60 60\n"
+    expected_output: "4\n"
+  - input: "6\n0 30 59 61 90 100\n"
+    expected_output: "3\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      int pass = 0;
+      for (int i = 0; i < n; ++i) {
+          int s;
+          cin >> s;
+          if (s >= 60) pass++;
+      }
+      cout << pass << endl;
+      return 0;
+  }
+eval_notes: |
+  最典型的错误是把比较方向写反——把 `s >= 60` 写成 `s <= 60`。
+  这样一来统计的其实是"不及格人数"。
+
+  **这个错误之所以能躲过样例，是因为两个样例的取舍成绩
+  在 60 分两侧成对分布**：
+  样例 1 是 `50 60 70`（$\ge 60$ 有 2 个：60、70；$\le 60$ 也有 2 个：50、60），
+  样例 2 是 `40 80 59 61`（$\ge 60$ 有 2 个：80、61；$\le 60$ 也有 2 个：40、59）
+  ——两种写法给出**完全相同的数字 2**，所以错误程序在样例上
+  看起来完全正确，学生自己测样例也发现不了。
+  必须靠隐藏用例 `100 100 100 0 0`（及格 3 人、不及格 2 人）才暴露。
+  错因标签：inverted_condition。
+
+  第二类错误是把边界写成严格不等——`s > 60`，
+  这会把正好 60 分的学生判为不及格。
+  这个错误在样例 1（含一个 60）上就会暴露：得到 1 而不是 2。
+  错因标签：boundary_condition。
+
+  第三类是漏掉"及格人数为 0"的情形，
+  例如把计数器初始化为 1 或对空序列没有处理。
+  隐藏用例 `59`（及格 0 人）专门覆盖这种情况。错因标签：initialization。
+
+  第四类是把成绩读成字符或用了 `getline`，导致每行只读到一个数字。
+  错因标签：io_format_error。

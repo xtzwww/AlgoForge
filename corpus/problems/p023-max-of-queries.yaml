@@ -1,0 +1,88 @@
+id: p023-max-of-queries
+title: 多次询问的最大值
+knowledge_tags:
+  - 数组
+  - 循环
+  - 条件分支
+difficulty: medium
+source: 经典练习题
+description: |
+  有 $q$ 组询问，每组询问给出一个整数序列，要求输出该序列中的**最大值**。
+
+  所有元素均为正整数。
+
+  **输入格式**
+
+  第一行一个整数 $q$，表示询问组数。
+
+  接下来是 $q$ 组数据。每组数据占两行：
+  第一行一个整数 $m$，表示该序列的长度；
+  第二行 $m$ 个整数，以空格分隔。
+
+  **输出格式**
+
+  共 $q$ 行，每行一个整数，依次为每组询问的最大值。
+
+  **数据范围**
+
+  $1 \le q \le 100$，$1 \le m \le 1000$，$1 \le a_i \le 10^6$
+input_format: 第一行 q；随后每组：一行 m，一行 m 个整数。
+output_format: 共 q 行，每行一个整数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "2\n3\n1 5 3\n2\n4 9\n"
+    expected_output: "5\n9\n"
+    is_sample: true
+  - input: "1\n1\n7\n"
+    expected_output: "7\n"
+    is_sample: true
+  - input: "3\n2\n1 2\n2\n3 4\n2\n5 6\n"
+    expected_output: "2\n4\n6\n"
+  - input: "3\n2\n5 1\n2\n4 1\n2\n6 1\n"
+    expected_output: "5\n4\n6\n"
+  - input: "2\n1\n100\n1\n1\n"
+    expected_output: "100\n1\n"
+  - input: "4\n1\n3\n1\n2\n1\n1\n1\n9\n"
+    expected_output: "3\n2\n1\n9\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      int q;
+      cin >> q;
+      while (q--) {
+          int m;
+          cin >> m;
+          // Reset per query: the maximum must be re-scanned from scratch.
+          long long best = -1;
+          for (int i = 0; i < m; ++i) {
+              long long x;
+              cin >> x;
+              best = max(best, x);
+          }
+          cout << best << endl;
+      }
+      return 0;
+  }
+eval_notes: |
+  最典型也最隐蔽的错误是**最大值变量没有在每组询问之间重置**——
+  把 `best` 声明在 while 循环外面，于是第二组的答案会被第一组的
+  较大值污染。
+
+  这个错误的暴露条件是「**先大后小**」：输入 `2 3 / 1 5 3 / 2 / 4 9`
+  得到 `5 / 9` 是正确的（9 > 5，大的覆盖了小的），
+  而输入 `5 1 / 4 1 / 6 1` 才暴露（第二组应输出 4，却被 5 污染成 5）。
+  所以样例里**必须包含「后一组最大值更小」的情形**，
+  否则这个 bug 在样例上完全不显现。错因标签：uninitialized_state。
+
+  第二类错误是把 `best` 初始化为 0。本题元素均为正整数，
+  0 不构成问题；但若初始化为负数或被改成允许负数的题，
+  就会出错。更稳妥的写法是把 `best` 初始化成第一个元素。
+  错因标签：initialization / boundary_condition。
+
+  第三类错误是漏读某一组的长度 m，导致后续全部错位。
+  错因标签：io_format_error。
