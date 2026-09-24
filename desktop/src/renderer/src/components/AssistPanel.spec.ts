@@ -30,7 +30,9 @@ const api = vi.hoisted(() => ({
   chat: vi.fn(),
   insert: vi.fn(),
   solution: vi.fn(),
-  getAssistanceUsage: vi.fn()
+  getAssistanceUsage: vi.fn(),
+  listModels: vi.fn(),
+  setModel: vi.fn()
 }))
 
 vi.mock('../api/assistance', async (importOriginal) => ({
@@ -38,16 +40,28 @@ vi.mock('../api/assistance', async (importOriginal) => ({
   complete: api.complete,
   chat: api.chat,
   insert: api.insert,
-  solution: api.solution
+  solution: api.solution,
+  listModels: api.listModels,
+  setModel: api.setModel
 }))
 
 import AssistPanel from './AssistPanel.vue'
 
 const mounted: VueWrapper[] = []
 
+/**
+ * 默认让模型列表请求失败：绝大多数用例不关心它。
+ *
+ * 不设默认的话，未 mock 的 `listModels()` 会走进真实的 axios，在 jsdom 里
+ * 报 Network Error —— 每个用例都多一行无关的失败日志，真出问题时反而被
+ * 淹没。关心模型选单的用例自己覆盖。
+ */
+api.listModels.mockRejectedValue(new Error('not under test'))
+
 afterEach(() => {
   while (mounted.length > 0) mounted.pop()?.unmount()
   vi.clearAllMocks()
+  api.listModels.mockRejectedValue(new Error('not under test'))
 })
 
 /** 一档：只有本机补全。 */
@@ -313,8 +327,9 @@ describe('AssistPanel 的越档处理', () => {
     await flushPromises()
 
     expect(w.text()).toContain('这次作业只用本机补全。')
-    // 被拒用的是和成功回复一样的版式 —— 没有 .assist-note-error。
-    expect(w.find('.assist-reply-reason').exists()).toBe(true)
+    // PU-13：对话的回答进时间线，被拒也一样 —— 它是一句话，不是错误。
+    // 仍然没有 .assist-note-error（那是真故障的版式）。
+    expect(w.find('.assist-turn.is-refused').exists()).toBe(true)
     expect(w.find('.assist-note-error').exists()).toBe(false)
   })
 
@@ -397,5 +412,195 @@ describe('AssistPanel 的收起', () => {
     await w.find('.assist-toggle').trigger('click')
     expect(buttons(w)).not.toContain('完整解法')
     expect(buttons(w)).not.toContain('AI 补全')
+  })
+})
+
+// --- 对话时间线（PU-13）-----------------------------------------------
+
+/**
+ * 这一组钉住的是"多轮"这个新能力。它坏起来的样子：面板看着有输入框、
+ * 也能提问，但每问一次就把上一次的回答擦掉 —— 学生以为自己在连续提问，
+ * 实际上前面全没了，于是反复问同一个问题。
+ */
+describe('AssistPanel 的对话时间线', () => {
+  it('多轮问答按顺序累积，不互相覆盖', async () => {
+    api.chat
+      .mockResolvedValueOnce(reply({ content: '第一次回答' }))
+      .mockResolvedValueOnce(reply({ content: '第二次回答' }))
+    const w = mountPanel({ policy: L3 })
+
+    await w.find('#assist-question').setValue('第一问')
+    await w.find('.assist-chat button').trigger('click')
+    await flushPromises()
+
+    await w.find('#assist-question').setValue('第二问')
+    await w.find('.assist-chat button').trigger('click')
+    await flushPromises()
+
+    // 四段全在：两问两答。第一条回答**不能**被第二条顶掉。
+    const text = w.text()
+    expect(text).toContain('第一问')
+    expect(text).toContain('第一次回答')
+    expect(text).toContain('第二问')
+    expect(text).toContain('第二次回答')
+    expect(w.findAll('.assist-turn')).toHaveLength(4)
+  })
+
+  it('学生与 AI 的消息分属不同的 class，供对齐区分', async () => {
+    api.chat.mockResolvedValue(reply({ content: '回答' }))
+    const w = mountPanel({ policy: L3 })
+
+    await w.find('#assist-question').setValue('问题')
+    await w.find('.assist-chat button').trigger('click')
+    await flushPromises()
+
+    expect(w.findAll('.assist-turn.is-student')).toHaveLength(1)
+    expect(w.findAll('.assist-turn.is-assistant')).toHaveLength(1)
+  })
+
+  it('提问后输入框立刻清空，问题已经进了时间线', async () => {
+    api.chat.mockResolvedValue(reply({ content: '回答' }))
+    const w = mountPanel({ policy: L3 })
+
+    await w.find('#assist-question').setValue('问题')
+    await w.find('.assist-chat button').trigger('click')
+    await flushPromises()
+
+    expect((w.find('#assist-question').element as HTMLTextAreaElement).value).toBe('')
+    expect(w.text()).toContain('问题')
+  })
+
+  it('一档没有对话入口时时间线不渲染', () => {
+    const w = mountPanel({ policy: L1 })
+    expect(w.find('.assist-timeline').exists()).toBe(false)
+  })
+
+  it('降级的回复带一条说明 —— 学生要知道自己看的是被削过的内容', async () => {
+    api.chat.mockResolvedValue(reply({ content: '只讲讲思路', downgraded: true }))
+    const w = mountPanel({ policy: L3 })
+
+    await w.find('#assist-question').setValue('给我代码')
+    await w.find('.assist-chat button').trigger('click')
+    await flushPromises()
+
+    expect(w.find('.assist-turn-flag').exists()).toBe(true)
+    expect(w.text()).toContain('已自动降级')
+  })
+
+  it('对话的回答不进一次性回复区（那个区只放能插进编辑器的产物）', async () => {
+    api.chat.mockResolvedValue(reply({ content: '一段回答' }))
+    const w = mountPanel({ policy: L3 })
+
+    await w.find('#assist-question').setValue('问')
+    await w.find('.assist-chat button').trigger('click')
+    await flushPromises()
+
+    // `.assist-reply` 是补全/写一段/整解的容器，对话不该出现在里面。
+    expect(w.find('.assist-reply').exists()).toBe(false)
+  })
+})
+
+// --- 模型选择（PU-13）-------------------------------------------------
+
+/**
+ * 模型选单坏起来的样子：下拉渲染了、点得动，但选了之后提问仍走旧模型
+ * —— 或者更糟，切换请求发出去、界面显示新模型、实际没生效。两种都
+ * 只有对比服务端日志才能发现，所以这里把"点选项 → 调 setModel"钉死。
+ */
+describe('AssistPanel 的模型选择', () => {
+  const SNAP = {
+    active: 'deepseek',
+    default: 'deepseek',
+    models: [
+      {
+        id: 'deepseek',
+        label: 'DeepSeek',
+        model: 'deepseek-coder',
+        base_url: 'https://api.deepseek.com',
+        local: false
+      },
+      {
+        id: 'ollama',
+        label: '本机 Ollama',
+        model: 'qwen2.5-coder:7b',
+        base_url: 'http://localhost:11434/v1',
+        local: true
+      }
+    ]
+  }
+
+  it('只有一个模型时不渲染选择器 —— 单选的下拉是噪声', async () => {
+    api.listModels.mockResolvedValue({
+      ...SNAP,
+      models: [SNAP.models[0]]
+    })
+    const w = mountPanel({ policy: L3 })
+    await flushPromises()
+
+    expect(w.find('.assist-model').exists()).toBe(false)
+  })
+
+  it('多个模型时渲染选择器，并显示当前选中的名字', async () => {
+    api.listModels.mockResolvedValue(SNAP)
+    const w = mountPanel({ policy: L3 })
+    await flushPromises()
+
+    expect(w.find('.assist-model').exists()).toBe(true)
+    expect(w.find('.assist-model-name').text()).toBe('DeepSeek')
+  })
+
+  it('打开菜单能看到全部模型，本机的带「本机」标记', async () => {
+    api.listModels.mockResolvedValue(SNAP)
+    const w = mountPanel({ policy: L3 })
+    await flushPromises()
+
+    await w.find('.assist-model-trigger').trigger('click')
+
+    const items = w.findAll('.assist-model-item')
+    expect(items).toHaveLength(2)
+    expect(w.text()).toContain('本机 Ollama')
+    expect(w.text()).toContain('本机')
+  })
+
+  it('选一个模型会调 setModel，并把界面切过去', async () => {
+    api.listModels.mockResolvedValue(SNAP)
+    api.setModel.mockResolvedValue({ ...SNAP, active: 'ollama' })
+    const w = mountPanel({ policy: L3 })
+    await flushPromises()
+
+    await w.find('.assist-model-trigger').trigger('click')
+    // 第二项是 ollama。
+    await w.findAll('.assist-model-item')[1].trigger('click')
+    await flushPromises()
+
+    expect(api.setModel).toHaveBeenCalledWith('ollama')
+    expect(w.find('.assist-model-name').text()).toBe('本机 Ollama')
+  })
+
+  it('切换失败时提示一句，但选择器仍显示原来的模型', async () => {
+    api.listModels.mockResolvedValue(SNAP)
+    api.setModel.mockRejectedValue(new Error('该模型未配置'))
+    const w = mountPanel({ policy: L3 })
+    await flushPromises()
+
+    await w.find('.assist-model-trigger').trigger('click')
+    await w.findAll('.assist-model-item')[1].trigger('click')
+    await flushPromises()
+
+    expect(w.find('.assist-note-error').text()).toContain('该模型未配置')
+    // 没切成，就不能显示成切成了。
+    expect(w.find('.assist-model-name').text()).toBe('DeepSeek')
+  })
+
+  it('模型列表拉不到时静默降级 —— 提问照常可用', async () => {
+    api.listModels.mockRejectedValue(new Error('Network Error'))
+    const w = mountPanel({ policy: L3 })
+    await flushPromises()
+
+    // 不渲染选择器，也不报错 —— 这是附属功能，它的失败不该看起来像
+    // 整个 AI 不可用。
+    expect(w.find('.assist-model').exists()).toBe(false)
+    expect(w.find('.assist-note-error').exists()).toBe(false)
+    expect(w.find('#assist-question').exists()).toBe(true)
   })
 })

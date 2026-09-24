@@ -32,15 +32,22 @@ defineProps<{
 </script>
 
 <template>
-  <pre v-if="description" class="prose">{{ description }}</pre>
+  <!--
+    正文用 <div class="prose">（无衬线）而不是 <pre>。
+    <pre> 会被 tokens.css 的全局规则归入等宽字体栈，中文在等宽字体下
+    笔画粗细不均、字距松散，"读起来累"就是这么来的。题面正文是
+    给人读的中文散文，不是代码 —— 需要保序的换行由 white-space:
+    pre-wrap 单独给，不必为了换行把字体也换成等宽。
+  -->
+  <div v-if="description" class="prose">{{ description }}</div>
 
   <template v-if="inputFormat">
     <h2>输入格式</h2>
-    <pre class="prose">{{ inputFormat }}</pre>
+    <div class="prose">{{ inputFormat }}</div>
   </template>
   <template v-if="outputFormat">
     <h2>输出格式</h2>
-    <pre class="prose">{{ outputFormat }}</pre>
+    <div class="prose">{{ outputFormat }}</div>
   </template>
 
   <div v-if="knowledgeTags.length" class="tag-row">
@@ -78,25 +85,41 @@ defineProps<{
 */
 .prose {
   margin: 0;
-  padding: 10px;
-  font-size: 13px;
-  line-height: 1.6;
+  padding: 12px 14px;
+  /*
+   14px / 1.8：正文是中文散文，行距要比界面文本宽 —— 1.5 是给标签
+   和按钮的密度，一整段题面按那个行距读十几行会累。
+   font-family 显式写一遍无衬线栈：这一块曾经是 <pre>，被全局等宽
+   规则接管；改回无衬线是这次排版修复的核心，不能只靠继承 body。
+  */
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.8;
+  letter-spacing: 0.01em;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--af-text-primary);
   background: var(--af-elevated);
+  border: 1px solid var(--af-border);
   border-radius: var(--af-radius-sm);
+}
+
+/* 空段落不占位：题面里常有多余空行，渲染成一整块空白很难看。 */
+.prose:empty {
+  display: none;
 }
 
 .tag-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .tag {
-  padding: 1px 8px;
+  padding: 2px 9px;
   font-size: 11px;
   color: var(--af-accent);
   background: var(--af-accent-subtle);
@@ -104,46 +127,55 @@ defineProps<{
 }
 
 .sample {
-  padding: 10px;
-  margin-bottom: 8px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
   background: var(--af-elevated);
   border: 1px solid var(--af-border);
+  border-left: 3px solid var(--af-accent);
   border-radius: var(--af-radius-sm);
 }
 
 .sample-label {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--af-text-secondary);
 }
 
 .sample-row {
   display: flex;
-  gap: 8px;
-  margin: 3px 0;
-  font-size: 12px;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 5px 0;
+  font-size: 12.5px;
 }
 
 .sample-key {
   flex-shrink: 0;
   width: 32px;
+  padding-top: 1px;
   color: var(--af-text-muted);
 }
 
+/* 样例的输入输出保留等宽：那确实是数据，对齐比笔画匀称更重要。 */
 .sample-row code {
-  padding: 1px 5px;
+  flex: 1;
+  min-width: 0;
+  padding: 3px 7px;
+  font-size: 12.5px;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--af-text-primary);
   background: var(--af-canvas);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
 .hint {
-  margin: 12px 0 0 0;
+  margin: 14px 0 0 0;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.7;
   color: var(--af-text-muted);
 }
 

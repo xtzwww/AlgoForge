@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.auth import current_user, require_teacher
@@ -99,6 +99,42 @@ def list_levels() -> dict:
     规则来实现。
     """
     return {"levels": [policy_to_dict(p) for p in all_policies()]}
+
+
+class SetModelRequest(BaseModel):
+    """切换当前模型。``model_id`` 省略即回到 .env 的默认值。"""
+
+    model_id: Optional[str] = None
+
+
+@router.get("/assistance/models")
+def list_models() -> dict:
+    """可用模型，以及当前选中的那个。
+
+    开放给任何人，与 ``/levels`` 同理：列出的是**这台机器上装了什么**，
+    不涉及任何人的数据。切换在当前进程内生效，重启回到 .env —— 见
+    ``app/model_catalog`` 的模块说明。
+    """
+    from app import model_catalog
+
+    return model_catalog.snapshot()
+
+
+@router.put("/assistance/models")
+def set_model(req: SetModelRequest) -> dict:
+    """切换模型。传 ``model_id: null`` 恢复 .env 里的默认值。
+
+    不设权限：这是本机偏好，不是教学设置。老师压"辅助强度"是为了教学
+    效果，压"用哪个模型"没有对应的教学理由，反而会挡住学生把问题换到
+    一个连得上的模型上再问一次。
+    """
+    from app import model_catalog
+
+    try:
+        model_catalog.set_provider(req.model_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return model_catalog.snapshot()
 
 
 def _level_for(assignment_id: Optional[int]) -> int:

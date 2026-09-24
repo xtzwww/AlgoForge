@@ -141,6 +141,33 @@ _PROVIDER_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _effective_provider(provider: Optional[str]) -> Optional[str]:
+    """Resolve the runtime model override, without importing at module load.
+
+    ``provider=None`` used to mean "whatever ``settings.llm_provider`` says".
+    PU-13 gives the student a model picker, whose selection lives in
+    ``app.model_catalog``. This is where that selection is honoured, so the
+    four assistance entry points did not each need to learn about it.
+
+    The import is deferred and guarded: ``model_catalog`` imports this
+    module (for ``_resolve_provider``), so a top-level import here would be
+    circular. The ``except`` keeps the gateway usable from a context where
+    the catalog is absent — the gateway is the lower layer and must not
+    become unusable because a UI convenience module failed to import.
+
+    An explicit ``provider`` argument always wins: tests and the existing
+    fallback logic pass one to pin a specific endpoint, and a runtime
+    override must not silently redirect those.
+    """
+    if provider is not None:
+        return provider
+    try:
+        from app.model_catalog import active_provider
+    except Exception:  # pragma: no cover - defensive
+        return None
+    return active_provider()
+
+
 def _resolve_provider(provider: Optional[str] = None) -> ProviderSpec:
     """Build the :class:`ProviderSpec` for ``provider`` or the configured one.
 
@@ -453,7 +480,7 @@ def complete(
         # Cheaper to catch here than to let the provider 400 on it.
         raise LLMConfigError("complete called with no messages")
 
-    spec = _resolve_provider(provider)
+    spec = _resolve_provider(_effective_provider(provider))
     payload = _build_payload(spec, messages, temperature, max_tokens, extra)
     # Added after _build_payload rather than inside it so that a call
     # without tools produces exactly the same request body as before.

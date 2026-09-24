@@ -98,6 +98,53 @@ export async function listLevels(): Promise<AssistancePolicy[]> {
   return res.data.levels
 }
 
+// --- 模型目录与切换（PU-13）------------------------------------------
+
+/** 一个可选的模型。服务端 `model_catalog.ModelOption` 的镜像。 */
+export interface ModelOption {
+  /** 请求里用的标识，与 provider 名同值。 */
+  id: string
+  /** 选单上显示的名字。 */
+  label: string
+  /** 实际发出去的模型名，作为副标题显示。 */
+  model: string
+  /** 端点，作 tooltip —— 学生能分辨"本机"还是"要联网"。 */
+  base_url: string
+  /** true = 不需要密钥（Ollama）。 */
+  local: boolean
+}
+
+export interface ModelSnapshot {
+  /** 当前生效的模型。 */
+  active: string
+  /** `.env` 里配的默认值，界面用它标注"默认"。 */
+  default: string
+  models: ModelOption[]
+}
+
+/**
+ * 列出这台机器上**真的能回答请求**的模型。
+ *
+ * 配置不全的 provider（例如没填 key 的 deepseek）不会出现在列表里 ——
+ * 列出它等于让学生点一下、提问、才收到 401。见 `app/model_catalog`。
+ */
+export async function listModels(): Promise<ModelSnapshot> {
+  const res = await http.get<ModelSnapshot>('/api/v1/assistance/models')
+  return res.data
+}
+
+/**
+ * 切换当前模型。传 `null` 恢复 `.env` 的默认值。
+ *
+ * 切换在服务端进程内生效，重启回到默认 —— 这是有意的：想固定就用 .env。
+ */
+export async function setModel(modelId: string | null): Promise<ModelSnapshot> {
+  const res = await http.put<ModelSnapshot>('/api/v1/assistance/models', {
+    model_id: modelId
+  })
+  return res.data
+}
+
 /** 需要一点代码。一档走本机词表，二档起走模型。 */
 export async function complete(req: CompleteRequest): Promise<AssistResponse> {
   const res = await http.post<AssistResponse>('/api/v1/assistance/complete', req)
