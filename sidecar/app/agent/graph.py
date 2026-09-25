@@ -42,14 +42,17 @@ than a correction. ``self_check``'s note is folded into
 ``extra_context``, so the next attempt sees what was wrong with the last
 one — the same reasoning ``analyzer`` applies to its parse-failure retry.
 
-Not yet wired into the judging path
------------------------------------
-This module is additive: ``records.analyse_submission`` still calls
-``analyze_error`` directly. S4's completion definition is that the graph
-*exists and runs end to end* (``AGENTS.md`` §三), so wiring it into
-``records.py`` is a separate, deliberate step — that file is on the
-student-facing latency path, and swapping the orchestrator underneath it
-should not ride along with the graph's introduction.
+Wired into the judging path behind a flag
+------------------------------------------
+This module is no longer dead code. ``pipeline.py`` dispatches to
+:func:`run_analysis_graph` via ``_via_graph`` when ``ANALYSIS_PIPELINE=graph``
+(``pipeline.py`` resolves it in :func:`resolved_pipeline`), and ``records``
+calls ``pipeline.analyse`` rather than ``analyzer.analyze_error`` directly —
+so the graph *can* sit on the judging path. The **default** pipeline is still
+``direct`` (see ``DEFAULT_PIPELINE`` in ``pipeline.py``), chosen so a sidecar
+that has not configured an embedder degrades cleanly; flipping
+``ANALYSIS_PIPELINE=graph`` activates this module without any code change.
+S4's completion bar was "the graph exists and runs end to end", which it does.
 
 Retrieval is a no-op until an embedder is configured
 ----------------------------------------------------

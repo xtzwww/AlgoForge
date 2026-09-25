@@ -12,37 +12,57 @@
  * IMPORTANT: Tailwind v4's `@theme` block is generated FROM this file's values
  * (see the note in tokens.css). If you change a value here, update tokens.css
  * to match — or better, treat this file as canonical and keep them in sync.
+ *
+ * 2026-09-25 — palette replaced wholesale with 「霓虹深空」. The previous
+ * values were the generic dark-navy-plus-one-blue that any admin template
+ * produces; the reasoning and the alternatives considered are in
+ * `docs/redesign-preview.html`. What changed in substance:
+ *
+ *   - the canvas is deeper (#070a14) and the accent moved from a flat
+ *     blue to a blue-violet pair, so a gradient has two real ends;
+ *   - the semantic colours were brightened — a verdict badge is now
+ *     legible *and* glows, which the old `#22c55e` could not do on a
+ *     surface this dark;
+ *   - `accentAlt` is new and is NOT a shade of `accent`: it is the other
+ *     end of the accent gradient, and naming it is what stops a second
+ *     literal appearing in whichever component builds that gradient.
+ *
+ * Motion and glow values live in `tokens.css` only — nothing in JS reads
+ * them, and inventing exports nobody imports is how a "source of truth"
+ * starts to look authoritative while being wrong.
  */
 
 /** Base palette (raw values — do not use these directly in components). */
 export const palette = {
   // Surfaces, darkest to lightest
-  canvas: '#0b1020',
-  surface: '#141b2d',
-  elevated: '#1c2438',
-  overlay: '#232c42',
-  border: '#263149',
-  borderStrong: '#33415c',
+  canvas: '#070a14',
+  surface: '#101728',
+  elevated: '#172036',
+  overlay: '#1e2942',
+  border: '#22304d',
+  borderStrong: '#35486e',
 
   // Text
-  textPrimary: '#e8ecf5',
-  textSecondary: '#9aa7bd',
-  textMuted: '#66738c',
-  textInverse: '#0b1020',
+  textPrimary: '#eef2ff',
+  textSecondary: '#a9b7d6',
+  textMuted: '#6d7c9e',
+  textInverse: '#070a14',
 
   // Brand / accent
-  accent: '#4f8cff',
-  accentHover: '#6ba1ff',
-  accentActive: '#3d78e6',
-  accentSubtle: '#1e2f52',
+  accent: '#6d8dff',
+  accentHover: '#8aa5ff',
+  accentActive: '#5878ee',
+  accentSubtle: '#1b2750',
+  /** The violet end of the accent gradient. See the file docstring. */
+  accentAlt: '#9d7bff',
 
   // Semantic
-  success: '#22c55e',
-  warning: '#f59e0b',
-  danger: '#ef4444',
-  info: '#06b6d4',
-  purple: '#8b5cf6',
-  orange: '#f97316'
+  success: '#34e39a',
+  warning: '#ffb347',
+  danger: '#ff6b81',
+  info: '#38d6f0',
+  purple: '#a78bfa',
+  orange: '#ff9455'
 } as const
 
 /**
@@ -87,7 +107,7 @@ export function colorForVerdict(status: string): string {
 export const masteryColor = {
   weak: palette.danger,
   poor: palette.orange,
-  fair: '#eab308',
+  fair: '#f2d24b',
   good: palette.success
 } as const
 

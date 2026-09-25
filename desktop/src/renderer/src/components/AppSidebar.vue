@@ -70,13 +70,20 @@ const emit = defineEmits<{ (e: 'navigate'): void }>()
 const ICONS: Record<string, string> = {
   practice: 'M8 18l-5-6 5-6M16 6l5 6-5 6',
   problems: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  // A ticked box: this is the list of things that have been *set*, as
+  // opposed to 题库, which is everything available.
+  assignments: 'M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11',
   mistakes:
     'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z',
   profile: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
   plan: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
   // A rostrum: three bars over a baseline. Chosen over a "people" glyph
   // so it does not read as a class list — this is the aggregate view.
-  teacher: 'M4 20h16M7 20V9M12 20V4M17 20v-7'
+  teacher: 'M4 20h16M7 20V9M12 20V4M17 20v-7',
+  // Two figures, for the roster itself — the counterpart to the icon
+  // above, which is deliberately *not* this shape.
+  'teacher-classes':
+    'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75'
 }
 
 const items = computed<NavItem[]>(() =>
@@ -136,7 +143,7 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
       <span class="brand-name">智能学情反馈</span>
     </div>
 
-    <ul class="nav-list">
+    <ul class="nav-list af-stagger">
       <li v-for="item in items" :key="item.name">
         <RouterLink
           class="nav-item"
@@ -167,9 +174,22 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
       same answer, and two probes could disagree.
     -->
     <div class="status" :class="`status-${status.tone}`" :title="statusDetail">
-      <span class="status-dot" aria-hidden="true" />
+      <!--
+        The halo breathes only while everything is fine. `af-pulse` is
+        opt-in per tone rather than a permanent class on the dot: a
+        warning or an error is something to notice once, and a dot that
+        pulses forever in the corner of the screen stops being an
+        indicator and becomes an alarm the user learns to ignore.
+      -->
+      <span
+        class="status-dot"
+        :class="{ 'af-pulse': status.tone === 'ok' }"
+        aria-hidden="true"
+      />
       <span class="status-label">{{ status.label }}</span>
-      <button v-if="canRetry" class="status-retry" type="button" @click="retry">重试</button>
+      <button v-if="canRetry" class="status-retry af-press" type="button" @click="retry">
+        重试
+      </button>
     </div>
   </nav>
 </template>
@@ -189,6 +209,19 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
   transition: width var(--af-duration-base) var(--af-ease);
 }
 
+/* Glass (2026-09-25). The sidebar sits directly on the canvas, so the
+ * blur is what makes the glow behind it read as *behind* it. Kept opaque
+ * as the base rule above and upgraded only where `backdrop-filter`
+ * exists — a 78%-opaque sidebar with no blur is worse than a solid one,
+ * because the grid shows through and competes with the labels. */
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .sidebar {
+    background: color-mix(in srgb, var(--af-surface) 78%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    backdrop-filter: blur(16px) saturate(140%);
+  }
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -204,6 +237,11 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
   height: 22px;
   flex-shrink: 0;
   color: var(--af-accent);
+  /* The mark is the one place a halo is allowed to be permanent rather
+   * than a hover state: it is the logo, it is always there, and a small
+   * amount of light around it is what keeps the brand from reading as a
+   * grey glyph on a dark panel. */
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--af-accent) 55%, transparent));
 }
 
 .brand-name {
@@ -240,14 +278,25 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
   border-radius: var(--af-radius-sm);
   cursor: pointer;
   white-space: nowrap;
+  /* `transform` is in here for the 2px slide on hover (2026-09-25). It
+   * has to be declared in the base rule, not on `:hover` — a transition
+   * declared on the hover state only runs on the way in, so the item
+   * would snap back on mouse-out. */
   transition:
     color var(--af-duration-fast) var(--af-ease),
-    background var(--af-duration-fast) var(--af-ease);
+    background var(--af-duration-fast) var(--af-ease),
+    box-shadow var(--af-duration-fast) var(--af-ease),
+    transform var(--af-duration-fast) var(--af-ease);
 }
 
 .nav-item:hover {
   color: var(--af-text-primary);
   background: var(--af-elevated);
+  /* A 2px slide plus an inset hairline, rather than a bigger background
+   * change: at 220px wide there is no room for the row to grow, so the
+   * feedback has to come from movement and light. */
+  transform: translateX(2px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--af-accent) 32%, transparent);
 }
 
 /* A compound selector, which is the reason this component is not written
@@ -255,8 +304,18 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
  * matches by path prefix, so 题库 stays marked on /problems/12. */
 .nav-item.router-link-active {
   color: var(--af-text-primary);
-  background: var(--af-accent-subtle);
+  /* A gradient rather than a flat fill, fading out to the right: it
+   * points at the left bar, which is what carries the "you are here"
+   * meaning, instead of ending in a hard edge halfway across the row. */
+  background: linear-gradient(90deg, var(--af-accent-subtle) 0%, transparent 100%);
   border-left-color: var(--af-accent);
+  box-shadow: var(--af-glow-accent-soft);
+}
+
+/* The active row keeps its halo on hover rather than losing it to the
+ * plain hover rule above, which would otherwise win on source order. */
+.nav-item.router-link-active:hover {
+  box-shadow: var(--af-glow-accent-soft), inset 0 0 0 1px var(--af-border-strong);
 }
 
 .nav-icon {
@@ -428,6 +487,13 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
 @media (prefers-reduced-motion: reduce) {
   .sidebar {
     transition: none;
+  }
+
+  /* The halo stays; the movement goes. A 2px slide is exactly the kind of
+   * small motion that a vestibular-sensitive user has asked not to see,
+   * while the inset hairline on hover still says "this row is live". */
+  .nav-item:hover {
+    transform: none;
   }
 }
 </style>

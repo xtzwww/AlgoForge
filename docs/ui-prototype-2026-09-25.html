@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlgoForge 界面设计方案 · 曜石灰暗色体系 · 高保真原型</title>
+<!--
+  ============================================================
+  AlgoForge 界面设计方案 v2 ——「曜石灰」暗色体系
+  高保真原型（非生产代码）
+
+  · 单文件、零依赖，直接双击打开。
+  · 左侧导航切换 10 个页面：学生端 6 + 教师端 2 + 设计系统 1 + 登录 1。
+  · 所有颜色 / 间距 / 圆角都走 CSS 变量，变量名与规范文档
+    docs/ui-design-spec-2026-09-25.md 一一对应，可直接照抄进
+    desktop/src/renderer/src/assets/tokens.css。
+  · 交互是真的可点：分层反馈三层释放、底部面板切页、错题卡展开、
+    难度筛选、SM-2 打分、Toast。数据是假的，行为是真的。
+  ============================================================
+-->
+<style>
+/* ============================================================
+ * 1. 设计令牌（Design Tokens）
+ * ============================================================ */
+:root{
+  /* ---- 表面：四级明度阶梯 ---- */
+  --canvas:#0B0D12;      /* 应用底色，最暗 */
+  --surface:#13161D;     /* 常驻面板（侧边栏 / 卡片 / 表格） */
+  --elevated:#1A1E27;    /* 悬浮态、表头、输入框 */
+  --overlay:#232833;     /* 下拉 / 弹窗 / 抽屉 */
+  --border:rgba(255,255,255,.09);
+  --border-strong:rgba(255,255,255,.18);
+
+  /* ---- 文字：三级 + 反色 ---- */
+  --tx1:#E8EAF0;         /* 15.05:1 on surface */
+  --tx2:#A0A6B8;         /* 7.45:1  */
+  --tx3:#868EA3;         /* 5.53:1 —— 最低档仍过 AA，可用于正文 */
+  --tx-inv:#0B0D12;      /* 压在主色/语义色填充上的字，6.29:1 */
+
+  /* ---- 主色：单一蓝紫，只做「可点 / 当前 / 进行中」---- */
+  --accent:#6E8BFF;
+  --accent-hover:#8AA1FF;
+  --accent-active:#5B76F0;
+  --accent-subtle:#1C2440;
+  --accent-alt:#A78BFA;  /* 仅用于渐变右端与进度条，不单独当主色用 */
+
+  /* ---- 语义色：只承载「结果」，不承载「装饰」---- */
+  --ok:#3DDC97;
+  --warn:#FFB454;
+  --danger:#FF6B7A;
+  --info:#4CC9F0;
+  --purple:#A78BFA;
+
+  /* ---- 判题结果：沿用 OJ 通例，不可改色（改了就是反习惯）---- */
+  --v-ac:#3DDC97; --v-wa:#FF6B7A; --v-tle:#FFB454;
+  --v-mle:#4CC9F0; --v-ce:#A78BFA; --v-re:#FF9455; --v-unknown:#A0A6B8;
+
+  /* ---- 掌握度 / 难度 ---- */
+  --m1:#FF6B7A; --m2:#FF9455; --m3:#F2D24B; --m4:#3DDC97;
+  --d-easy:#3DDC97; --d-medium:#FFB454; --d-hard:#FF6B7A;
+
+  /* ---- 布局 ---- */
+  --side-w:240px; --side-w-mini:64px; --top-h:52px;
+  --problem-w:340px;      /* 题面列，可折叠 */
+  --content-max:1160px;   /* 读类型页面的版心 */
+
+  /* ---- 圆角：三档，10 是最小可辨识的「刻意」---- */
+  --r-sm:10px; --r-md:14px; --r-lg:18px;
+
+  /* ---- 阴影：只表达「在上面」，不表达「在发光」---- */
+  --sh-1:0 1px 2px rgba(0,0,0,.4);
+  --sh-2:0 8px 24px -12px rgba(0,0,0,.7);
+  --sh-3:0 24px 56px -28px rgba(0,0,0,.85);
+
+  /* ---- 动效：上限 280ms，桌面工具不该有「慢」---- */
+  --dur-1:120ms; --dur-2:180ms; --dur-3:280ms;
+  --ease:cubic-bezier(.4,0,.2,1);
+
+  --mono:ui-monospace,'Cascadia Mono','SF Mono',Consolas,'Liberation Mono',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+}
+
+/* ============================================================
+ * 2. 基础层
+ * ============================================================ */
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--canvas);color:var(--tx1);font-family:var(--sans);
+  font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums;overflow:hidden;
+  /* 极淡的顶部渐晕：给深色一点方向感，但不做成会「脏」的大面积辉光 */
+  background-image:radial-gradient(900px 420px at 12% -18%, rgba(110,139,255,.10), transparent 62%);
+  background-repeat:no-repeat;background-attachment:fixed;
+}
+code,pre,kbd{font-family:var(--mono)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:var(--r-sm)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--border-strong);border:3px solid transparent;background-clip:content-box;border-radius:999px}
+::-webkit-scrollbar-thumb:hover{background:var(--accent);background-clip:content-box}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ============================================================
+ * 3. 骨架：侧边栏 + 顶栏 + 内容区
+ * ============================================================ */
+.app{display:grid;grid-template-columns:var(--side-w) 1fr;height:100%}
+
+.side{
+  display:flex;flex-direction:column;background:var(--surface);
+  border-right:1px solid var(--border);overflow-y:auto;
+}
+.brand{display:flex;align-items:center;gap:10px;height:var(--top-h);padding:0 16px;border-bottom:1px solid var(--border);flex:none}
+.brand-mark{width:24px;height:24px;color:var(--accent);flex:none}
+.brand-name{font-size:15px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
+.brand-sub{display:block;font-size:11px;color:var(--tx3);font-weight:400;letter-spacing:0}
+
+.nav-group{padding:14px 8px 4px}
+.nav-group-label{font-size:11px;color:var(--tx3);padding:0 12px 6px;letter-spacing:.08em}
+.nav-item{
+  display:flex;align-items:center;gap:11px;padding:9px 12px;margin-bottom:2px;
+  font-size:14px;color:var(--tx2);text-decoration:none;border-radius:var(--r-sm);
+  border-left:3px solid transparent;cursor:pointer;white-space:nowrap;
+  transition:color var(--dur-1) var(--ease),background var(--dur-1) var(--ease);
+}
+.nav-item:hover{color:var(--tx1);background:var(--elevated)}
+/* 当前页：左侧 3px 竖条 + 向右淡出的渐变，读作「标记」而不是「第二个按钮」 */
+.nav-item.is-active{
+  color:var(--tx1);border-left-color:var(--accent);font-weight:500;
+  background:linear-gradient(90deg,var(--accent-subtle),transparent 92%);
+}
+.nav-ico{width:18px;height:18px;flex:none}
+.nav-badge{margin-left:auto;font-size:11px;font-family:var(--mono);color:var(--tx3);
+  background:var(--elevated);border-radius:6px;padding:1px 6px}
+.nav-item.is-active .nav-badge{color:var(--accent)}
+
+.side-foot{margin-top:auto;padding:12px 16px;border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;font-size:12px;color:var(--tx2)}
+.dot{width:8px;height:8px;border-radius:999px;background:currentColor;flex:none}
+
+.main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{
+  display:flex;align-items:center;gap:12px;height:var(--top-h);flex:none;
+  padding:0 20px;border-bottom:1px solid var(--border);
+  background:color-mix(in srgb,var(--surface) 86%,transparent);
+  backdrop-filter:blur(12px);
+}
+.crumb{font-size:13px;color:var(--tx3);display:flex;align-items:center;gap:8px;min-width:0}
+.crumb b{color:var(--tx1);font-weight:600;font-size:14px}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.who{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--tx2)}
+.avatar{width:28px;height:28px;border-radius:999px;background:var(--accent-subtle);
+  color:var(--accent);display:grid;place-items:center;font-size:12px;font-weight:600;flex:none}
+.content{flex:1;overflow-y:auto;padding:22px 24px 64px}
+
+/* ============================================================
+ * 4. 通用组件
+ * ============================================================ */
+.btn{
+  appearance:none;font:inherit;font-size:13px;line-height:1;
+  display:inline-flex;align-items:center;gap:7px;
+  padding:9px 14px;border-radius:var(--r-sm);border:1px solid var(--border);
+  background:var(--elevated);color:var(--tx1);cursor:pointer;white-space:nowrap;
+  transition:background var(--dur-1) var(--ease),border-color var(--dur-1) var(--ease),transform var(--dur-1) var(--ease);
+}
+.btn:hover{background:var(--overlay);border-color:var(--border-strong)}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:var(--tx-inv);font-weight:600}
+.btn-primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn-primary:active{background:var(--accent-active)}
+.btn-ghost{background:transparent;border-color:transparent;color:var(--tx2)}
+.btn-ghost:hover{background:var(--elevated);color:var(--tx1)}
+.btn-danger{color:var(--danger);border-color:rgba(255,107,122,.35);background:rgba(255,107,122,.08)}
+.btn-danger:hover{background:rgba(255,107,122,.16)}
+.btn-sm{padding:6px 10px;font-size:12px}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+kbd{font-size:11px;background:var(--elevated);border:1px solid var(--border-strong);
+  border-radius:5px;padding:1px 5px;color:var(--tx2)}
+
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:2px 9px;
+  border-radius:7px;background:var(--elevated);color:var(--tx2);border:1px solid var(--border);white-space:nowrap}
+.badge-ac{color:var(--v-ac);background:rgba(61,220,151,.11);border-color:rgba(61,220,151,.28)}
+.badge-wa{color:var(--v-wa);background:rgba(255,107,122,.11);border-color:rgba(255,107,122,.28)}
+.badge-tle{color:var(--v-tle);background:rgba(255,180,84,.11);border-color:rgba(255,180,84,.28)}
+.badge-ce{color:var(--v-ce);background:rgba(167,139,250,.11);border-color:rgba(167,139,250,.28)}
+.badge-easy{color:var(--d-easy);background:rgba(61,220,151,.10);border-color:rgba(61,220,151,.24)}
+.badge-medium{color:var(--d-medium);background:rgba(255,180,84,.10);border-color:rgba(255,180,84,.24)}
+.badge-hard{color:var(--d-hard);background:rgba(255,107,122,.10);border-color:rgba(255,107,122,.24)}
+.badge-info{color:var(--info);background:rgba(76,201,240,.10);border-color:rgba(76,201,240,.24)}
+
+.chip{appearance:none;font:inherit;font-size:12.5px;padding:5px 12px;border-radius:999px;
+  border:1px solid var(--border);background:transparent;color:var(--tx2);cursor:pointer;
+  transition:all var(--dur-1) var(--ease)}
+.chip:hover{color:var(--tx1);border-color:var(--border-strong)}
+.chip.is-on{background:var(--accent-subtle);border-color:rgba(110,139,255,.45);color:var(--accent-hover)}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:16px 18px}
+.card-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.card-h h3{margin:0;font-size:14px;font-weight:600}
+.card-h .sub{font-size:12px;color:var(--tx3)}
+
+.page-head{margin-bottom:18px;display:flex;align-items:flex-start;gap:14px}
+.page-head h1{margin:0;font-size:22px;font-weight:650;letter-spacing:.01em}
+.page-head p{margin:4px 0 0;font-size:13px;color:var(--tx2);max-width:74ch}
+.page-head .acts{margin-left:auto;display:flex;gap:8px}
+
+.wrap{max-width:var(--content-max)}
+.grid{display:grid;gap:14px}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:14px}
+.kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:14px 16px}
+.kpi-label{font-size:12px;color:var(--tx3)}
+.kpi-value{font-size:26px;font-weight:650;letter-spacing:.01em;margin-top:2px;font-family:var(--mono)}
+.kpi-hint{font-size:12px;color:var(--tx3);margin-top:2px}
+
+.label{font-size:12px;color:var(--tx3);margin-bottom:6px;display:block}
+.input,.select{
+  font:inherit;font-size:13px;color:var(--tx1);background:var(--elevated);
+  border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 11px;width:100%;
+}
+.input::placeholder{color:var(--tx3)}
+.input:focus,.select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(110,139,255,.18)}
+.select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--tx3) 50%),linear-gradient(135deg,var(--tx3) 50%,transparent 50%);
+  background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:32px}
+
+.tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+.tbl th{text-align:left;font-weight:500;font-size:12px;color:var(--tx3);
+  padding:9px 12px;border-bottom:1px solid var(--border);background:var(--elevated);white-space:nowrap}
+.tbl th:first-child{border-top-left-radius:var(--r-sm)}
+.tbl th:last-child{border-top-right-radius:var(--r-sm)}
+.tbl td{padding:11px 12px;border-bottom:1px solid var(--border);color:var(--tx2);vertical-align:middle}
+.tbl tbody tr:hover td{background:var(--elevated);color:var(--tx1)}
+.tbl tbody tr:last-child td{border-bottom:none}
+.tbl .num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tbl a{color:var(--tx1);text-decoration:none}
+.tbl a:hover{color:var(--accent-hover)}
+
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);padding:0 4px}
+.tab{appearance:none;font:inherit;font-size:13px;background:transparent;border:none;color:var(--tx3);
+  padding:9px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
+  transition:color var(--dur-1) var(--ease)}
+.tab:hover{color:var(--tx2)}
+.tab.is-on{color:var(--tx1);border-bottom-color:var(--accent);font-weight:500}
+
+.prog{height:6px;border-radius:999px;background:var(--elevated);overflow:hidden}
+.prog>i{display:block;height:100%;border-radius:999px;background:var(--accent)}
+.prog.ok>i{background:var(--ok)} .prog.warn>i{background:var(--warn)} .prog.bad>i{background:var(--m1)}
+
+.empty{text-align:center;padding:44px 20px;color:var(--tx3)}
+.empty h4{margin:12px 0 4px;font-size:14px;color:var(--tx1);font-weight:600}
+.empty p{margin:0 0 14px;font-size:13px}
+
+.note{font-size:12.5px;color:var(--tx3);margin:0}
+.notice{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;
+  background:rgba(255,180,84,.08);border:1px solid rgba(255,180,84,.22);
+  color:#E9C48C;border-radius:var(--r-sm);padding:9px 12px;margin-bottom:12px}
+
+/* ============================================================
+ * 5. 练习页：题面 | 编辑器 / 底部面板
+ * ============================================================ */
+.practice{display:flex;flex-direction:column;height:100%;min-height:0}
+.p-toolbar{display:flex;align-items:center;gap:12px;flex:none;padding:0 0 12px}
+.p-title{display:flex;align-items:center;gap:9px;min-width:0;margin:0;font-size:16px;font-weight:600}
+.p-title .txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.p-acts{margin-left:auto;display:flex;align-items:center;gap:8px}
+.lang{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--tx3)}
+.lang .select{width:auto;min-width:132px}
+
+.p-body{display:grid;grid-template-columns:var(--problem-w) minmax(0,1fr);gap:14px;flex:1;min-height:0}
+.p-body.is-collapsed{grid-template-columns:44px minmax(0,1fr)}
+
+.statement{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);
+  display:flex;flex-direction:column;min-height:0}
+.st-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--border);flex:none}
+.st-head h3{margin:0;font-size:13px;font-weight:600}
+.st-body{overflow-y:auto;padding:14px 16px;font-size:13.5px;color:var(--tx2)}
+.st-body h4{margin:16px 0 6px;font-size:13px;color:var(--tx1);font-weight:600}
+.st-body h4:first-child{margin-top:0}
+.st-body p{margin:0 0 8px}
+.st-meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.io{display:grid;gap:10px}
+.io-box{background:var(--canvas);border:1px solid var(--border);border-radius:var(--r-sm);
+  padding:10px 12px;font-family:var(--mono);font-size:12.5px;color:var(--tx1);white-space:pre-wrap}
+.io-box .cap{display:block;font-family:var(--sans);font-size:11px;color:var(--tx3);margin-bottom:6px}
+
+.editor-col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
+.editor{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden}
+.ed-tabs{display:flex;align-items:center;gap:8px;flex:none;height:38px;padding:0 12px;
+  border-bottom:1px solid var(--border);background:var(--elevated)}
+.ed-tab{font-size:12.5px;color:var(--tx1);display:flex;align-items:center;gap:7px}
+.ed-right{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--tx3)}
+.ed-body{flex:1;overflow:auto;display:flex;font-family:var(--mono);font-size:13px;line-height:21px}
+.gutter{flex:none;padding:12px 10px 12px 14px;text-align:right;color:var(--tx3);
+  background:var(--surface);border-right:1px solid var(--border);user-select:none}
+.gutter .bp{color:var(--danger);font-weight:700}
+.code{flex:1;padding:12px 16px;margin:0;color:var(--tx1);white-space:pre;overflow-x:auto}
+.k{color:#C792EA}.t{color:#82AAFF}.n{color:#F78C6C}.s{color:#C3E88D}.c{color:#5C6478;font-style:italic}.f{color:#82AAFF}
+
+.bottom{flex:none;height:242px;display:flex;flex-direction:column;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden}
+.bt-body{flex:1;overflow-y:auto;padding:14px 16px}
+.case-row{display:grid;grid-template-columns:76px 1fr 1fr;gap:12px;align-items:center;
+  padding:9px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12.5px}
+.case-row:last-child{border-bottom:none}
+.case-row .io-txt{color:var(--tx2);white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.run-line{display:flex;align-items:center;gap:10px;font-size:12.5px;color:var(--tx3);
+  padding:6px 0;border-bottom:1px solid var(--border)}
+.run-line .mono{font-family:var(--mono);color:var(--tx2)}
+
+/* 分层反馈 Ladder —— 本产品最核心的交互 */
+.ladder{display:flex;flex-direction:column;gap:10px}
+.lv{border:1px solid var(--border);border-radius:var(--r-md);background:var(--elevated);overflow:hidden}
+.lv.is-locked{background:transparent;border-style:dashed}
+.lv-h{display:flex;align-items:center;gap:9px;padding:11px 14px;cursor:pointer;width:100%;
+  background:transparent;border:none;font:inherit;color:inherit;text-align:left}
+.lv-step{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;flex:none;
+  font-size:11px;font-weight:700;font-family:var(--mono);background:var(--accent-subtle);color:var(--accent)}
+.lv.is-locked .lv-step{background:var(--elevated);color:var(--tx3)}
+.lv-name{font-size:13px;font-weight:600;color:var(--tx1)}
+.lv.is-locked .lv-name{color:var(--tx3);font-weight:500}
+.lv-hint{margin-left:auto;font-size:11.5px;color:var(--tx3)}
+.lv-body{padding:0 14px 14px 43px;font-size:13px;color:var(--tx2);display:none}
+.lv.is-open .lv-body{display:block}
+.lv-body p{margin:0 0 8px}
+.lv-body .tagline{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.lv-foot{display:flex;gap:8px;padding:0 14px 14px 43px}
+
+.diag-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:var(--tx3);margin-bottom:12px}
+
+/* ============================================================
+ * 6. 读类型页面（题库 / 错题本 / 画像 / 复习 / 作业 / 看板）
+ * ============================================================ */
+.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.filters .grow{flex:1;min-width:220px}
+.split{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px;align-items:start}
+.list{display:flex;flex-direction:column;gap:12px}
+
+.mistake{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden}
+.m-h{display:flex;align-items:center;gap:10px;padding:13px 16px;cursor:pointer;
+  background:transparent;border:none;font:inherit;color:inherit;width:100%;text-align:left}
+.m-t{font-size:13.5px;font-weight:600;color:var(--tx1)}
+.m-sub{font-size:12px;color:var(--tx3);margin-top:2px}
+.m-right{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--tx3);font-size:12px}
+.m-body{display:none;padding:0 16px 16px;border-top:1px solid var(--border)}
+.mistake.is-open .m-body{display:block;padding-top:14px}
+.chev{transition:transform var(--dur-2) var(--ease)}
+.mistake.is-open .chev{transform:rotate(90deg)}
+
+.radar-wrap{display:grid;grid-template-columns:320px minmax(0,1fr);gap:18px;align-items:center}
+.legend{display:flex;flex-direction:column;gap:9px;font-size:12.5px}
+.legend-row{display:flex;align-items:center;gap:9px}
+.legend-row .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.legend-row .nm{color:var(--tx2)}
+.legend-row .vl{margin-left:auto;font-family:var(--mono);color:var(--tx1)}
+
+.review-item{display:flex;align-items:center;gap:14px;padding:13px 16px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md)}
+.score{display:flex;gap:5px}
+.score button{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);
+  background:var(--elevated);color:var(--tx2);font:inherit;font-size:12px;cursor:pointer;
+  transition:all var(--dur-1) var(--ease)}
+.score button:hover{color:var(--tx1);border-color:var(--border-strong)}
+.score button.is-on{background:var(--accent);border-color:var(--accent);color:var(--tx-inv);font-weight:600}
+
+.as-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:15px 17px}
+.as-top{display:flex;align-items:flex-start;gap:12px}
+.as-top h4{margin:0;font-size:14px;font-weight:600}
+.as-meta{font-size:12px;color:var(--tx3);margin-top:3px}
+.as-prog{margin-top:12px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--tx2)}
+.pdots{display:flex;gap:5px;margin-top:12px;flex-wrap:wrap}
+.pdot{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:11px;
+  font-family:var(--mono);background:var(--elevated);color:var(--tx3);border:1px solid var(--border)}
+.pdot.ok{background:rgba(61,220,151,.12);color:var(--ok);border-color:rgba(61,220,151,.3)}
+.pdot.bad{background:rgba(255,107,122,.12);color:var(--danger);border-color:rgba(255,107,122,.3)}
+
+.bars{display:flex;flex-direction:column;gap:9px}
+.bar-row{display:grid;grid-template-columns:88px 1fr 42px;gap:10px;align-items:center;font-size:12.5px}
+.bar-row .nm{color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-row .vl{text-align:right;font-family:var(--mono);color:var(--tx1)}
+
+.alert{display:flex;gap:11px;align-items:flex-start;padding:12px 14px;border-radius:var(--r-md);
+  background:var(--surface);border:1px solid var(--border)}
+.alert-i{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;
+  background:rgba(255,180,84,.12);color:var(--warn)}
+.alert-b{min-width:0}
+.alert-b .t{font-size:13px;color:var(--tx1);font-weight:600}
+.alert-b .d{font-size:12px;color:var(--tx3);margin-top:2px}
+.alert-a{margin-left:auto;display:flex;gap:6px;flex:none}
+
+/* 设计系统页 */
+.sw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(158px,1fr));gap:12px}
+.sw{border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden;background:var(--surface)}
+.sw-c{height:56px}
+.sw-n{padding:8px 11px;font-size:12px}
+.sw-n b{display:block;color:var(--tx1);font-weight:600}
+.sw-n span{color:var(--tx3);font-family:var(--mono);font-size:11px}
+.type-row{display:flex;align-items:baseline;gap:14px;padding:9px 0;border-bottom:1px solid var(--border)}
+.type-row:last-child{border-bottom:none}
+.type-row .tg{width:118px;flex:none;font-size:11.5px;color:var(--tx3);font-family:var(--mono)}
+
+/* 登录页 */
+.gate{min-height:100%;display:grid;place-items:center;padding:40px 20px}
+.gate-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-lg);padding:28px}
+.gate-card h2{margin:0 0 4px;font-size:19px;font-weight:650}
+.gate-card .sub{margin:0 0 20px;font-size:13px;color:var(--tx3)}
+.field{margin-bottom:13px}
+.gate-alt{margin-top:16px;font-size:12.5px;color:var(--tx3);text-align:center}
+.gate-alt a{color:var(--accent-hover);text-decoration:none}
+
+.toast{position:fixed;right:22px;bottom:22px;z-index:60;display:flex;align-items:center;gap:10px;
+  background:var(--overlay);border:1px solid var(--border-strong);border-radius:var(--r-md);
+  padding:11px 15px;font-size:13px;box-shadow:var(--sh-3);
+  transform:translateY(12px);opacity:0;pointer-events:none;
+  transition:opacity var(--dur-2) var(--ease),transform var(--dur-2) var(--ease)}
+.toast.is-on{opacity:1;transform:none}
+
+@media (max-width:1100px){
+  .p-body{grid-template-columns:minmax(0,1fr)}
+  .statement{display:none}
+  .split,.radar-wrap{grid-template-columns:minmax(0,1fr)}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- ============ 侧边栏 ============ -->
+  <aside class="side">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 12 5l8 13"/><path d="M8.5 15h7"/></svg>
+      <span class="brand-name">智能学情反馈<span class="brand-sub">AlgoForge</span></span>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">学习</div>
+      <a class="nav-item is-active" data-page="practice">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M8 18l-5-6 5-6M16 6l5 6-5 6"/></svg>练习</a>
+      <a class="nav-item" data-page="assignments">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>我的作业
+        <span class="nav-badge">2</span></a>
+      <a class="nav-item" data-page="problems">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>题库</a>
+      <a class="nav-item" data-page="mistakes">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>错题本
+        <span class="nav-badge">7</span></a>
+      <a class="nav-item" data-page="profile">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>能力画像</a>
+      <a class="nav-item" data-page="plan">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4M3 10h18"/><rect x="5" y="4" width="14" height="16" rx="2"/></svg>复习
+        <span class="nav-badge">5</span></a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">教学</div>
+      <a class="nav-item" data-page="teacher">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16M7 20V9M12 20V4M17 20v-7"/></svg>学情看板</a>
+      <a class="nav-item" data-page="classes">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>班级管理</a>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-group-label">设计</div>
+      <a class="nav-item" data-page="ds">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="14" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="15" r="2.5"/><path d="M12 22a10 10 0 1 1 0-20"/></svg>设计系统</a>
+      <a class="nav-item" data-page="login">
+        <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5M15 12H3"/></svg>登录页</a>
+    </div>
+
+    <div class="side-foot"><span class="dot" style="color:var(--ok)"></span>分析引擎就绪</div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb"><span id="crumb-sec">学习</span><span>/</span><b id="crumb-page">练习</b></div>
+      <div class="top-right">
+        <button class="btn btn-ghost btn-sm" data-toast="已导出本次练习记录">导出</button>
+        <div class="who"><span class="avatar">刘</span>刘爱重</div>
+      </div>
+    </header>
+    <main class="content" id="content">
+
+<!-- ============================================================
+     页面 1 · 练习
+     ============================================================ -->
+<section class="page practice" id="page-practice">
+  <div class="p-toolbar">
+    <h1 class="p-title">
+      <span class="txt">A + B Problem</span>
+      <span class="badge">题库 #1001</span>
+      <span class="badge badge-wa">WA</span>
+    </h1>
+    <div class="p-acts">
+      <label class="lang">语言
+        <select class="select"><option>C++17 (g++)</option><option>Python 3</option><option>Java 17</option></select>
+      </label>
+      <button class="btn">运行 <kbd>Ctrl ↵</kbd></button>
+      <button class="btn btn-primary">提交 <kbd>Ctrl ⇧ ↵</kbd></button>
+    </div>
+  </div>
+
+  <div class="p-body">
+    <!-- 题面 -->
+    <section class="statement">
+      <div class="st-head">
+        <h3>题面</h3>
+        <span class="badge badge-easy" style="margin-left:auto">入门</span>
+        <button class="btn btn-ghost btn-sm">收起 ‹</button>
+      </div>
+      <div class="st-body">
+        <div class="st-meta">
+          <span class="badge">数组</span><span class="badge">模拟</span>
+          <span class="badge badge-info">时限 1s · 内存 256M</span>
+        </div>
+        <p>输入两个整数 <code>a</code> 和 <code>b</code>，输出它们的和。</p>
+        <h4>输入格式</h4>
+        <p>一行，两个以空格分隔的整数 <code>a</code>、<code>b</code>。</p>
+        <h4>输出格式</h4>
+        <p>一行，一个整数，表示 <code>a + b</code> 的结果。</p>
+        <h4>样例</h4>
+        <div class="io">
+          <div class="io-box"><span class="cap">输入</span>2 3</div>
+          <div class="io-box"><span class="cap">输出</span>5</div>
+        </div>
+        <h4>提示</h4>
+        <p>注意结果可能超出 <code>int</code> 范围，请使用 <code>long long</code>。</p>
+      </div>
+    </section>
+
+    <!-- 编辑器 + 底部面板 -->
+    <div class="editor-col">
+      <div class="editor">
+        <div class="ed-tabs">
+          <span class="ed-tab"><span class="dot" style="color:var(--warn)"></span>main.cpp</span>
+          <div class="ed-right"><span>行 6 · 列 21</span><span>C++17</span></div>
+        </div>
+        <div class="ed-body">
+          <div class="gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12</div>
+          <pre class="code"><span class="c">// 第一次提交：直接用 int，溢出</span>
+<span class="k">#include</span> <span class="s">&lt;iostream&gt;</span>
+<span class="k">using namespace</span> <span class="t">std</span>;
+
+<span class="t">int</span> <span class="f">main</span>() {
+    <span class="t">int</span> a, b;
+    <span class="t">cin</span> &gt;&gt; a &gt;&gt; b;
+    <span class="t">cout</span> &lt;&lt; a + b &lt;&lt; <span class="t">endl</span>;
+    <span class="k">return</span> <span class="n">0</span>;
+}</pre>
+        </div>
+      </div>
+
+      <div class="bottom">
+        <div class="tabs" role="tablist">
+          <button class="tab is-on" data-bt="out">输出</button>
+          <button class="tab" data-bt="cases">用例 3/10</button>
+          <button class="tab" data-bt="diag">AI 诊断</button>
+          <button class="tab" data-bt="dbg">调试</button>
+          <button class="tab" data-bt="proc">学习过程</button>
+        </div>
+
+        <div class="bt-body" id="bt-out">
+          <div class="run-line"><span class="badge badge-wa">WA</span><span class="mono">3/10 通过</span><span style="margin-left:auto">耗时 0.42s</span></div>
+          <div class="run-line"><span class="mono">$ g++ -O2 -std=c++17 main.cpp -o main</span></div>
+          <div class="run-line"><span class="mono">$ ./main &lt; 04.in</span></div>
+          <div class="run-line"><span class="mono" style="color:var(--tx2)">期望：2000000000</span></div>
+          <div class="run-line"><span class="mono" style="color:var(--v-wa)">实际：-294967296</span></div>
+          <p class="note" style="margin-top:12px">输出与期望不一致。已生成 AI 诊断，见「AI 诊断」页签。</p>
+        </div>
+
+        <div class="bt-body" id="bt-cases" hidden>
+          <div class="case-row"><span class="badge badge-ac">AC</span><span class="io-txt">1 2 → 3</span><span class="io-txt">3</span></div>
+          <div class="case-row"><span class="badge badge-ac">AC</span><span class="io-txt">0 0 → 0</span><span class="io-txt">0</span></div>
+          <div class="case-row"><span class="badge badge-wa">WA</span><span class="io-txt">1000000000 1000000000</span><span class="io-txt">-294967296</span></div>
+          <div class="case-row"><span class="badge badge-tle">TLE</span><span class="io-txt">（大数据压力测试）</span><span class="io-txt">超时 2.00s</span></div>
+        </div>
+
+        <div class="bt-body" id="bt-diag" hidden>
+          <div class="diag-meta">
+            <span class="badge badge-wa">整数溢出</span>
+            <span>本次分析参考 3 篇资料</span>
+            <span>·</span><span>耗时 6.2s</span>
+            <span style="margin-left:auto;color:var(--danger)">⚠ 这个错因你此前犯过 4 次（跨 3 道题）</span>
+          </div>
+          <div class="ladder">
+            <div class="lv is-open">
+              <button class="lv-h"><span class="lv-step">1</span><span class="lv-name">错在哪</span>
+                <span class="lv-hint">已展开</span></button>
+              <div class="lv-body">
+                <p><code>a + b</code> 的结果超出了 <code>int</code> 能表示的范围（约 ±21 亿）。第 6 行两个
+                  <code>int</code> 相加时结果已经溢出，之后赋给谁都没用了。</p>
+                <div class="tagline"><span class="badge">整数溢出</span><span class="badge">数据类型</span></div>
+                <div class="lv-foot"><button class="btn btn-sm btn-primary" data-ladder="2">还是不会，给点提示</button></div>
+              </div>
+            </div>
+            <div class="lv is-locked" id="lv2">
+              <button class="lv-h"><span class="lv-step">2</span><span class="lv-name">提示</span>
+                <span class="lv-hint">点击解锁</span></button>
+              <div class="lv-body">
+                <p>想一想：题目给的 <code>a</code>、<code>b</code> 最大能到多少？它们的和最大能到多少？
+                  C++ 里能装下这个范围的整数类型叫什么？</p>
+                <p class="note">只给方向，不给答案 —— 先自己想 30 秒。</p>
+                <div class="lv-foot"><button class="btn btn-sm btn-primary" data-ladder="3">还是不会，直接看怎么改</button></div>
+              </div>
+            </div>
+            <div class="lv is-locked" id="lv3">
+              <button class="lv-h"><span class="lv-step">3</span><span class="lv-name">怎么改</span>
+                <span class="lv-hint">点击解锁</span></button>
+              <div class="lv-body">
+                <p>把 <code>a</code>、<code>b</code> 改成 <code>long long</code>，输出时用
+                  <code>cout</code> 直接打印即可：</p>
+                <div class="io-box"><span class="cap">修改建议</span>long long a, b;
+cin &gt;&gt; a &gt;&gt; b;
+cout &lt;&lt; a + b &lt;&lt; endl;</div>
+                <div class="lv-foot">
+                  <button class="btn btn-sm" data-toast="已生成一道同类变式题">来道同类题练手</button>
+                  <button class="btn btn-sm btn-ghost" data-ladder="reset">重新自己想（收起 2、3 层）</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bt-body" id="bt-dbg" hidden>
+          <div class="empty">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                 stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9 9h6v6H9z"/></svg>
+            <h4>还没有调试会话</h4>
+            <p>在编辑器行号左侧点击设置断点，再点「调试」启动会话。</p>
+            <button class="btn btn-sm">启动调试</button>
+          </div>
+        </div>
+
+        <div class="bt-body" id="bt-proc" hidden>
+          <p class="note" style="margin-bottom:12px">这些是本次作答的<b style="color:var(--tx2)">编辑行为特征</b>，只上传数值、不上传代码内容。</p>
+          <table class="tbl">
+            <thead><tr><th>特征</th><th class="num">本次</th><th class="num">你的常态</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>有效编辑时长</td><td class="num">3m12s</td><td class="num">6m40s</td><td>偏短</td></tr>
+              <tr><td>粘贴占比</td><td class="num">62%</td><td class="num">18%</td><td style="color:var(--warn)">明显偏高</td></tr>
+              <tr><td>粘贴后修改量</td><td class="num">3 字符</td><td class="num">54 字符</td><td style="color:var(--warn)">几乎未改写</td></tr>
+              <tr><td>编译—修改轮次</td><td class="num">1</td><td class="num">4</td><td>未反复调试</td></tr>
+            </tbody>
+          </table>
+          <p class="note" style="margin-top:10px">这是给你看的<b style="color:var(--tx2)">学习过程提示</b>，不是判定。它只说明「这次作答的节奏和平时不一样」。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     页面 2 · 我的作业
+     ============================================================ -->
+<section class="page wrap" id="page-assignments" hidden>
+  <div class="page-head">
+    <div><h1>我的作业</h1><p>按班级查看老师布置的作业。截止时间过后仍可提交，但会计为迟交。</p></div>
+  </div>
+  <div class="split">
+    <div class="card">
+      <div class="card-h"><h3>我的班级</h3></div>
+      <div class="list">
+        <div class="as-card" style="padding:11px 13px;background:var(--accent-subtle);border-color:rgba(110,139,255,.4)">
+          <div style="font-size:13.5px;font-weight:600">25 软件工程技术专升本 2 班</div>
+          <div class="as-meta">冯建刚 · 36 名学生</div>
+        </div>
+        <div class="as-card" style="padding:11px 13px">
+          <div style="font-size:13.5px">算法与数据结构（选修）</div>
+          <div class="as-meta">李文 · 22 名学生</div>
+        </div>
+      </div>
+      <button class="btn btn-sm" style="margin-top:12px;width:100%">加入班级</button>
+    </div>
+
+    <div class="list">
+      <div class="as-card">
+        <div class="as-top">
+          <div style="flex:1">
+            <h4>第三次作业 · 数组与前缀和</h4>
+            <div class="as-meta">截止 2026-09-28 23:59 · 还剩 3 天 · 辅助强度：分层提示</div>
+          </div>
+          <span class="badge badge-wa">进行中 3/6</span>
+        </div>
+        <div class="as-prog"><div class="prog" style="flex:1"><i style="width:50%"></i></div><span class="mono" style="font-family:var(--mono)">3/6</span></div>
+        <div class="pdots">
+          <span class="pdot ok">1</span><span class="pdot ok">2</span><span class="pdot ok">3</span>
+          <span class="pdot bad">4</span><span class="pdot">5</span><span class="pdot">6</span>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-sm btn-primary">继续做第 4 题</button>
+          <button class="btn btn-sm">查看题面</button>
+        </div>
+      </div>
+
+      <div class="as-card">
+        <div class="as-top">
+          <div style="flex:1">
+            <h4>第二次作业 · 排序基础</h4>
+            <div class="as-meta">已于 2026-09-21 截止 · 6/6 全部通过</div>
+          </div>
+          <span class="badge badge-ac">已完成</span>
+        </div>
+        <div class="as-prog"><div class="prog ok" style="flex:1"><i style="width:100%"></i></div><span style="font-family:var(--mono)">6/6</span></div>
+        <div class="pdots">
+          <span class="pdot ok">1</span><span class="pdot ok">2</span><span class="pdot ok">3</span>
+          <span class="pdot ok">4</span><span class="pdot ok">5</span><span class="pdot ok">6</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     页面 3 · 题库
+     ============================================================ -->
+<section class="page wrap" id="page-problems" hidden>
+  <div class="page-head">
+    <div><h1>题库</h1><p>共 128 道题。按知识点或难度挑一道开始，或直接从作业进入。</p></div>
+    <div class="acts"><button class="btn">随机一题</button></div>
+  </div>
+
+  <div class="filters">
+    <div class="grow"><input class="input" placeholder="搜索题号 / 标题 / 知识点"></div>
+    <button class="chip is-on">全部难度</button>
+    <button class="chip">入门</button>
+    <button class="chip">中等</button>
+    <button class="chip">困难</button>
+    <select class="select" style="width:auto"><option>全部知识点</option><option>数组</option><option>动态规划</option></select>
+    <select class="select" style="width:auto"><option>全部状态</option><option>未做</option><option>已通过</option><option>尝试过</option></select>
+  </div>
+
+  <div class="card" style="padding:0;overflow:hidden">
+    <table class="tbl">
+      <thead><tr>
+        <th style="width:70px">题号</th><th>标题</th><th style="width:80px">难度</th>
+        <th>知识点</th><th class="num" style="width:90px">通过率</th><th style="width:90px">状态</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="num">1001</td><td><a href="#">A + B Problem</a></td><td><span class="badge badge-easy">入门</span></td><td>数组 · 模拟</td><td class="num">92.4%</td><td><span class="badge badge-wa">WA</span></td></tr>
+        <tr><td class="num">1002</td><td><a href="#">前缀和求和</a></td><td><span class="badge badge-easy">入门</span></td><td>数组 · 前缀和</td><td class="num">78.1%</td><td><span class="badge">未做</span></td></tr>
+        <tr><td class="num">1005</td><td><a href="#">最长上升子序列</a></td><td><span class="badge badge-medium">中等</span></td><td>动态规划</td><td class="num">54.7%</td><td><span class="badge">未做</span></td></tr>
+        <tr><td class="num">1011</td><td><a href="#">二分查找边界</a></td><td><span class="badge badge-medium">中等</span></td><td>二分 · 数组</td><td class="num">61.3%</td><td><span class="badge badge-ac">AC</span></td></tr>
+        <tr><td class="num">1023</td><td><a href="#">最短路（Dijkstra）</a></td><td><span class="badge badge-hard">困难</span></td><td>图论 · 堆</td><td class="num">31.9%</td><td><span class="badge">未做</span></td></tr>
+        <tr><td class="num">1040</td><td><a href="#">字符串哈希</a></td><td><span class="badge badge-hard">困难</span></td><td>字符串 · 哈希</td><td class="num">28.4%</td><td><span class="badge">未做</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note" style="margin-top:12px">显示 6 / 128 条 · 默认按题号升序</p>
+</section>
+
+<!-- ============================================================
+     页面 4 · 错题本
+     ============================================================ -->
+<section class="page wrap" id="page-mistakes" hidden>
+  <div class="page-head">
+    <div><h1>错题本</h1><p>共 7 条错题。答错的题会自动归档，并带上 AI 判定的错因标签。</p></div>
+    <div class="acts"><button class="btn btn-sm">刷新</button></div>
+  </div>
+
+  <div class="filters">
+    <select class="select" style="width:auto"><option>全部错因（7）</option><option>整数溢出（3）</option><option>边界条件（2）</option><option>死循环（1）</option><option>思路错误（1）</option></select>
+    <select class="select" style="width:auto"><option>全部知识点</option><option>数组</option><option>动态规划</option></select>
+    <div class="grow"></div>
+    <span class="note">筛选在客户端取交集</span>
+  </div>
+
+  <div class="list">
+    <div class="mistake is-open">
+      <button class="m-h">
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <div style="min-width:0">
+          <div class="m-t">#1001 · A + B Problem</div>
+          <div class="m-sub">最近一次 2026-09-25 14:32 · C++17</div>
+        </div>
+        <div class="m-right"><span class="badge badge-wa">WA</span><span class="badge">整数溢出</span></div>
+      </button>
+      <div class="m-body">
+        <div class="ladder">
+          <div class="lv is-open"><button class="lv-h"><span class="lv-step">1</span><span class="lv-name">错在哪</span></button>
+            <div class="lv-body"><p><code>a + b</code> 的结果超出 <code>int</code> 范围，第 6 行相加时已溢出。</p></div></div>
+          <div class="lv is-locked"><button class="lv-h"><span class="lv-step">2</span><span class="lv-name">提示</span>
+            <span class="lv-hint">点「还是不会」解锁</span></button>
+            <div class="lv-body"><p>想想 <code>a</code>、<code>b</code> 的上限，以及能装下这个范围的整数类型。</p></div></div>
+          <div class="lv is-locked"><button class="lv-h"><span class="lv-step">3</span><span class="lv-name">怎么改</span>
+            <span class="lv-hint">点「还是不会」解锁</span></button>
+            <div class="lv-body"><p>改用 <code>long long</code>。</p></div></div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          <button class="btn btn-sm btn-primary">再做一次</button>
+          <button class="btn btn-sm">加入复习计划</button>
+          <span class="note" style="margin-left:auto;align-self:center">这个错因共出现 4 次 · 跨 3 道题</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="mistake">
+      <button class="m-h">
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <div style="min-width:0"><div class="m-t">#1018 · 区间求和</div>
+          <div class="m-sub">2026-09-24 20:11 · C++17</div></div>
+        <div class="m-right"><span class="badge badge-tle">TLE</span><span class="badge">复杂度过高</span></div>
+      </button>
+      <div class="m-body"><p class="note">展开后可见三层反馈与历史出现次数。</p></div>
+    </div>
+
+    <div class="mistake">
+      <button class="m-h">
+        <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        <div style="min-width:0"><div class="m-t">#1042 · 字符串反转</div>
+          <div class="m-sub">2026-09-22 09:03 · Python 3</div></div>
+        <div class="m-right"><span class="badge badge-wa">WA</span><span class="badge">边界条件</span></div>
+      </button>
+      <div class="m-body"><p class="note">展开后可见三层反馈与历史出现次数。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     页面 5 · 能力画像
+     ============================================================ -->
+<section class="page wrap" id="page-profile" hidden>
+  <div class="page-head">
+    <div><h1>能力画像</h1><p>根据 42 次提交统计各知识点的正确率。数据不足时不画雷达图，只给原始数字。</p></div>
+    <div class="acts"><button class="btn btn-sm">刷新</button></div>
+  </div>
+
+  <div class="kpi">
+    <div class="kpi-card"><div class="kpi-label">总正确率</div><div class="kpi-value" style="color:var(--m3)">58.3%</div><div class="kpi-hint">23 / 42 次通过</div></div>
+    <div class="kpi-card"><div class="kpi-label">知识点数</div><div class="kpi-value">6</div><div class="kpi-hint">已接触</div></div>
+    <div class="kpi-card"><div class="kpi-label">总提交数</div><div class="kpi-value">42</div><div class="kpi-hint">含重复提交</div></div>
+    <div class="kpi-card"><div class="kpi-label">最需补强</div><div class="kpi-value" style="font-family:var(--sans);font-size:20px">图论</div><div class="kpi-hint">正确率 35%</div></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-h"><h3>掌握度雷达图</h3><span class="sub">六个知识点</span></div>
+    <div class="radar-wrap">
+      <svg viewBox="0 0 300 280" width="100%" height="260" role="img" aria-label="知识点掌握度雷达图">
+        <polygon points="150,40 236.6,90 236.6,190 150,240 63.4,190 63.4,90" fill="none" stroke="var(--border)" stroke-width="1"/>
+        <polygon points="150,65 214.95,102.5 214.95,177.5 150,215 85.05,177.5 85.05,102.5" fill="none" stroke="var(--border)" stroke-width="1"/>
+        <polygon points="150,90 193.3,115 193.3,165 150,190 106.7,165 106.7,115" fill="none" stroke="var(--border)" stroke-width="1"/>
+        <polygon points="150,115 171.65,127.5 171.65,152.5 150,165 128.35,152.5 128.35,127.5" fill="none" stroke="var(--border)" stroke-width="1"/>
+        <line x1="150" y1="140" x2="150" y2="40" stroke="var(--border)" stroke-width="1"/>
+        <line x1="150" y1="140" x2="236.6" y2="90" stroke="var(--border)" stroke-width="1"/>
+        <line x1="150" y1="140" x2="236.6" y2="190" stroke="var(--border)" stroke-width="1"/>
+        <line x1="150" y1="140" x2="150" y2="240" stroke="var(--border)" stroke-width="1"/>
+        <line x1="150" y1="140" x2="63.4" y2="190" stroke="var(--border)" stroke-width="1"/>
+        <line x1="150" y1="140" x2="63.4" y2="90" stroke="var(--border)" stroke-width="1"/>
+        <polygon points="150,68 188.97,117.5 224.48,183 150,175 98.04,170 106.7,115"
+                 fill="rgba(110,139,255,.24)" stroke="var(--accent)" stroke-width="2"/>
+        <circle cx="150" cy="68" r="3.2" fill="var(--accent)"/>
+        <circle cx="188.97" cy="117.5" r="3.2" fill="var(--accent)"/>
+        <circle cx="224.48" cy="183" r="3.2" fill="var(--accent)"/>
+        <circle cx="150" cy="175" r="3.2" fill="var(--accent)"/>
+        <circle cx="98.04" cy="170" r="3.2" fill="var(--accent)"/>
+        <circle cx="106.7" cy="115" r="3.2" fill="var(--accent)"/>
+        <text x="150" y="28" font-size="11" fill="var(--tx2)" text-anchor="middle">数组 72%</text>
+        <text x="243" y="86" font-size="11" fill="var(--tx2)" text-anchor="start">字符串 45%</text>
+        <text x="243" y="200" font-size="11" fill="var(--tx2)" text-anchor="start">排序 86%</text>
+        <text x="150" y="258" font-size="11" fill="var(--tx2)" text-anchor="middle">图论 35%</text>
+        <text x="57" y="200" font-size="11" fill="var(--tx2)" text-anchor="end">动态规划 60%</text>
+        <text x="57" y="86" font-size="11" fill="var(--tx2)" text-anchor="end">贪心 50%</text>
+      </svg>
+      <div class="legend">
+        <div class="legend-row"><span class="sw" style="background:var(--m4)"></span><span class="nm">≥ 80% 已掌握</span></div>
+        <div class="legend-row"><span class="sw" style="background:var(--m3)"></span><span class="nm">60–79% 基本掌握</span></div>
+        <div class="legend-row"><span class="sw" style="background:var(--m2)"></span><span class="nm">40–59% 需要练习</span></div>
+        <div class="legend-row"><span class="sw" style="background:var(--m1)"></span><span class="nm">&lt; 40% 薄弱</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-h"><h3>详细统计</h3></div>
+    <p class="note" style="margin-bottom:12px">按正确率升序排列，最需要补的知识点在最上面。</p>
+    <table class="tbl">
+      <thead><tr><th>知识点</th><th class="num">总数</th><th class="num">通过</th><th class="num">正确率</th><th style="width:160px">掌握度</th></tr></thead>
+      <tbody>
+        <tr><td>图论</td><td class="num">9</td><td class="num">3</td><td class="num" style="color:var(--m1)">33.3%</td><td><div class="prog bad"><i style="width:33%"></i></div></td></tr>
+        <tr><td>字符串</td><td class="num">7</td><td class="num">3</td><td class="num" style="color:var(--m2)">42.9%</td><td><div class="prog bad"><i style="width:43%"></i></div></td></tr>
+        <tr><td>数组</td><td class="num">12</td><td class="num">8</td><td class="num" style="color:var(--m3)">66.7%</td><td><div class="prog warn"><i style="width:67%"></i></div></td></tr>
+        <tr><td>贪心</td><td class="num">4</td><td class="num">3</td><td class="num" style="color:var(--m3)">75.0%</td><td><div class="prog warn"><i style="width:75%"></i></div></td></tr>
+        <tr><td>动态规划</td><td class="num">5</td><td class="num">4</td><td class="num" style="color:var(--m4)">80.0%</td><td><div class="prog ok"><i style="width:80%"></i></div></td></tr>
+        <tr><td>排序</td><td class="num">5</td><td class="num">5</td><td class="num" style="color:var(--m4)">100%</td><td><div class="prog ok"><i style="width:100%"></i></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================
+     页面 6 · 复习计划
+     ============================================================ -->
+<section class="page wrap" id="page-plan" hidden>
+  <div class="page-head">
+    <div><h1>复习计划</h1><p>用 SM-2 间隔重复算法安排复习。今天有 5 道题到期，按最该复习的排在最前。</p></div>
+    <div class="acts"><button class="btn btn-sm">刷新</button></div>
+  </div>
+
+  <div class="notice">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+         stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+    <span>打分只影响<b>下次复习时间</b>，不影响成绩。0 = 完全想不起来，5 = 毫不费力。</span>
+  </div>
+
+  <div class="list">
+    <div class="review-item">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:600">#1042 字符串反转</div>
+        <div class="as-meta">上次复习 3 天前 · 间隔 3 天 · 难度系数 2.4（越难记越低）</div>
+      </div>
+      <div class="score" data-score>
+        <button>0</button><button>1</button><button>2</button><button>3</button><button>4</button><button>5</button>
+      </div>
+      <span class="note" style="width:108px;text-align:right" data-next>下次：待打分</span>
+    </div>
+    <div class="review-item">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:600">#1001 A + B Problem</div>
+        <div class="as-meta">上次复习 1 天前 · 间隔 1 天 · 难度系数 1.9</div>
+      </div>
+      <div class="score" data-score>
+        <button>0</button><button>1</button><button>2</button><button>3</button><button class="is-on">4</button><button>5</button>
+      </div>
+      <span class="note" style="width:108px;text-align:right" data-next>下次：5 天后</span>
+    </div>
+    <div class="review-item">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:600">#1018 区间求和</div>
+        <div class="as-meta">首次进入复习 · 难度系数 2.5</div>
+      </div>
+      <div class="score" data-score>
+        <button>0</button><button>1</button><button>2</button><button>3</button><button>4</button><button>5</button>
+      </div>
+      <span class="note" style="width:108px;text-align:right" data-next>下次：待打分</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     页面 7 · 学情看板（教师端）
+     ============================================================ -->
+<section class="page wrap" id="page-teacher" hidden>
+  <div class="page-head">
+    <div><h1>学情看板</h1><p>25 软件工程技术专升本 2 班 · 36 名学生 · 412 次提交</p></div>
+    <div class="acts">
+      <select class="select" style="width:auto"><option>全部作业</option><option>第三次作业</option></select>
+      <button class="btn btn-sm">导出 CSV</button>
+    </div>
+  </div>
+
+  <div class="kpi">
+    <div class="kpi-card"><div class="kpi-label">提交总数</div><div class="kpi-value">412</div><div class="kpi-hint">近 7 天 +58</div></div>
+    <div class="kpi-card"><div class="kpi-label">平均正确率</div><div class="kpi-value" style="color:var(--m3)">61.2%</div><div class="kpi-hint">较上周 +3.4%</div></div>
+    <div class="kpi-card"><div class="kpi-label">需要关注</div><div class="kpi-value" style="color:var(--warn)">5</div><div class="kpi-hint">连续未通过 / 长期无提交</div></div>
+    <div class="kpi-card"><div class="kpi-label">待复核</div><div class="kpi-value" style="color:var(--danger)">3</div><div class="kpi-hint">过程特征存疑提交</div></div>
+  </div>
+
+  <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin-top:14px">
+    <div class="card">
+      <div class="card-h"><h3>需要关注</h3><span class="sub">按紧急度排序</span></div>
+      <div class="list" style="gap:9px">
+        <div class="alert">
+          <span class="alert-i">!</span>
+          <div class="alert-b"><div class="t">王思远</div><div class="d">连续 4 次提交未通过 · 同一道题卡了 2 天</div></div>
+          <div class="alert-a"><button class="btn btn-sm">看详情</button></div>
+        </div>
+        <div class="alert">
+          <span class="alert-i" style="background:rgba(76,201,240,.12);color:var(--info)">·</span>
+          <div class="alert-b"><div class="t">陈晓</div><div class="d">7 天无任何提交</div></div>
+          <div class="alert-a"><button class="btn btn-sm">提醒</button></div>
+        </div>
+        <div class="alert">
+          <span class="alert-i" style="background:rgba(167,139,250,.12);color:var(--purple)">24</span>
+          <div class="alert-b"><div class="t">全班 · 整数溢出</div><div class="d">本周 24 次提交命中同一错因，建议下节课讲</div></div>
+          <div class="alert-a"><button class="btn btn-sm">生成讲义</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><h3>错因分布</h3><span class="sub">Top 6 · 本周</span></div>
+      <div class="bars">
+        <div class="bar-row"><span class="nm">整数溢出</span><div class="prog bad"><i style="width:78%"></i></div><span class="vl">24</span></div>
+        <div class="bar-row"><span class="nm">边界条件</span><div class="prog warn"><i style="width:56%"></i></div><span class="vl">17</span></div>
+        <div class="bar-row"><span class="nm">复杂度过高</span><div class="prog warn"><i style="width:44%"></i></div><span class="vl">13</span></div>
+        <div class="bar-row"><span class="nm">死循环</span><div class="prog"><i style="width:30%"></i></div><span class="vl">9</span></div>
+        <div class="bar-row"><span class="nm">输入输出格式</span><div class="prog"><i style="width:22%"></i></div><span class="vl">7</span></div>
+        <div class="bar-row"><span class="nm">思路错误</span><div class="prog"><i style="width:14%"></i></div><span class="vl">4</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-h"><h3>知识点掌握</h3><span class="sub">全班平均正确率</span></div>
+    <div class="bars">
+      <div class="bar-row"><span class="nm">排序</span><div class="prog ok"><i style="width:88%"></i></div><span class="vl">88%</span></div>
+      <div class="bar-row"><span class="nm">数组</span><div class="prog warn"><i style="width:71%"></i></div><span class="vl">71%</span></div>
+      <div class="bar-row"><span class="nm">字符串</span><div class="prog warn"><i style="width:52%"></i></div><span class="vl">52%</span></div>
+      <div class="bar-row"><span class="nm">动态规划</span><div class="prog bad"><i style="width:38%"></i></div><span class="vl">38%</span></div>
+      <div class="bar-row"><span class="nm">图论</span><div class="prog bad"><i style="width:29%"></i></div><span class="vl">29%</span></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;padding:0;overflow:hidden">
+    <div class="card-h" style="padding:14px 16px 0"><h3>学生清单</h3><span class="sub">点击下钻到个人</span></div>
+    <table class="tbl" style="margin-top:12px">
+      <thead><tr><th>学生</th><th class="num">提交</th><th class="num">正确率</th><th class="num">未通过</th><th>最弱知识点</th><th class="num">存疑</th></tr></thead>
+      <tbody>
+        <tr><td>王思远</td><td class="num">18</td><td class="num" style="color:var(--m1)">22.2%</td><td class="num">14</td><td>动态规划</td><td class="num">2</td></tr>
+        <tr><td>陈晓</td><td class="num">4</td><td class="num" style="color:var(--m2)">50.0%</td><td class="num">2</td><td>图论</td><td class="num">0</td></tr>
+        <tr><td>刘爱重</td><td class="num">42</td><td class="num" style="color:var(--m3)">58.3%</td><td class="num">19</td><td>图论</td><td class="num">1</td></tr>
+        <tr><td>赵一鸣</td><td class="num">31</td><td class="num" style="color:var(--m4)">87.1%</td><td class="num">4</td><td>字符串</td><td class="num">0</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-h"><h3>存疑提交</h3><span class="sub">过程特征异常，需教师复核</span></div>
+    <div class="list" style="gap:9px">
+      <div class="alert">
+        <span class="alert-i" style="background:rgba(255,107,122,.12);color:var(--danger)">?</span>
+        <div class="alert-b">
+          <div class="t">刘爱重 · #1001</div>
+          <div class="d">粘贴占比 62%（常态 18%）· 粘贴后仅改 3 字符 · 总时长 3m12s（常态 6m40s）</div>
+        </div>
+        <div class="alert-a">
+          <button class="btn btn-sm" data-toast="已标记为「确认」">确认</button>
+          <button class="btn btn-sm btn-danger" data-toast="已驳回，特征数据保留">驳回</button>
+        </div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:12px">驳回 = 判为误报，该条退出待看队列但保留全部特征数据；确认后仍留在列表中备查。</p>
+  </div>
+</section>
+
+<!-- ============================================================
+     页面 8 · 班级管理（教师端）
+     ============================================================ -->
+<section class="page wrap" id="page-classes" hidden>
+  <div class="page-head">
+    <div><h1>班级管理</h1><p>先建班级、导入名单，学情看板才有数据可看。</p></div>
+  </div>
+  <div class="split">
+    <div class="card">
+      <div class="card-h"><h3>新建班级</h3></div>
+      <div class="field"><label class="label">班级名称</label><input class="input" placeholder="如：25 软件工程技术专升本 2 班"></div>
+      <div class="field"><label class="label">课程</label><input class="input" placeholder="如：数据结构与算法"></div>
+      <div class="field"><label class="label">学期</label><input class="input" value="2026-2027 学年第一学期"></div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center" data-toast="班级已创建">创建班级</button>
+    </div>
+
+    <div class="list">
+      <div class="as-card">
+        <div class="as-top">
+          <div style="flex:1"><h4>25 软件工程技术专升本 2 班</h4>
+            <div class="as-meta">数据结构与算法 · 36 名学生 · 邀请码 8F2K9Q</div></div>
+          <span class="badge badge-ac">进行中</span>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm">导入名单</button>
+          <button class="btn btn-sm">布置作业</button>
+          <button class="btn btn-sm">复制邀请码</button>
+          <button class="btn btn-sm btn-ghost">归档</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h3>批量导入名单</h3><span class="sub">粘贴 Excel 里的两列</span></div>
+        <textarea class="input" rows="5" placeholder="学号	姓名&#10;2025021120058	刘爱重&#10;2025021120059	王思远"></textarea>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+          <button class="btn btn-sm btn-primary" data-toast="解析到 2 条记录">解析</button>
+          <span class="note">支持 Tab / 逗号分隔，自动跳过表头</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     页面 9 · 设计系统
+     ============================================================ -->
+<section class="page wrap" id="page-ds" hidden>
+  <div class="page-head">
+    <div><h1>设计系统 · 曜石灰</h1>
+      <p>所有颜色 / 间距 / 圆角都走 CSS 变量。变量名与 <code>docs/ui-design-spec-2026-09-25.md</code> 一致。</p></div>
+    <div class="acts"><button class="btn btn-sm" data-toast="这是一条 Toast：成功态">测试 Toast</button></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h3>表面与文字</h3><span class="sub">四级明度 + 三级文字</span></div>
+    <div class="sw-grid">
+      <div class="sw"><div class="sw-c" style="background:var(--canvas)"></div><div class="sw-n"><b>canvas</b><span>#0B0D12</span></div></div>
+      <div class="sw"><div class="sw-c" style="background:var(--surface)"></div><div class="sw-n"><b>surface</b><span>#13161D</span></div></div>
+      <div class="sw"><div class="sw-c" style="background:var(--elevated)"></div><div class="sw-n"><b>elevated</b><span>#1A1E27</span></div></div>
+      <div class="sw"><div class="sw-c" style="background:var(--overlay)"></div><div class="sw-n"><b>overlay</b><span>#232833</span></div></div>
+      <div class="sw"><div class="sw-c" style="background:var(--tx1)"></div><div class="sw-n"><b>text-1</b><span>#E8EAF0 · 15.05:1</span></div></div>
+      <div class="sw"><div class="sw-c" style="background:var(--tx2)"></div><div class="sw-n"><b>text-2</b><span>#A0A6B8 · 7.45:1</span></div></div>
+      <div class="sw"><div class="sw-c" style="background:var(--tx3)"></div><div class="sw-n"><b>text-3</b><span>#868EA3 · 5.53:1</span></div></div>
+      <div class="sw"><div class="sw-c" style="background:var(--accent);color:var(--tx-inv);display:grid;place-items:center;font-size:12px">Aa</div>
+        <div class="sw-n"><b>accent</b><span>#6E8BFF · 反色字 6.29:1</span></div></div>
+    </div>
+  </div>
+
+  <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr);margin-top:14px">
+    <div class="card">
+      <div class="card-h"><h3>语义色</h3><span class="sub">只承载结果，不做装饰</span></div>
+      <div class="sw-grid">
+        <div class="sw"><div class="sw-c" style="background:var(--ok)"></div><div class="sw-n"><b>success / AC</b><span>#3DDC97</span></div></div>
+        <div class="sw"><div class="sw-c" style="background:var(--warn)"></div><div class="sw-n"><b>warning / TLE</b><span>#FFB454</span></div></div>
+        <div class="sw"><div class="sw-c" style="background:var(--danger)"></div><div class="sw-n"><b>danger / WA</b><span>#FF6B7A</span></div></div>
+        <div class="sw"><div class="sw-c" style="background:var(--info)"></div><div class="sw-n"><b>info / MLE</b><span>#4CC9F0</span></div></div>
+        <div class="sw"><div class="sw-c" style="background:var(--purple)"></div><div class="sw-n"><b>purple / CE</b><span>#A78BFA</span></div></div>
+        <div class="sw"><div class="sw-c" style="background:var(--v-re)"></div><div class="sw-n"><b>RE</b><span>#FF9455</span></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><h3>字阶</h3><span class="sub">14px 基准 · 行高 1.6</span></div>
+      <div class="type-row"><span class="tg">22 / 650</span><span style="font-size:22px;font-weight:650">页面标题 H1</span></div>
+      <div class="type-row"><span class="tg">16 / 600</span><span style="font-size:16px;font-weight:600">区块标题 H2</span></div>
+      <div class="type-row"><span class="tg">14 / 600</span><span style="font-size:14px;font-weight:600">卡片标题</span></div>
+      <div class="type-row"><span class="tg">14 / 400</span><span style="font-size:14px">正文 · 表格</span></div>
+      <div class="type-row"><span class="tg">13 / 400</span><span style="font-size:13px;color:var(--tx2)">次要说明</span></div>
+      <div class="type-row"><span class="tg">12 / 400</span><span style="font-size:12px;color:var(--tx3)">标签 · 脚注</span></div>
+      <div class="type-row"><span class="tg">mono 13</span><span style="font-family:var(--mono);font-size:13px">0123456789 等宽数字</span></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-h"><h3>组件</h3><span class="sub">按钮 / 徽章 / 表单 / 反馈</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+      <button class="btn btn-primary">主按钮 提交</button>
+      <button class="btn">次按钮 运行</button>
+      <button class="btn btn-ghost">文字按钮</button>
+      <button class="btn btn-danger">危险 驳回</button>
+      <button class="btn" disabled>禁用态</button>
+      <span class="badge badge-ac">AC</span><span class="badge badge-wa">WA</span>
+      <span class="badge badge-tle">TLE</span><span class="badge badge-easy">入门</span>
+      <span class="badge badge-medium">中等</span><span class="badge badge-hard">困难</span>
+      <span class="chip is-on">已选筛选</span><span class="chip">未选</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:16px;max-width:520px">
+      <div style="flex:1;min-width:200px"><label class="label">输入框</label><input class="input" placeholder="搜索题目"></div>
+      <div style="flex:1;min-width:200px"><label class="label">下拉</label><select class="select"><option>全部错因</option></select></div>
+    </div>
+    <div style="margin-top:16px;max-width:360px">
+      <label class="label">掌握度进度条</label>
+      <div class="prog bad" style="margin-bottom:8px"><i style="width:33%"></i></div>
+      <div class="prog warn" style="margin-bottom:8px"><i style="width:67%"></i></div>
+      <div class="prog ok"><i style="width:88%"></i></div>
+    </div>
+    <div class="notice" style="margin-top:16px">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+      <span>Notice：用于「需要注意但不阻断」的说明，例如语言不可用、打分规则。</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-h"><h3>空状态与骨架</h3><span class="sub">空状态必须给下一步动作</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px">
+      <div style="border:1px solid var(--border);border-radius:var(--r-md)">
+        <div class="empty">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+          <h4>还没有可分析的数据</h4><p>去题库挑一道题提交一次，这里就会出现第一个数据点。</p>
+          <button class="btn btn-sm btn-primary">去题库选题</button>
+        </div>
+      </div>
+      <div style="border:1px solid var(--border);border-radius:var(--r-md);padding:16px">
+        <div style="height:12px;width:38%;background:var(--elevated);border-radius:6px;margin-bottom:12px"></div>
+        <div style="height:10px;width:100%;background:var(--elevated);border-radius:6px;margin-bottom:8px"></div>
+        <div style="height:10px;width:82%;background:var(--elevated);border-radius:6px;margin-bottom:8px"></div>
+        <div style="height:10px;width:64%;background:var(--elevated);border-radius:6px"></div>
+        <p class="note" style="margin-top:12px">骨架屏：加载超过 300ms 才出现，避免闪烁。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================
+     页面 10 · 登录
+     ============================================================ -->
+<section class="page" id="page-login" hidden>
+  <div class="gate">
+    <div class="gate-card">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 12 5l8 13"/><path d="M8.5 15h7"/></svg>
+        <div><div style="font-size:15px;font-weight:600">智能学情反馈</div>
+          <div style="font-size:11px;color:var(--tx3)">AlgoForge</div></div>
+      </div>
+      <h2>登录</h2>
+      <p class="sub">不登录也能练习，但提交不会记入画像与作业。</p>
+      <div class="field"><label class="label">学号 / 用户名</label><input class="input" value="2025021120058"></div>
+      <div class="field"><label class="label">密码</label><input class="input" type="password" value="12345678"></div>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:6px" data-toast="登录成功，欢迎回来">登录</button>
+      <div class="gate-alt">还没有账号？<a href="#">注册</a> · <a href="#">以游客身份继续</a></div>
+    </div>
+  </div>
+</section>
+
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="dot" style="color:var(--ok)"></span><span id="toast-txt"></span></div>
+
+<script>
+/* ---------- 页面切换 ---------- */
+var PAGES = {
+  practice:['学习','练习'], assignments:['学习','我的作业'], problems:['学习','题库'],
+  mistakes:['学习','错题本'], profile:['学习','能力画像'], plan:['学习','复习'],
+  teacher:['教学','学情看板'], classes:['教学','班级管理'],
+  ds:['设计','设计系统'], login:['设计','登录页']
+};
+function show(name){
+  document.querySelectorAll('.page').forEach(function(p){ p.hidden = true })
+  var el = document.getElementById('page-' + name)
+  if (el) el.hidden = false
+  document.querySelectorAll('.nav-item').forEach(function(a){
+    a.classList.toggle('is-active', a.dataset.page === name)
+  })
+  document.getElementById('crumb-sec').textContent = PAGES[name][0]
+  document.getElementById('crumb-page').textContent = PAGES[name][1]
+  document.getElementById('content').scrollTop = 0
+}
+document.querySelectorAll('.nav-item').forEach(function(a){
+  a.addEventListener('click', function(e){ e.preventDefault(); show(a.dataset.page) })
+})
+
+/* ---------- 底部面板页签 ---------- */
+var BT = ['out','cases','diag','dbg','proc']
+document.querySelectorAll('.tab[data-bt]').forEach(function(t){
+  t.addEventListener('click', function(){
+    document.querySelectorAll('.tab[data-bt]').forEach(function(x){ x.classList.remove('is-on') })
+    t.classList.add('is-on')
+    BT.forEach(function(k){ document.getElementById('bt-' + k).hidden = (k !== t.dataset.bt) })
+  })
+})
+
+/* ---------- 分层反馈：三层释放 ---------- */
+function openLevel(n){
+  var el = document.getElementById('lv' + n)
+  if (!el) return
+  el.classList.remove('is-locked'); el.classList.add('is-open')
+}
+function resetLadder(){
+  [2,3].forEach(function(n){
+    var el = document.getElementById('lv' + n)
+    if (el){ el.classList.add('is-locked'); el.classList.remove('is-open') }
+  })
+}
+document.querySelectorAll('[data-ladder]').forEach(function(b){
+  b.addEventListener('click', function(){
+    var v = b.dataset.ladder
+    if (v === 'reset') resetLadder(); else openLevel(v)
+  })
+})
+
+/* ---------- 错题卡展开 ---------- */
+document.querySelectorAll('.m-h').forEach(function(h){
+  h.addEventListener('click', function(){ h.parentElement.classList.toggle('is-open') })
+})
+
+/* ---------- 筛选 chip ---------- */
+document.querySelectorAll('.chip').forEach(function(c){
+  c.addEventListener('click', function(){
+    c.parentElement.querySelectorAll('.chip').forEach(function(x){ x.classList.remove('is-on') })
+    c.classList.add('is-on')
+  })
+})
+
+/* ---------- SM-2 打分 ---------- */
+document.querySelectorAll('[data-score]').forEach(function(g){
+  var item = g.closest('.review-item')
+  var next = item.querySelector('[data-next]')
+  g.querySelectorAll('button').forEach(function(b){
+    b.addEventListener('click', function(){
+      g.querySelectorAll('button').forEach(function(x){ x.classList.remove('is-on') })
+      b.classList.add('is-on')
+      var s = Number(b.textContent)
+      var days = [1,1,2,4,5,8][s]
+      next.textContent = '下次：' + days + ' 天后'
+    })
+  })
+})
+
+/* ---------- Toast ---------- */
+var toastTimer
+function toast(msg){
+  var t = document.getElementById('toast')
+  document.getElementById('toast-txt').textContent = msg
+  t.classList.add('is-on')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(function(){ t.classList.remove('is-on') }, 2400)
+}
+document.querySelectorAll('[data-toast]').forEach(function(b){
+  b.addEventListener('click', function(){ toast(b.dataset.toast) })
+})
+</script>
+</body>
+</html>

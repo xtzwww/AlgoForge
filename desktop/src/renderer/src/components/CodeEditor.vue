@@ -50,11 +50,31 @@
  * learning-process data actually originates. The recorder lives in
  * `edit-trace.ts`; this file only tells it what happened, and only in
  * *sizes*, never in text. See that module for why.
+ *
+ * **PU-17 added the breakpoint gutter.** Three props/events and one
+ * decoration layer:
+ *
+ * * `breakpoints` — the line numbers to mark. The *parent* owns this; the
+ *   editor renders it and reports clicks. One owner means the gutter and
+ *   the sidecar cannot disagree, which matters because the sidecar is
+ *   what gdb actually honours.
+ * * `currentLine` — the line the debugger is stopped on, or `null`.
+ * * `toggle-breakpoint` — emitted with the line number on a gutter click.
+ *
+ * The marker is drawn with `deltaDecorations` rather than by styling the
+ * gutter DOM: Monaco owns that DOM and rewrites it on every scroll, so a
+ * class applied by hand survives until the next repaint and then silently
+ * disappears. Decorations are Monaco's own model and survive everything.
+ *
+ * `currentLine` gets a *line* decoration rather than a glyph one, so the
+ * whole line is tinted — a student scanning for "where am I" looks at the
+ * code, not at the 16px gutter.
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import monaco from '../monaco'
 import { editTrace } from '../edit-trace'
-import { ALGOFORGE_THEME, installAlgoforgeTheme, type MonacoLanguageId } from '../monaco-theme'
+import { ALGOFORGE_THEME, installAlgoforgeTheme, refreshAlgoforgeTheme, type MonacoLanguageId } from '../monaco-theme'
+import { themeVersion } from '../composables/useTheme'
 
 // Importing this component is what installs the theme, so the two cannot
 // be separated. Module scope, so it happens before any editor is created
@@ -67,19 +87,79 @@ const props = withDefaults(
     modelValue: string
     language?: MonacoLanguageId
     theme?: string
+    /**
+     * Lines to mark as breakpoints (PU-17). Owned by the parent, which is
+     * also what tells the sidecar — see the component docstring.
+     */
+    breakpoints?: number[]
+    /** The line execution is stopped on, or `null` when not debugging. */
+    currentLine?: number | null
   }>(),
   {
     language: 'cpp',
-    theme: ALGOFORGE_THEME
+    theme: ALGOFORGE_THEME,
+    breakpoints: () => [],
+    currentLine: null
   }
 )
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
+  (e: 'toggle-breakpoint', line: number): void
 }>()
 
 const container = ref<HTMLDivElement | null>(null)
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
+
+/**
+ * Ids of the currently-applied decorations.
+ *
+ * Kept so the next call can retire exactly these rather than clearing the
+ * whole layer — `deltaDecorations(old, new)` replaces by id, and passing
+ * an empty old list would leave the previous markers behind as orphans.
+ */
+let decorationIds: string[] = []
+
+/**
+ * Repaint the breakpoint dots and the current-line highlight.
+ *
+ * Decorations are applied for lines beyond the end of the file too: a
+ * student who sets a breakpoint and *then* deletes lines above it has a
+ * breakpoint on a line that no longer exists, and the honest render is an
+ * invisible marker that comes back if the line does. Filtering them here
+ * would silently drop the student's intent.
+ */
+function renderDecorations(): void {
+  if (!editor) return
+
+  const decorations: monaco.editor.IModelDeltaDecoration[] = []
+
+  for (const line of props.breakpoints) {
+    decorations.push({
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        // `glyphMarginClassName` draws in the gutter strip rather than
+        // over the line numbers, so the number stays readable.
+        glyphMarginClassName: 'code-editor__breakpoint',
+        glyphMarginHoverMessage: { value: '断点（调试时在这里停住）' },
+        stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+      }
+    })
+  }
+
+  if (props.currentLine !== null && props.currentLine !== undefined) {
+    decorations.push({
+      range: new monaco.Range(props.currentLine, 1, props.currentLine, 1),
+      options: {
+        isWholeLine: true,
+        className: 'code-editor__current-line',
+        stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+      }
+    })
+  }
+
+  decorationIds = editor.deltaDecorations(decorationIds, decorations)
+}
 
 onMounted(() => {
   if (!container.value) return
@@ -93,7 +173,10 @@ onMounted(() => {
     minimap: { enabled: true },
     scrollBeyondLastLine: false,
     tabSize: 4,
-    insertSpaces: false
+    insertSpaces: false,
+    // The strip the breakpoint dots are painted into. Without this the
+    // glyph classes are applied to nothing and the gutter looks inert.
+    glyphMargin: true
   })
 
   // Creating the editor is the start of an editing session: whatever was
@@ -123,6 +206,25 @@ onMounted(() => {
 
     emit('update:modelValue', editor.getValue())
   })
+
+  /**
+   * A click in the glyph strip toggles a breakpoint on that line.
+   *
+   * Checked against `GUTTER_GLYPH_MARGIN` specifically rather than
+   * anywhere in the gutter: a click on the line *number* is Monaco's own
+   * gesture (it selects the line), and hijacking it would break a
+   * familiar editor behaviour to add a less discoverable one.
+   */
+  editor.onMouseDown((e) => {
+    if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return
+    const line = e.target.position?.lineNumber
+    if (line === undefined) return
+    emit('toggle-breakpoint', line)
+  })
+
+  // Painted once at creation so a session restored with breakpoints
+  // already set (or a remount after a tab switch) shows them.
+  renderDecorations()
 
   // Fired *after* the content change above, from the same synchronous
   // call, which is why it rewrites the event just recorded rather than
@@ -156,9 +258,46 @@ watch([() => props.modelValue, () => props.language], ([newValue, newLanguage]) 
   }
 })
 
+/**
+ * Repaint when the markers change.
+ *
+ * Watches a *serialised* form rather than the arrays themselves. The
+ * parent re-creates `breakpoints` on every render (it comes from a
+ * `computed` over a `Set`), so a reference comparison would see a new
+ * array each time and repaint on every unrelated render — while an edit
+ * that produced an equal set would repaint for nothing. Comparing the
+ * sorted contents is what makes "did the markers actually change?" the
+ * question being asked.
+ */
+watch(
+  () => [...props.breakpoints].sort((a, b) => a - b).join(','),
+  () => renderDecorations()
+)
+
+watch(
+  () => props.currentLine,
+  () => renderDecorations()
+)
+
+/**
+ * Re-apply the editor theme when the visual style switches.
+ *
+ * The AlgoForge theme reads its colours from CSS, so a `data-theme`
+ * change means the literals differ. `refreshAlgoforgeTheme()`
+ * re-resolves and redefines the theme; calling `setTheme` again is what
+ * makes a *base* change (Paper uses `vs`, the dark themes use
+ * `vs-dark`) take effect on the live editor — redefining alone leaves
+ * the running editor on its original base.
+ */
+watch(themeVersion, () => {
+  refreshAlgoforgeTheme()
+  if (editor) monaco.editor.setTheme(props.theme)
+})
+
 onBeforeUnmount(() => {
   editor?.dispose()
   editor = null
+  decorationIds = []
 })
 </script>
 
@@ -177,5 +316,39 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   min-height: 300px;
+}
+</style>
+
+<!--
+  The breakpoint marker, deliberately in a *non-scoped* block.
+
+  Monaco appends its gutter DOM to `document.body`-adjacent containers
+  rather than to this component's root, so a `data-v-*` scoped attribute
+  is never applied to it and a scoped rule would match nothing. This is
+  the one case in the codebase where that is the right trade — the class
+  names are prefixed `code-editor__` so they cannot collide.
+-->
+<style>
+/*
+ * A dot, drawn with a background circle rather than a glyph character:
+ * a character depends on the font having it, and the editor's font is
+ * configurable.
+ */
+.code-editor__breakpoint {
+  background: radial-gradient(
+    circle at center,
+    var(--af-danger) 0 4px,
+    transparent 4px
+  );
+  cursor: pointer;
+}
+
+/*
+ * The tint on the stopped line. Low alpha on purpose: the line has to
+ * read as "you are here" without competing with the syntax highlighting
+ * the student is actually reading.
+ */
+.code-editor__current-line {
+  background: rgb(79 140 255 / 0.16);
 }
 </style>

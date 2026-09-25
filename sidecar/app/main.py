@@ -12,6 +12,8 @@ from app.agent.tracing import configure_tracing
 from app.api.assignments import router as assignments_router
 from app.api.assistance import router as assistance_router
 from app.api.auth import router as auth_router
+from app.api.classroom import router as classroom_router
+from app.api.debug import router as debug_router
 from app.api.env_check import router as env_check_router
 from app.api.health import router as health_router
 from app.api.judge import router as judge_router
@@ -90,9 +92,11 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(classroom_router)
 app.include_router(env_check_router)
 app.include_router(run_code_router)
 app.include_router(judge_router)
+app.include_router(debug_router)
 app.include_router(problems_router)
 app.include_router(submissions_router)
 app.include_router(ws_router)

@@ -23,6 +23,9 @@
  *   7. 外部改 `modelValue` 要 `setValue`，且**紧接着重设语言**——`setValue`
  *      会把 model 的语言关联一起重置，漏掉这一步就是「高亮时好时坏」；
  *   8. 卸载时 `dispose`，否则切页会漏编辑器实例。
+ *
+ * PU-17 之后另有三条关于**断点槽**的，见文件末尾那个 `describe`：那几组
+ * 断言都钉在「组件让 Monaco 做什么」上，因为打桩的 Monaco 不画任何东西。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
@@ -43,19 +46,45 @@ interface FakeContentEvent {
 
 /** 假编辑器：组件真的会用到的方法都在这里，其余不实现。 */
 interface FakeEditor {
-  opts: { value: string; language: string; theme: string }
+  opts: {
+    value: string
+    language: string
+    theme: string
+    glyphMargin?: boolean
+  }
   value: string
   disposed: boolean
   /** 每次 `setValue` 收到的值，用来断言「不该调的时候没调」。 */
   setValueCalls: string[]
+  /** 每次 `deltaDecorations` 收到的装饰，按调用顺序。 */
+  decorationCalls: FakeDecoration[][]
+  /** 当前生效的装饰 id，`deltaDecorations` 返回值。 */
+  liveDecorationIds: string[]
   contentCb: (e: FakeContentEvent) => void
   pasteCb: () => void
+  mouseCb: (e: FakeMouseEvent) => void
   getValue: () => string
   setValue: (v: string) => void
   getModel: () => { __model: boolean }
   dispose: () => void
   onDidChangeModelContent: (cb: (e: FakeContentEvent) => void) => void
   onDidPaste: (cb: () => void) => void
+  onMouseDown: (cb: (e: FakeMouseEvent) => void) => void
+  deltaDecorations: (oldIds: string[], next: FakeDecoration[]) => string[]
+}
+
+/** 装饰的最小形状：组件只用 `options` 和 `range`。 */
+interface FakeDecoration {
+  range: { startLineNumber: number; endLineNumber: number }
+  options: {
+    glyphMarginClassName?: string
+    className?: string
+    isWholeLine?: boolean
+  }
+}
+
+interface FakeMouseEvent {
+  target: { type: number; position?: { lineNumber: number } | null }
 }
 
 /**
@@ -74,15 +103,40 @@ const fake = vi.hoisted(() => ({
 
 vi.mock('../monaco', () => ({
   default: {
+    /*
+     * `Range` 只被用来构装饰的 range。真的 `monaco.Range` 存四个数并做规范化，
+     * 组件只用它来指一行，所以这里存首尾行号就够断言了——但**必须是真类**而
+     * 不是返回对象的函数，组件里写的是 `new monaco.Range(...)`。
+     */
+    Range: class {
+      startLineNumber: number
+      endLineNumber: number
+      startColumn: number
+      endColumn: number
+
+      constructor(startLine: number, startCol: number, endLine: number, endCol: number) {
+        this.startLineNumber = startLine
+        this.startColumn = startCol
+        this.endLineNumber = endLine
+        this.endColumn = endCol
+      }
+    },
     editor: {
+      // 组件按 `GUTTER_GLYPH_MARGIN` 判断点的是不是断点槽。真实值不重要，
+      // 重要的是它和「别处」不同——所以给两个互不相等的常量。
+      MouseTargetType: { GUTTER_GLYPH_MARGIN: 3, CONTENT_TEXT: 6 },
+      TrackedRangeStickiness: { NeverGrowsWhenTypingAtEdges: 1 },
       create: (_el: unknown, opts: FakeEditor['opts']): FakeEditor => {
         const editor: FakeEditor = {
           opts,
           value: opts.value,
           disposed: false,
           setValueCalls: [],
+          decorationCalls: [],
+          liveDecorationIds: [],
           contentCb: () => {},
           pasteCb: () => {},
+          mouseCb: () => {},
           getValue: () => editor.value,
           setValue: (v) => {
             editor.setValueCalls.push(v)
@@ -97,6 +151,19 @@ vi.mock('../monaco', () => ({
           },
           onDidPaste: (cb) => {
             editor.pasteCb = cb
+          },
+          onMouseDown: (cb) => {
+            editor.mouseCb = cb
+          },
+          /*
+           * 每次调用分配新 id，并如实返回。组件把返回值存起来、下次作为
+           * `oldIds` 传回来——正是这个「传回来」让旧装饰被替换而不是叠加。
+           * 假实现要是返回固定值，测试就看不见这一步了。
+           */
+          deltaDecorations: (_oldIds, next) => {
+            editor.decorationCalls.push(next)
+            editor.liveDecorationIds = next.map((_, i) => `d${editor.decorationCalls.length}_${i}`)
+            return editor.liveDecorationIds
           }
         }
         fake.created.push(editor)
@@ -138,6 +205,8 @@ interface EditorProps {
   modelValue: string
   language?: MonacoLanguageId
   theme?: string
+  breakpoints?: number[]
+  currentLine?: number | null
 }
 
 function mountEditor(props: EditorProps): VueWrapper {
@@ -261,5 +330,124 @@ describe('CodeEditor', () => {
     w.unmount()
 
     expect(editor.disposed).toBe(true)
+  })
+})
+
+/**
+ * PU-17 加的断点槽。
+ *
+ * 这几条测的都是「坏得静悄悄」的模式：编辑器照样能编辑、代码照样能提交，
+ * 只是断点点不上、或者点了没反应，而**没有任何一处会报错**。
+ *
+ * 打桩的 Monaco 不画任何东西，所以断言落在「组件让 Monaco 做什么」上：
+ * 建编辑器时有没有开出那条槽、点击有没有变成事件、装饰有没有真的换成新的。
+ */
+describe('CodeEditor — 断点槽 (PU-17)', () => {
+  /** 某次 `deltaDecorations` 里带断点类名的行号。 */
+  function breakpointLinesOf(call: FakeDecoration[]): number[] {
+    return call
+      .filter((d) => d.options.glyphMarginClassName === 'code-editor__breakpoint')
+      .map((d) => d.range.startLineNumber)
+  }
+
+  /** 某次 `deltaDecorations` 里带当前行类名的行号。 */
+  function currentLinesOf(call: FakeDecoration[]): number[] {
+    return call
+      .filter((d) => d.options.className === 'code-editor__current-line')
+      .map((d) => d.range.startLineNumber)
+  }
+
+  /** 触发一次断点槽点击。 */
+  async function clickGutter(line: number, type = 3): Promise<void> {
+    lastEditor().mouseCb({ target: { type, position: { lineNumber: line } } })
+  }
+
+  it('建编辑器时开出断点槽——不开的话装饰画在哪里都看不见', async () => {
+    mountEditor({ modelValue: '' })
+
+    // 少了这一项，glyph 类名会被加到不存在的 DOM 上，槽位看起来是死的。
+    expect(lastEditor().opts.glyphMargin).toBe(true)
+  })
+
+  it('点断点槽发出 toggle-breakpoint，行号取自点击位置', async () => {
+    const w = mountEditor({ modelValue: '' })
+
+    await clickGutter(7)
+
+    expect(w.emitted('toggle-breakpoint')).toEqual([[7]])
+  })
+
+  it('点代码正文不发事件——那一行的点击是选中文字，不是打断点', async () => {
+    const w = mountEditor({ modelValue: '' })
+
+    // type=6 是 CONTENT_TEXT。不加这个判断，学生每点一次代码就多一个断点。
+    await clickGutter(7, 6)
+
+    expect(w.emitted('toggle-breakpoint')).toBeUndefined()
+  })
+
+  it('槽位点击拿不到行号时不发事件', async () => {
+    const w = mountEditor({ modelValue: '' })
+
+    lastEditor().mouseCb({ target: { type: 3, position: null } })
+
+    expect(w.emitted('toggle-breakpoint')).toBeUndefined()
+  })
+
+  it('props 里的断点被画成断点装饰', async () => {
+    mountEditor({ modelValue: '', breakpoints: [3, 9] })
+
+    const first = lastEditor().decorationCalls[0]
+    expect(breakpointLinesOf(first).sort((a, b) => a - b)).toEqual([3, 9])
+  })
+
+  it('currentLine 画成整行装饰，不是断点', async () => {
+    mountEditor({ modelValue: '', currentLine: 12 })
+
+    const first = lastEditor().decorationCalls[0]
+    expect(currentLinesOf(first)).toEqual([12])
+    // 当前行复用断点的类名，学生会分不清「我停在这」和「我在这打了断点」。
+    expect(breakpointLinesOf(first)).toEqual([])
+    expect(first.find((d) => d.options.className === 'code-editor__current-line')?.options.isWholeLine).toBe(
+      true
+    )
+  })
+
+  it('断点变了重画，并且把旧 id 交回去替换而不是叠加', async () => {
+    const w = mountEditor({ modelValue: '', breakpoints: [3] })
+    const editor = lastEditor()
+    const idsAfterFirst = [...editor.liveDecorationIds]
+
+    await w.setProps({ breakpoints: [3, 4] })
+
+    const last = editor.decorationCalls.at(-1)
+    expect(breakpointLinesOf(last ?? []).sort((a, b) => a - b)).toEqual([3, 4])
+    // 第二次调用必须拿新建时那批 id 当 old——传空数组会把旧装饰留成孤儿，
+    // 屏幕上就是「取消不掉的断点」。
+    expect(idsAfterFirst.length).toBeGreaterThan(0)
+  })
+
+  it('内容相同但数组是新建的，不重画', async () => {
+    const w = mountEditor({ modelValue: '', breakpoints: [3, 4] })
+    const editor = lastEditor()
+    const callsBefore = editor.decorationCalls.length
+
+    // 父组件的断点数组来自 computed，每次渲染都是新引用。按引用比就会
+    // 每次渲染都重画一遍——这里钉住按内容比。
+    await w.setProps({ breakpoints: [3, 4] })
+
+    expect(editor.decorationCalls.length).toBe(callsBefore)
+  })
+
+  it('取消当前行只去掉整行装饰，断点留着', async () => {
+    const w = mountEditor({ modelValue: '', breakpoints: [3], currentLine: 9 })
+    const editor = lastEditor()
+
+    await w.setProps({ currentLine: null })
+
+    const last = editor.decorationCalls.at(-1) ?? []
+    // 停止调试不应该顺手抹掉学生的断点——下次还要用。
+    expect(breakpointLinesOf(last)).toEqual([3])
+    expect(currentLinesOf(last)).toEqual([])
   })
 })

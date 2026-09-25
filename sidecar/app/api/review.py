@@ -28,7 +28,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.api.mistake_book import get_session
+from app.db import get_session
 from app.models.mistake_book import MistakeBookEntry
 from app.models.review import ReviewRecord
 from app.scheduler.sm2 import SrsState, is_due, schedule

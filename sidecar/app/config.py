@@ -276,6 +276,26 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ------------------------------------------------- 自助注册（2026-09-25）
+    # 学生可以自己建号，不再必须由老师先建。这是产品决定，不是遗漏——
+    # 在此之前 :mod:`app.api.auth` 明确写着「刻意不做注册」。
+    #
+    # 默认开。要回到旧行为（账号一律由老师建）把这里设为 false 即可，
+    # 端点是 403，不需要改代码。
+    #
+    # 注意**不能**靠这个开关来区分角色：自助注册永远只创建学生账号，
+    # 那一条硬编码在 :func:`app.registration.registration_role` 里，
+    # 没有任何参数能影响它。
+    allow_open_registration: bool = Field(default=True)
+
+    # 每个客户端一小时内最多成功注册几个账号。**只计成功次数**，不记失败：
+    # 密码打错五次的学生不该被挡在自己的账号外面，要防的是「一个客户端能刷
+    # 出多少个号」。键是客户端地址，所以一个机房共用出口 IP 时大家共用一个
+    # 额度——这也是它给得宽松（10）而不是收紧的原因。
+    #
+    # 它挡脚本，不挡有代理池的人。这是一条限流，不是安全边界。
+    registration_rate_limit: int = Field(default=10, ge=1)
+
     # ------------------------------------------------------------ Database
     database_url: str = Field(
         default="postgresql+asyncpg://algoforge:algoforge@localhost:5432/algoforge"

@@ -18,6 +18,9 @@
  *    nothing to show a page: `initHttpClient()` has not run, so every
  *    request a page made would fail for a reason the page cannot fix.
  *    The content area shows a skeleton, or the failure and a retry.
+ * 3. **The page transition.** The one animation that has to live above
+ *    every page, because no individual page can animate itself in and
+ *    out of existence. The classes it uses are in `assets/motion.css`.
  *
  * The gate is why this file reads the shared status from
  * `composables/useSidecarStatus.ts` rather than probing itself — the
@@ -67,7 +70,15 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex h-screen flex-col overflow-hidden bg-af-canvas">
+  <!--
+    No background on the root (2026-09-25). This element used to carry
+    `bg-af-canvas`, an opaque fill across the entire viewport — which
+    would have covered the canvas glow and grid painted on `body` and
+    made the single most distinctive part of the repaint invisible. The
+    canvas belongs to `body` (see tokens.css); the shell's job is to not
+    paint over it.
+  -->
+  <div class="flex h-screen flex-col overflow-hidden">
     <AppTopbar :drawer-open="drawerOpen" @toggle-drawer="drawerOpen = !drawerOpen" />
 
     <div class="flex min-h-0 flex-1">
@@ -128,7 +139,29 @@ onUnmounted(() => {
           />
         </div>
 
-        <RouterView v-else />
+        <!--
+          The routed page, wrapped in a transition (2026-09-25).
+
+          `mode="out-in"` rather than the default simultaneous mode: two
+          pages cross-fading in the same box both need `position: absolute`
+          to overlap, and taking a flex child out of flow for the duration
+          of a navigation is how a shell acquires a one-frame layout jump.
+          Out-in sidesteps that entirely at the cost of ~120ms, which is
+          the leaving half being shortened on purpose (see motion.css).
+
+          No `:key` on purpose. Keying by `route.path` would force a
+          remount on `/problems/12` → `/problems/13`, and the router
+          deliberately keeps that instance alive so the statement panel
+          holds its scroll position (see the note in `router/index.ts`).
+          Different routes resolve to different components, which is
+          enough for `<Transition>` to notice — the key is only required
+          when the *same* component serves both routes.
+        -->
+        <RouterView v-else v-slot="{ Component }">
+          <Transition name="af-page" mode="out-in">
+            <component :is="Component" />
+          </Transition>
+        </RouterView>
       </main>
     </div>
   </div>

@@ -37,7 +37,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.assistance import DEFAULT_ASSISTANCE_LEVEL, policy_for, policy_to_dict
@@ -60,6 +60,15 @@ class Assignment(Base):
             bug waiting to be compared against.
         created_by: The teacher who published it.
         created_at: When it was published.
+        class_id: Which class it was set for, or ``None`` for "anyone".
+            Nullable on purpose and for two separate reasons: every
+            assignment that existed before classes did is a ``None``, and
+            a teacher who wants practice problems for whoever wanders in
+            should not have to invent a class to say so.
+            ``ondelete="SET NULL"`` because deleting a class must not
+            delete the work students did for it — the homework survives
+            as an unassigned one, which is a thing that can be read,
+            rather than a cascade that erases submissions.
         assistance_level: How much AI help a student may use while
             working on it (1–5). See :mod:`app.assistance` for the five
             levels and what each one permits.
@@ -97,6 +106,14 @@ class Assignment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
+    #: See the class attribute docstring: nullable so pre-class rows stay
+    #: valid and so "set for everyone" is expressible without a fake class.
+    class_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("classrooms.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     def to_dict(self, *, now: Optional[datetime] = None) -> dict:
         """Serialize for the API.
@@ -118,6 +135,7 @@ class Assignment(Base):
             "assistance_level": self.assistance_level,
             "assistance": policy_to_dict(policy_for(self.assistance_level)),
             "created_by": self.created_by,
+            "class_id": self.class_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

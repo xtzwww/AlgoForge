@@ -83,12 +83,22 @@ DEFAULT_TEMPERATURE = 0.0
 # read the result and answer — so three leaves room for a second look
 # without letting a confused model run up a bill.
 #
-# Note the worst case is ``max_attempts * DEFAULT_TOOL_STEPS`` round
-# trips, because the parse-failure retry re-enters the loop. That matters
-# more than it looks: this runs while the student is waiting for
-# ``judge_done`` (the analysis happens before the terminal event), so the
-# budget is a latency decision as much as a cost one.
+# The parse-failure retry re-enters the loop, so the *uncapped* worst case
+# would be ``max_attempts * DEFAULT_TOOL_STEPS`` round trips. Instead the
+# loop draws from a single shared ``DEFAULT_TOOL_BUDGET`` (see
+# :func:`analyze_error`), so a retry cannot multiply the cost — the second
+# attempt gets only what the budget has left. That matters more than it
+# looks: this runs while the student is waiting for ``judge_done`` (the
+# analysis happens before the terminal event), so the budget is a latency
+# decision as much as a cost one.
 DEFAULT_TOOL_STEPS = 3
+
+#: Total model round trips the tool path may spend across *all* attempts of
+#: one analysis. ``DEFAULT_TOOL_STEPS + 1`` lets the first attempt take its
+#: full three and the parse-failure retry take one more — a correction, not
+#: a second full try. This is the cap that replaces the old
+#: ``max_attempts * DEFAULT_TOOL_STEPS`` product.
+DEFAULT_TOOL_BUDGET = DEFAULT_TOOL_STEPS + 1
 
 
 @dataclass
@@ -373,10 +383,13 @@ def analyze_error(
         about that, and P2-4's answer is "leave the entry unanalysed".
 
     Note:
-        With ``use_tools`` the worst case is ``max_attempts * max_steps``
-        model round trips plus one compile-and-run per ``run_code`` call.
-        That cost is paid while the student waits for ``judge_done``, so
-        both budgets are latency decisions, not just cost ones.
+        With ``use_tools`` the tool path draws from a single shared budget
+        (``DEFAULT_TOOL_BUDGET``) across all attempts, so the worst case is
+        that budget plus one compile-and-run per ``run_code`` call — not
+        ``max_attempts * max_steps``, which the parse-failure retry would
+        otherwise multiply. That cost is paid while the student waits for
+        ``judge_done``, so the budget is a latency decision, not just a cost
+        one.
 
     Never raises for an LLM-side failure: see the module docstring.
     """
@@ -402,18 +415,39 @@ def analyze_error(
 
     outcome = AnalysisOutcome()
 
+    # Shared step budget for the tool path (P1-5): the parse-failure retry
+    # re-enters the loop, so without this the worst case is
+    # ``max_attempts * max_steps`` round trips. Each attempt draws down this
+    # single pool instead. The text-only path ignores it (it makes one
+    # round trip regardless), which is also why the P2-5 accuracy gate is
+    # unaffected.
+    steps_left = DEFAULT_TOOL_BUDGET
+
     for attempt in range(1, max_attempts + 1):
+        step_budget = max_steps
+        if use_tools:
+            step_budget = min(max_steps, steps_left)
+            if step_budget < 1:
+                # Out of budget but nothing parsed yet: stop rather than
+                # spend a round trip we have already paid for.
+                break
         raw, gateway_error, tool_calls = _analyse_once(
             messages,
             use_tools=use_tools,
             on_event=on_event,
-            max_steps=max_steps,
+            max_steps=step_budget,
         )
         outcome.attempts = attempt
         # Accumulated across attempts, not replaced: a retry that also
         # used a tool should not erase the first attempt's calls from the
         # record of what the Agent did.
         outcome.tool_calls.extend(tool_calls)
+
+        if use_tools:
+            # Each tool call is one model round trip; the final answer is
+            # one more. Debit at least one so a no-tool reply still counts
+            # toward the cap.
+            steps_left -= max(1, len(tool_calls))
 
         if gateway_error is not None:
             outcome.error = gateway_error

@@ -28,15 +28,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.auth import require_teacher
-from app.api.mistake_book import get_session
+from app.api.auth import require_teacher, require_user
 from app.assistance import (
     DEFAULT_ASSISTANCE_LEVEL,
     MAX_ASSISTANCE_LEVEL,
     MIN_ASSISTANCE_LEVEL,
 )
+from app.db import get_session
 from app.models.assignment import Assignment
 from app.models.assignment_stats import compute_assignment_stats
+from app.models.classroom import ClassMember, Classroom
 from app.models.problem import Problem
 from app.models.user import User
 
@@ -69,6 +70,10 @@ class CreateAssignmentRequest(BaseModel):
         ge=MIN_ASSISTANCE_LEVEL,
         le=MAX_ASSISTANCE_LEVEL,
     )
+    #: Which class to set it for, or ``None`` for "anyone". Optional so
+    #: that the practice-problem case needs no class to exist, and so
+    #: every client written before classes did keeps working unchanged.
+    class_id: Optional[int] = None
 
 
 class AssignmentOut(BaseModel):
@@ -132,8 +137,19 @@ def create_assignment(
     Returns 404 for an unknown problem id rather than 422: the body is
     well-formed, it just names something that does not exist, and the
     client can act on that by picking a different problem.
+
+    ``class_id`` is checked against ownership, not merely existence. A
+    teacher publishing into another teacher's class would otherwise put
+    work in front of students they do not teach, and the console they
+    cannot open would be the only place it showed up.
     """
     with get_session() as session:
+        if req.class_id is not None:
+            room = session.get(Classroom, req.class_id)
+            if room is None or room.teacher_id != teacher.id:
+                raise HTTPException(
+                    status_code=404, detail=f"no classroom with id {req.class_id}"
+                )
         for problem_id in req.problem_ids:
             if session.get(Problem, problem_id) is None:
                 raise HTTPException(
@@ -146,6 +162,7 @@ def create_assignment(
             due_at=_parse_due_at(req.due_at),
             assistance_level=req.assistance_level,
             created_by=teacher.id,
+            class_id=req.class_id,
         )
         session.add(row)
         session.commit()
@@ -209,6 +226,16 @@ def duplicate_assignment(
             raise HTTPException(
                 status_code=404, detail=f"no assignment with id {assignment_id}"
             )
+        # The class is carried over only if this teacher still owns it.
+        # A duplicate of an assignment that was set for someone else's
+        # class must not quietly publish into that class — the same
+        # ownership check `create_assignment` makes, for the same reason.
+        class_id = source.class_id
+        if class_id is not None:
+            room = session.get(Classroom, class_id)
+            if room is None or room.teacher_id != teacher.id:
+                class_id = None
+
         row = Assignment(
             title=req.title if req.title is not None else f"{source.title}（副本）",
             description=source.description,
@@ -216,6 +243,7 @@ def duplicate_assignment(
             due_at=_parse_due_at(req.due_at) if req.due_at is not None else None,
             assistance_level=source.assistance_level,
             created_by=teacher.id,
+            class_id=class_id,
         )
         session.add(row)
         session.commit()
@@ -433,3 +461,155 @@ def student_report(
             completed=sum(1 for r in rows if r.submissions > 0),
             total_assignments=len(rows),
         )
+
+
+class MyAssignmentOut(BaseModel):
+    """One assignment, as the student it was set for sees it.
+
+    Flat rather than nesting an :class:`AssignmentOut`: every field here
+    is rendered by the list screen, and a nested object would only add a
+    level for the client to reach through.
+    """
+
+    id: int
+    title: str
+    description: str = ""
+    due_at: Optional[str] = None
+    overdue: bool = False
+    assistance_level: int = DEFAULT_ASSISTANCE_LEVEL
+    class_id: Optional[int] = None
+    #: The class name, for grouping. ``None`` is the "for everyone" kind
+    #: — and also every row written before classes existed.
+    classroom_name: Optional[str] = None
+    problem_ids: list[int] = Field(default_factory=list)
+    problem_count: int = 0
+    #: Distinct problems passed at least once. Not the AC *count*: a
+    #: student who resubmits a fixed solution has still solved one
+    #: problem, and counting submissions would let a single problem push
+    #: this past ``problem_count``.
+    solved: int = 0
+    #: Which ones. The count alone cannot tell the list which rows to
+    #: tick, and a client inferring it from ``solved`` would be guessing.
+    solved_problem_ids: list[int] = Field(default_factory=list)
+    #: Submissions made against this assignment's problems.
+    submissions: int = 0
+    #: ``solved / problem_count``, or ``None`` when nothing was
+    #: submitted. ``None`` and ``0.0`` are deliberately distinct:
+    #: "has not started" and "started and passed none of them" call for
+    #: different things on screen.
+    progress: Optional[float] = None
+    last_submitted_at: Optional[str] = None
+
+
+@router.get("/my/assignments", response_model=list[MyAssignmentOut])
+def my_assignments(user: User = Depends(require_user)) -> list[MyAssignmentOut]:
+    """The assignments this student should see, with their own progress.
+
+    Two kinds are included: homework set for a class they have joined,
+    and homework set for nobody in particular. Homework set for a class
+    they are **not** in is excluded — that is the entire reason to
+    assign something to a class rather than to everyone.
+
+    An assignment with no ``class_id`` stays visible to everybody, which
+    is also what keeps this endpoint useful on a database whose existing
+    rows all predate classes.
+    """
+    from datetime import datetime
+
+    from sqlalchemy import case, func, select
+
+    from app.models.submission import Submission
+
+    with get_session() as session:
+        my_class_ids = list(
+            session.execute(
+                select(ClassMember.class_id).where(ClassMember.user_id == user.id)
+            )
+            .scalars()
+            .all()
+        )
+
+        stmt = select(Assignment)
+        if my_class_ids:
+            stmt = stmt.where(
+                (Assignment.class_id.is_(None))
+                | (Assignment.class_id.in_(my_class_ids))
+            )
+        else:
+            stmt = stmt.where(Assignment.class_id.is_(None))
+        rows = session.execute(stmt.order_by(Assignment.id.desc())).scalars().all()
+
+        class_ids = [r.class_id for r in rows if r.class_id is not None]
+        names: dict[int, str] = {}
+        if class_ids:
+            names = {
+                room.id: room.name
+                for room in session.execute(
+                    select(Classroom).where(Classroom.id.in_(class_ids))
+                )
+                .scalars()
+                .all()
+            }
+
+        # One grouped query for every problem the student has touched,
+        # rather than one per assignment. `max` over a 1/0 case answers
+        # "passed at least once" — `sum` would count repeat AC runs.
+        per_problem: dict[int, tuple[int, int, Optional[datetime]]] = {
+            int(pid): (int(total or 0), int(ok or 0), latest)
+            for pid, total, ok, latest in session.execute(
+                select(
+                    Submission.problem_id,
+                    func.count(Submission.id),
+                    func.max(case((Submission.status == "AC", 1), else_=0)),
+                    func.max(Submission.created_at),
+                )
+                .where(Submission.user_id == user.id)
+                .group_by(Submission.problem_id)
+            ).all()
+        }
+
+        out: list[MyAssignmentOut] = []
+        for row in rows:
+            ids = list(row.problem_ids or [])
+            submissions = 0
+            solved = 0
+            solved_ids: list[int] = []
+            last: Optional[datetime] = None
+            for problem_id in ids:
+                total, ok, latest = per_problem.get(int(problem_id), (0, 0, None))
+                submissions += total
+                if ok:
+                    solved += 1
+                    solved_ids.append(int(problem_id))
+                if latest is not None and (last is None or latest > last):
+                    last = latest
+
+            # `to_dict` owns the definition of "overdue" (it reads the
+            # clock once, with `now` injectable). Recomputing it here
+            # would be a second definition that can disagree with the
+            # teacher's list.
+            data = row.to_dict()
+            out.append(
+                MyAssignmentOut(
+                    id=row.id,
+                    title=row.title,
+                    description=row.description,
+                    due_at=data["due_at"],
+                    overdue=bool(data["overdue"]),
+                    assistance_level=row.assistance_level,
+                    class_id=row.class_id,
+                    classroom_name=names.get(row.class_id) if row.class_id else None,
+                    problem_ids=ids,
+                    problem_count=len(ids),
+                    solved=solved,
+                    solved_problem_ids=solved_ids,
+                    submissions=submissions,
+                    progress=(
+                        None
+                        if submissions == 0
+                        else (solved / len(ids) if ids else 0.0)
+                    ),
+                    last_submitted_at=last.isoformat() if last else None,
+                )
+            )
+        return out

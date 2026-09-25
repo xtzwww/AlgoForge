@@ -17,7 +17,7 @@
  *   - tooltip 的百分比格式化只在这里做一次，页面不参与；写错就是全站
  *     的雷达图数字都错。
  *
- * 钉住的六条：
+ * 钉住的七条：
  *   1. 三个分支互斥：加载中不给图、无指标给空状态（用调用方给的文案）、
  *      有指标才给图；
  *   2. 轴与数值原样进 option（页面给什么，图就画什么，中间不做转换）；
@@ -27,7 +27,11 @@
  *   5. 颜色来自 token 的回退字面量（jsdom 里没有 tokens.css，正好走回退分支）
  *      ——这条是回退表唯一的保护；
  *   6. 画布背景必须透明，否则 ECharts 默认的白底会在深色页面上画出一个
- *      白方块。
+ *      白方块；
+ *   7. **CSS Color 4 的 `rgb(r g b / a)` 必须先归一化**，否则 zrender 解析
+ *      不了、网格线静默丢失。这条是 2026-09-25 修完一个真实 bug 后补的：
+ *      `--af-border` 改成半透明写法的那一刻，雷达图的网格就没了，而屏幕上
+ *      没有任何报错。
  */
 import { describe, expect, it, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
@@ -91,10 +95,15 @@ interface ChartProps {
  */
 interface RadarOption {
   backgroundColor: string
-  tooltip: { formatter: (p: { name: string; value: number[] }) => string }
+  tooltip: {
+    formatter: (p: { name: string; value: number[] }) => string
+    borderColor: string
+  }
   radar: {
     indicator: { name: string; max: number }[]
     splitArea: { areaStyle: { color: string[] } }
+    splitLine: { lineStyle: { color: string } }
+    axisLine: { lineStyle: { color: string } }
   }
   series: {
     type: string
@@ -185,9 +194,54 @@ describe('RadarChart', () => {
     const { option } = await mountChart({ indicators: INDICATORS, values: [0.65, 0.8] })
     // jsdom 里没有 tokens.css，`getComputedStyle` 一律返回 ''，所以这里量到的
     // 正是回退表本身：把 accent 的回退改成空串，图就变成看不见的了。
-    expect(option.series[0].data[0].lineStyle.color).toBe('#4f8cff')
-    expect(option.series[0].data[0].areaStyle.color).toBe('rgba(79, 140, 255, 0.28)')
+    expect(option.series[0].data[0].lineStyle.color).toBe('#6d8dff')
+    expect(option.series[0].data[0].areaStyle.color).toBe('rgba(109, 141, 255, 0.28)')
     expect(option.radar.splitArea.areaStyle.color).toHaveLength(5)
     expect(option.backgroundColor).toBe('transparent')
+  })
+
+  it('CSS Color 4 的 `rgb(r g b / a)` 归一化成 zrender 认得的写法', async () => {
+    /*
+     * 这条钉的是一个**真实的、静默的** bug，2026-09-25 修。
+     *
+     * `--af-border` 在 tokens.css 里写成 `rgb(122 162 255 / 0.14)`——细边框
+     * 必须半透明才能透出背后的画布，不透明的 hex 表达不了。但 zrender 的颜色
+     * 解析器只认 hex 和逗号写法，遇到空格斜杠写法不报错，只是**画成别的颜色**。
+     * 雷达图的网格线、轴线、tooltip 边框都读这个 token，于是它们会一起消失，
+     * 而屏幕上没有任何提示。
+     *
+     * 所以 `resolvePalette()` 里每个 token 都过一遍 `normalizeColor()`；这条
+     * 用例就是防止有人哪天把那层归一化当成多余的。
+     *
+     * `vi.resetModules()` 重新加载组件，使前面的用例里对
+     * `getComputedStyle` 的桩不影响这里读到的样式——这里要量的是新的
+     * getComputedStyle 返回值，而不是别的用例留下的状态。
+     */
+    vi.resetModules()
+
+    // 只让 border 返回真实值，其余仍走回退——这样断言里的 alpha 只可能来自
+    // 归一化，不可能来自别处。
+    vi.stubGlobal('getComputedStyle', () => ({
+      getPropertyValue: (name: string) => (name === '--af-border' ? 'rgb(122 162 255 / 0.14)' : '')
+    }))
+
+    try {
+      const { default: FreshRadarChart } = await import('./RadarChart.vue')
+      const w = mount(FreshRadarChart, {
+        props: { indicators: INDICATORS, values: [0.5, 0.5] }
+      })
+      await w.vm.$nextTick()
+
+      const chart = w.findComponent({ name: CHART_STUB })
+      expect(chart.exists()).toBe(true)
+      const option = chart.props('option') as RadarOption
+
+      const expected = 'rgba(122, 162, 255, 0.14)'
+      expect(option.radar.splitLine.lineStyle.color).toBe(expected)
+      expect(option.radar.axisLine.lineStyle.color).toBe(expected)
+      expect(option.tooltip.borderColor).toBe(expected)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

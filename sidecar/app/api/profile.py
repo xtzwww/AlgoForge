@@ -22,7 +22,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from app.api.mistake_book import get_session
+from app.db import get_session
 from app.models.knowledge_stats import KnowledgeStat, compute_knowledge_stats_for
 
 router = APIRouter(prefix="/api/v1/profile", tags=["profile"])

@@ -65,6 +65,11 @@ export interface CreateAssignmentRequest {
    * shows up as homework that quietly allows more help than intended.
    */
   assistance_level?: number
+  /**
+   * Which class to set it for (PU-13). Omit for "everyone" — the
+   * practice-problem case, which needs no class to exist.
+   */
+  class_id?: number
 }
 
 /** Publish homework. Teacher only — 403 for anyone else. */
@@ -159,5 +164,55 @@ export async function getStudentReport(userId: number): Promise<StudentReport> {
 /** The homework list, for anyone who asks. */
 export async function getOpenAssignments(): Promise<AssignmentOut[]> {
   const res = await http.get<AssignmentOut[]>('/api/v1/assignments')
+  return res.data
+}
+
+/**
+ * One assignment as the student it was set for sees it (PU-13).
+ *
+ * Flat rather than nesting {@link AssignmentOut}: the list screen renders
+ * every field, so a nested object would only add a level to reach
+ * through.
+ */
+export interface MyAssignmentOut {
+  id: number
+  title: string
+  description: string
+  due_at: string | null
+  overdue: boolean
+  assistance_level: number
+  class_id: number | null
+  /** `null` is the "for everyone" kind. */
+  classroom_name: string | null
+  problem_ids: number[]
+  problem_count: number
+  /** Distinct problems passed at least once. */
+  solved: number
+  /** Which ones — used to tick the individual rows. */
+  solved_problem_ids: number[]
+  submissions: number
+  /**
+   * `solved / problem_count`, or `null` when nothing was submitted.
+   *
+   * Render `null` and `0` differently: "has not started" and "started
+   * and passed none of them" call for different actions from the person
+   * reading it.
+   */
+  progress: number | null
+  last_submitted_at: string | null
+}
+
+/**
+ * The assignments I should see, with my own progress (PU-13).
+ *
+ * Homework set for a class I have not joined is absent — that is the
+ * point of assigning it to a class. Homework with no class is visible to
+ * everyone, which is also what keeps this useful on a database whose
+ * rows all predate classes.
+ *
+ * Requires a signed-in account: without one there is no "my" to compute.
+ */
+export async function getMyAssignments(): Promise<MyAssignmentOut[]> {
+  const res = await http.get<MyAssignmentOut[]>('/api/v1/my/assignments')
   return res.data
 }

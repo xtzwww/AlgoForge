@@ -4,6 +4,11 @@
  * Order matters:
  *   1. Tailwind (v4) — utilities must be registered first.
  *   2. tokens.css    — design tokens + base layer resets.
+ *   3. themes.css    — per-theme overrides of the `--af-*` namespace.
+ *                      Must follow tokens.css: it is an override, and
+ *                      at equal specificity the later rule wins.
+ *   4. motion.css    — the animation primitives, which read the tokens
+ *                      and therefore have to come after them.
  *
  * The electron-vite template's original base.css defined its own
  * `--ev-c-*` palette and a competing `body` rule. Since PU-0
@@ -13,6 +18,8 @@
 
 @import 'tailwindcss';
 @import './tokens.css';
+@import './themes.css';
+@import './motion.css';
 
 /* Template-era helper class, retained for the splash logo in PU-2. */
 .logo {
@@ -33,6 +40,12 @@
  * No `both`/`forwards` fill, so no residual transform is left on the
  * root — a lingering `transform` would turn html/#app into a containing
  * block for `position: fixed` descendants.
+ *
+ * 2026-09-25: the durations now read from the motion tokens rather than
+ * being literals, so this entrance and every in-app transition are
+ * scaled by the same two numbers. A window that fades in at 200ms while
+ * a page transition takes 320ms is the kind of mismatch nobody names but
+ * everybody feels.
  * ============================================================ */
 @keyframes af-fade-in {
   from {
@@ -55,11 +68,11 @@
 }
 
 html.af-revealed {
-  animation: af-fade-in 200ms var(--af-ease);
+  animation: af-fade-in var(--af-duration-base) var(--af-ease);
 }
 
 html.af-revealed #app {
-  animation: af-window-in 250ms var(--af-ease);
+  animation: af-window-in var(--af-duration-slow) var(--af-ease);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -70,5 +83,8 @@ html.af-revealed #app {
 }
 
 .logo:hover {
-  filter: drop-shadow(0 0 1.2em #6988e6aa);
+  /* Was a hardcoded #6988e6aa, i.e. the old accent at 67% — which meant
+   * the logo halo kept the old blue after the repaint. `color-mix` against
+   * the live token is what makes it follow. */
+  filter: drop-shadow(0 0 1.2em color-mix(in srgb, var(--af-accent) 67%, transparent));
 }

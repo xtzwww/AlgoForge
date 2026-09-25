@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db import get_session, reset_engine  # noqa: F401  (re-exported)
+from app.db import get_session
 from app.eval_cases import ROOT_CAUSE_DESCRIPTIONS
 from app.models.mistake_book import (
     ANALYSIS_DONE,
@@ -52,11 +52,13 @@ router = APIRouter(prefix="/api/v1/mistake-book", tags=["mistake-book"])
 
 
 # --- Session ------------------------------------------------------------
-# The engine/session logic now lives in app/db.py, which is the single
-# place that resolves DATABASE_URL (PostgreSQL by default). get_session
-# is imported above and re-exported so that existing callers
-# (profile.py, review.py, and the tests that monkeypatch it) keep
-# working unchanged. New code should import from app.db directly.
+# The engine/session logic lives in app/db.py, which is the single place
+# that resolves DATABASE_URL (PostgreSQL by default). This module imports
+# ``get_session`` directly from there — it is no longer re-exported, so
+# callers that need a session import from ``app.db`` themselves rather than
+# reaching through this module. (The records write path keeps its own single
+# patchable binding in ``app.records_session``; see that module's note on
+# why a monkeypatched session must reach every module at once.)
 
 
 # --- Pydantic schemas --------------------------------------------------

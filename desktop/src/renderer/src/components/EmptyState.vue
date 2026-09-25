@@ -155,7 +155,10 @@ const ICONS: Record<string, string> = {
   font-family: inherit;
   font-size: 13px;
   font-weight: 600;
-  color: #ffffff;
+  /* Text on the accent fill. Was a literal `#ffffff`; see the note in
+   * tokens.css — the repaint made the accent a light blue, which flipped
+   * the correct foreground from white to near-black. */
+  color: var(--af-text-inverse);
   background: var(--af-accent);
   border: 1px solid transparent;
   border-radius: var(--af-radius-sm);

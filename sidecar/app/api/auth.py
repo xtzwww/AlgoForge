@@ -1,5 +1,6 @@
 """Authentication endpoints (B1).
 
+POST /api/v1/auth/register {username, password, display_name?} -> {token, user}
 POST /api/v1/auth/login   {username, password} -> {token, user}
 POST /api/v1/auth/logout  -> {ok: true}
 GET  /api/v1/auth/me      -> {user}
@@ -13,13 +14,28 @@ both its HTTP and WebSocket entry points. One more bearer header is the
 shape that fits what is already there; cookies would need CSRF defence
 for a threat that does not exist in a desktop app.
 
-What is deliberately not here
------------------------------
-Registration, password reset, email, and role self-service. Accounts are
-created by a teacher (``POST /api/v1/teacher/students``), which is both
-the honest description of how a class roster is produced and a smaller
-attack surface: an open registration endpoint on a process that compiles
-arbitrary code is not something to add before it is needed.
+Registration (changed 2026-09-25)
+---------------------------------
+This module used to carry a paragraph headed "What is deliberately not
+here" listing registration first, on the grounds that "an open
+registration endpoint on a process that compiles arbitrary code is not
+something to add before it is needed". It is now needed, so the endpoint
+exists — and the reasoning that made it worth deferring is exactly why
+the *policy* lives in its own module rather than inline here:
+
+    app/registration.py
+
+That module holds the parts that are security-relevant rather than
+mechanical: the role is hardcoded to student and unreachable from a
+request, the whole door has an on/off switch
+(``ALLOW_OPEN_REGISTRATION``), credentials have a floor, and attempts
+are rate limited per client. Read it before changing anything about how
+accounts get created.
+
+Still deliberately absent: password reset, email, and role
+self-service. Each is a real feature with its own storage and failure
+modes, and none is required by "a student can sign up". An unverified
+email field in particular would look like a control while being none.
 
 The token is not the sidecar token
 ----------------------------------
@@ -34,14 +50,29 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete
 
-from app.api.mistake_book import get_session
-from app.auth import UserSession, authenticate, issue_session, user_for_token
+from app.auth import (
+    UserSession,
+    authenticate,
+    create_user,
+    issue_session,
+    user_for_token,
+)
+from app.db import get_session
 from app.models.user import ROLE_TEACHER, User
+from app.registration import (
+    RegistrationError,
+    get_throttle,
+    open_registration_enabled,
+    registration_role,
+    validate_display_name,
+    validate_password,
+    validate_username,
+)
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -56,6 +87,25 @@ _bearer = HTTPBearer(auto_error=False)
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    """A self-service sign-up.
+
+    Note what is *absent*: there is no ``role`` field, and there never
+    should be. The role is decided by
+    :func:`app.registration.registration_role`, which takes no argument.
+    Accepting one here — even validated against a whitelist — would make
+    "can a stranger become a teacher?" a question about validation
+    instead of a question about whether the capability exists at all.
+
+    ``display_name`` is optional and blank means "use the username", so
+    a student who does not want to type their real name is not blocked.
+    """
+
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=256)
+    display_name: str = Field(default="", max_length=64)
 
 
 class UserOut(BaseModel):
@@ -123,6 +173,88 @@ def require_teacher(user: User = Depends(require_user)) -> User:
     if user.role != ROLE_TEACHER:
         raise HTTPException(status_code=403, detail="Teacher role required")
     return user
+
+
+def _client_key(request: Request) -> str:
+    """The throttle bucket for a request.
+
+    ``request.client`` is ``None`` for a request that never had a socket
+    — an ASGI test transport, for instance. Those all share one bucket
+    rather than being exempt, because exempting them would mean the
+    rate limit could be bypassed by anything that could avoid setting a
+    peer address.
+    """
+    client = request.client
+    return client.host if client is not None else "unknown"
+
+
+@router.post("/register", response_model=LoginResponse, status_code=201)
+def register(req: RegisterRequest, request: Request) -> LoginResponse:
+    """Create a student account and sign it in.
+
+    Returns the same shape as :func:`login`, including a session token,
+    because the alternative — create, then make the client post its own
+    credentials straight back — is a second round trip and a second
+    place for the password to be handled.
+
+    Status codes, and why each is distinct:
+
+    * **403** — self-registration is switched off
+      (``ALLOW_OPEN_REGISTRATION=false``). A different thing from a bad
+      request: the client should not retry with different data.
+    * **429** — too many accounts created from this client recently. The
+      form shows the retry delay from the message.
+    * **400** — the username or password does not meet the floor in
+      :mod:`app.registration`. The message names which.
+    * **409** — the username is taken. Separate from 400 because the
+      client can do something about it (pick another name), and the
+      form highlights the username field for exactly this case.
+    """
+    if not open_registration_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="本机已关闭自助注册，请联系老师创建账号",
+        )
+
+    throttle = get_throttle()
+    key = _client_key(request)
+    # Checked before validation on purpose: an over-budget client should
+    # be told so regardless of whether the body it sent was well formed.
+    # Nothing is recorded here — see the module docstring on why only
+    # successful registrations count against the budget.
+    try:
+        throttle.check(key)
+    except RegistrationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+
+    try:
+        username = validate_username(req.username)
+        password = validate_password(req.password)
+        display_name = validate_display_name(req.display_name)
+    except RegistrationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
+
+    try:
+        with get_session() as session:
+            user = create_user(
+                session,
+                username=username,
+                password=password,
+                # Not from the request. See RegisterRequest's docstring.
+                role=registration_role(),
+                display_name=display_name,
+            )
+            token = issue_session(session, user)
+            out = _user_out(user)
+    except ValueError:
+        # create_user raises ValueError only for a taken username or an
+        # unknown role; the role is a module constant, so this is the
+        # username. 409 rather than 400, matching the teacher's
+        # add_student — the client can pick another name.
+        raise HTTPException(status_code=409, detail="该用户名已被占用") from None
+
+    throttle.record(key)
+    return LoginResponse(token=token, user=out)
 
 
 @router.post("/login", response_model=LoginResponse)

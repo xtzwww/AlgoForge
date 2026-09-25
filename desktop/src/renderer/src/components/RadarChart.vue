@@ -34,11 +34,14 @@
  *   2. A duplicated hex table in this file. That is what PU-0 existed to
  *      delete.
  *
- * `getComputedStyle` costs one style resolution for the document element
- * and is read **once per mount**, then cached in module scope — not per
- * render and not per chart, because the values cannot change without the
- * stylesheet changing, and a page that reloads its data does not reload
- * its CSS.
+ * `getComputedStyle` is read when the component mounts **and** whenever
+ * the user switches visual style (the `themeVersion` watcher re-resolves
+ * it). It is no longer cached across the whole module: the app offers a
+ * live theme switcher, so the stylesheet *can* change at runtime, and a
+ * cached palette would freeze the chart in the theme it was first drawn
+ * in. Re-resolving on each switch is cheap — one style resolution for the
+ * document element — and the `option` computed rebuilds from the new
+ * ref.
  *
  * **Degradation matters here.** `getComputedStyle(...).getPropertyValue()`
  * returns `''` for a name that is not defined — no exception, no warning.
@@ -49,13 +52,14 @@
  *-but-visible colour rather than an invisible chart.
  */
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { RadarChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
 import EmptyState from './EmptyState.vue'
+import { themeVersion } from '../composables/useTheme'
 
 use([CanvasRenderer, RadarChart, TooltipComponent])
 
@@ -105,8 +109,6 @@ type ChartPalette = {
   accent: string
 }
 
-let palette: ChartPalette | null = null
-
 /**
  * Read one token, falling back when the variable is missing.
  *
@@ -119,29 +121,75 @@ function readToken(styles: CSSStyleDeclaration, name: string, fallback: string):
   return value || fallback
 }
 
-function resolvePalette(): ChartPalette {
-  if (palette) return palette
+/**
+ * Normalise a token into a form ECharts can actually parse.
+ *
+ * zrender's colour parser understands hex and the *comma* forms
+ * `rgb(r, g, b)` / `rgba(r, g, b, a)`. It does **not** understand the
+ * CSS Color 4 space-and-slash form `rgb(r g b / a)` — which is exactly
+ * the form `--af-border` takes, because a hairline border is genuinely
+ * translucent and an opaque hex cannot express that (see tokens.css).
+ *
+ * This matters because three things pass a token to ECharts *without*
+ * going through `withAlpha()` below — the tooltip border and the radar's
+ * split/axis lines — and all three read `--af-border`. Un-normalised,
+ * they hand zrender a string it cannot parse, and it does not throw: it
+ * silently paints something else. A grid that quietly disappears is much
+ * harder to notice than one that errors.
+ *
+ * Unlike `withAlpha()`, alpha is *preserved* here; that function exists
+ * to override it.
+ */
+function normalizeColor(color: string): string {
+  const value = color.trim()
 
+  // Already zrender-parseable: hex, and both comma forms.
+  if (/^#[0-9a-f]{3,8}$/i.test(value)) return value
+  if (/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*[\d.]+\s*)?\)$/i.test(value)) return value
+
+  // `rgb(r g b)` and `rgb(r g b / a)` — the CSS Color 4 syntax.
+  const modern = /^rgba?\(\s*(\d+)\s+(\d+)\s+(\d+)\s*(?:\/\s*([\d.]+%?)\s*)?\)$/i.exec(value)
+  if (modern) {
+    const [, r, g, b, rawAlpha] = modern
+    if (rawAlpha === undefined) return `rgb(${r}, ${g}, ${b})`
+    // A percentage alpha is also valid CSS Color 4 and also unparseable
+    // by zrender, so it is converted rather than passed along.
+    const alpha = rawAlpha.endsWith('%')
+      ? String(Number.parseFloat(rawAlpha) / 100)
+      : rawAlpha
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  }
+
+  // Unrecognised: hand it over unchanged rather than guessing.
+  return value
+}
+
+function resolvePalette(): ChartPalette {
   const root = document.documentElement
   const styles = getComputedStyle(root)
 
   /*
-   * The fallbacks reproduce the pre-PU-9 literals exactly. They are dead
-   * weight whenever `tokens.css` is loaded — which is always, at runtime —
-   * and exist so this function is total: a chart painted in the old
-   * palette is a cosmetic bug, an invisible one is a blank page.
+   * The fallbacks reproduce the current palette (updated 2026-09-25 with
+   * the 霓虹深空 repaint — they had been left on the pre-PU-9 literals).
+   * They are dead weight whenever `tokens.css` is loaded — which is
+   * always, at runtime — and exist so this function is total: a chart
+   * painted in the wrong palette is a cosmetic bug, an invisible one is a
+   * blank page.
+   *
+   * Every value goes through `normalizeColor()` because these strings are
+   * handed to ECharts, not to CSS — see that function for why the
+   * distinction is load-bearing.
    */
-  palette = {
-    textPrimary: readToken(styles, '--af-text-primary', '#e8ecf5'),
-    textSecondary: readToken(styles, '--af-text-secondary', '#9aa7bd'),
-    textMuted: readToken(styles, '--af-text-muted', '#66738c'),
-    grid: readToken(styles, '--af-border', '#263149'),
-    band: readToken(styles, '--af-elevated', '#1c2438'),
-    bandAlt: readToken(styles, '--af-surface', '#141b2d'),
-    surface: readToken(styles, '--af-surface', '#141b2d'),
-    accent: readToken(styles, '--af-accent', '#4f8cff')
+  return {
+    textPrimary: normalizeColor(readToken(styles, '--af-text-primary', '#eef2ff')),
+    textSecondary: normalizeColor(readToken(styles, '--af-text-secondary', '#a9b7d6')),
+    textMuted: normalizeColor(readToken(styles, '--af-text-muted', '#6d7c9e')),
+    grid: normalizeColor(readToken(styles, '--af-border', '#22304d')),
+    band: normalizeColor(readToken(styles, '--af-elevated', '#172036')),
+    bandAlt: normalizeColor(readToken(styles, '--af-surface', '#101728')),
+    surface: normalizeColor(readToken(styles, '--af-surface', '#101728')),
+    accent: normalizeColor(readToken(styles, '--af-accent', '#6d8dff'))
   }
-  return palette
 }
 
 /**
@@ -154,6 +202,19 @@ function resolvePalette(): ChartPalette {
 const chartPalette = ref<ChartPalette | null>(null)
 
 onMounted(() => {
+  chartPalette.value = resolvePalette()
+})
+
+/**
+ * Re-resolve the palette when the visual style switches.
+ *
+ * The colours come from CSS, so a `data-theme` change means different
+ * literals. The module-scope cache that used to live here is gone for
+ * exactly this reason: the stylesheet now changes at runtime, so the
+ * "read once" assumption no longer holds. Re-assigning the ref rebuilds
+ * the `option` computed and vue-echarts repaints.
+ */
+watch(themeVersion, () => {
   chartPalette.value = resolvePalette()
 })
 

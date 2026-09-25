@@ -30,12 +30,22 @@ two collaborators keeps the unverifiable surface down to a single thin
 factory (:func:`build_retriever`) plus the exact Milvus call shape inside
 :meth:`MilvusRetriever.search`.
 
-What is *not* verified
-----------------------
-Milvus has never been reachable from this repository, so
-:meth:`MilvusRetriever.search` has never executed against a real server.
-Treat its Milvus call shape as unverified until someone runs it against a
-live instance — see ``.workbuddy-ai/night-queue.md`` T7.
+What is verified, and what is not
+-------------------------------
+The Milvus call shape **is** now verified against a real Milvus engine:
+``tests/test_rag_milvus_live.py`` (2026-09-20) builds a collection in the
+**embedded** Milvus engine (``milvus-lite`` — no Docker needed), inserts the
+12 real cards, searches, and feeds the result into the graph's retrieve node.
+That run **caught a real primary-key type bug**, so the search path is no
+longer "written but never executed".
+
+What is *still* unverified is the Milvus **service** (standalone / cluster
+over ``MILVUS_URI``): auth, large-scale index selection, and consistency
+levels are not covered by the embedded engine. If ``MILVUS_URI`` points at a
+real server, treat the call shape as exercised-but-not-deployed until someone
+runs the same tests against it. The embedded engine failing to connect still
+degrades to :class:`NullRetriever`, so the deployment-shape gap is a coverage
+gap, not a failure mode.
 """
 
 from __future__ import annotations
@@ -258,6 +268,63 @@ def _ensure_loaded(client: Any, collection: str) -> None:
         logger.debug("could not preload collection %s (%s)", collection, exc)
 
 
+#: Process-wide Milvus client cache. Keyed by URI so repeated retrievals in
+#: one process (every submission that reaches ``_retrieve_context`` builds a
+#: retriever) share a single connection instead of opening a fresh one each
+#: time. ``pipeline._retrieve_context`` calls ``build_retriever`` on *every*
+#: analysis, so without this the Milvus handshake (and, for the embedded
+#: engine, the file open) would run once per student submission. The cache is
+#: deliberately small: the connection is the only thing worth keeping, and
+#: ``_ensure_loaded`` re-runs per call for the right collection.
+_milvus_client: Any | None = None
+_milvus_client_uri: str | None = None
+
+
+def reset_milvus_client_cache() -> None:
+    """Drop the cached Milvus client.
+
+    For tests, and for an operator who points ``MILVUS_URI`` at a different
+    server in-process: without this, a client built against the old URI keeps
+    being handed out.
+    """
+    global _milvus_client, _milvus_client_uri
+    _milvus_client = None
+    _milvus_client_uri = None
+
+
+def _milvus_client_for(uri: str) -> Any | None:
+    """Return a cached ``MilvusClient`` for *uri*, building it at most once.
+
+    Returns ``None`` when ``pymilvus`` is absent or the server is
+    unreachable — the caller degrades to :class:`NullRetriever`. A failed
+    connection is *not* cached, so a later call retries rather than
+    permanently silencing retrieval.
+    """
+    global _milvus_client, _milvus_client_uri
+    if _milvus_client is not None and _milvus_client_uri == uri:
+        return _milvus_client
+
+    try:
+        from pymilvus import MilvusClient  # noqa: PLC0415 — optional dependency
+    except ImportError:
+        logger.info("pymilvus is not installed; running without knowledge retrieval")
+        return None
+
+    try:
+        client = MilvusClient(uri=uri)
+    except Exception as exc:  # noqa: BLE001 — degradation is the contract
+        logger.warning(
+            "could not connect to Milvus at %s (%s); running without retrieval",
+            uri,
+            exc,
+        )
+        return None
+
+    _milvus_client = client
+    _milvus_client_uri = uri
+    return client
+
+
 def build_retriever(
     milvus_uri: str | None = None,
     *,
@@ -272,7 +339,8 @@ def build_retriever(
     1. *client* if given — the tests' entry point, and how a caller that
        already holds a connection avoids opening a second one.
     2. A Milvus client built from *milvus_uri*, if ``pymilvus`` is importable
-       and the connection succeeds.
+       and the connection succeeds. Reused across calls via
+       :func:`_milvus_client_for` (see that function's cache).
     3. :class:`NullRetriever` — the honest degraded answer.
 
     Steps 2 and 3 both log why, because "retrieval silently returns nothing"
@@ -287,12 +355,6 @@ def build_retriever(
 
     if embedder is None:
         logger.info("no embedder configured; running without knowledge retrieval")
-        return NullRetriever()
-
-    try:
-        from pymilvus import MilvusClient  # noqa: PLC0415 — optional dependency
-    except ImportError:
-        logger.info("pymilvus is not installed; running without knowledge retrieval")
         return NullRetriever()
 
     uri = milvus_uri or "http://localhost:19530"
@@ -310,8 +372,11 @@ def build_retriever(
         except OSError as exc:
             logger.warning("could not create the Milvus data directory (%s)", exc)
 
+    client = _milvus_client_for(uri)
+    if client is None:
+        return NullRetriever()
+
     try:
-        client = MilvusClient(uri=uri)
         _ensure_loaded(client, collection)
         return MilvusRetriever(
             client=client,
@@ -320,7 +385,8 @@ def build_retriever(
         )
     except Exception as exc:  # noqa: BLE001 — degradation is the contract
         logger.warning(
-            "could not connect to Milvus at %s (%s); running without retrieval",
+            "Milvus at %s is reachable but the collection could not be loaded (%s); "
+            "running without retrieval",
             uri,
             exc,
         )

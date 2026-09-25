@@ -161,6 +161,33 @@ export async function login(username: string, password: string): Promise<Session
 }
 
 /**
+ * Create a student account and sign it in (2026-09-25).
+ *
+ * Returns a session, so the caller does not have to log in afterwards —
+ * the server answers with the same `{token, user}` shape as `login`.
+ *
+ * **This always produces a student.** There is no role argument, and
+ * adding one would be the wrong fix for anything: the server decides the
+ * role (`app/registration.py::registration_role`) and ignores whatever a
+ * request says about it. See that module for why.
+ *
+ * `displayName` may be blank; the server falls back to the username.
+ */
+export async function register(
+  username: string,
+  password: string,
+  displayName = ''
+): Promise<SessionUser> {
+  const res = await http.post<LoginResponse>('/api/v1/auth/register', {
+    username,
+    password,
+    display_name: displayName
+  })
+  setSession(res.data.token, res.data.user)
+  return res.data.user
+}
+
+/**
  * End this session, and keep every other device signed in.
  *
  * The server deletes the token from the credential rather than from the

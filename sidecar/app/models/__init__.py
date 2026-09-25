@@ -16,6 +16,7 @@ walks the package on disk and fails if this list falls behind again.
 from app.models.assignment import Assignment
 from app.models.assistance_usage import AssistanceUsage
 from app.models.base import Base
+from app.models.classroom import ClassMember, Classroom
 from app.models.knowledge_stats import KnowledgeStat, compute_knowledge_stats
 from app.models.mistake_book import MistakeBookEntry
 from app.models.problem import (
@@ -37,6 +38,8 @@ __all__ = [
     "STATUSES",
     "Assignment",
     "AssistanceUsage",
+    "ClassMember",
+    "Classroom",
     "KnowledgeStat",
     "MistakeBookEntry",
     "Problem",

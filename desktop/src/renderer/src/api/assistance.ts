@@ -49,6 +49,16 @@ export interface AssistRequest {
   assignment_id?: number
   problem_id?: number
   language?: string
+  /**
+   * 本次请求用哪个模型（`deepseek` / `ollama` / `openai_compatible`）。
+   *
+   * 省略则用服务端当前的默认（老师设的，或 `.env` 里的）。
+   *
+   * 它是**逐请求**的，所以学生换模型只影响自己的下一次提问 —— 想改「全班
+   * 的默认」是另一条路（`setModel`，需要教师身份）。把两件事分开之后，
+   * 换模型不需要任何权限，也就不会有人替别人换。
+   */
+  provider?: string
 }
 
 export interface CompleteRequest extends AssistRequest {
@@ -134,9 +144,13 @@ export async function listModels(): Promise<ModelSnapshot> {
 }
 
 /**
- * 切换当前模型。传 `null` 恢复 `.env` 的默认值。
+ * 改服务端的**进程默认**模型。传 `null` 恢复 `.env` 的默认值。
  *
- * 切换在服务端进程内生效，重启回到默认 —— 这是有意的：想固定就用 .env。
+ * 需要教师身份（否则 403），因为它改的是所有人共享的那个默认值：教师端与
+ * 学生端共用同一 sidecar 时，改它会让其他人的下一次提问跟着变。
+ *
+ * 学生只是想换个能连上的模型再问一次，走的是请求体里的 `provider` 字段，
+ * 那条路逐请求生效、只影响自己。
  */
 export async function setModel(modelId: string | null): Promise<ModelSnapshot> {
   const res = await http.put<ModelSnapshot>('/api/v1/assistance/models', {

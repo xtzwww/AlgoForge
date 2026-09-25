@@ -60,10 +60,20 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AssistPanel from '../components/AssistPanel.vue'
 import CodeEditor from '../components/CodeEditor.vue'
+import DebugPanel from '../components/DebugPanel.vue'
 import OutputPanel from '../components/OutputPanel.vue'
 import ProblemStatement from '../components/ProblemStatement.vue'
 import VerdictBadge from '../components/VerdictBadge.vue'
 import { listLevels, type AssistancePolicy } from '../api/assistance'
+import {
+  closeSession,
+  createSession,
+  getAvailability,
+  setBreakpoints as putBreakpoints,
+  step as stepDebug,
+  type DebugAction,
+  type DebugSession
+} from '../api/debug'
 import { runCases, submitCases, submitProblem, type JudgeEvent } from '../api/ws'
 import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
 import { getProblem, getProblemTestCases, type ProblemDetail } from '../api/problems'
@@ -373,12 +383,235 @@ const events = ref<JudgeEvent[]>([])
 const result = ref<JudgeResponse | null>(null)
 const errorMsg = ref<string>('')
 
+// --- Breakpoint debugging (PU-17) ---------------------------------------
+//
+// The bottom half of the code column holds one of two things: the judge's
+// output, or the debugger. They are tabs rather than two stacked panels
+// because both want the full height and neither is useful at half of it —
+// the output panel's per-case diffs and the debugger's variable table
+// both scroll, and a 90px scrolling box is not readable.
+//
+// The debugger is not a *third* panel and does not take the editor's
+// place: a student debugging needs the code and the variables at the same
+// time, which is the whole point of the gutter marker.
+
+/**
+ * Which panel owns the bottom half.
+ *
+ * A tab and not a toggle, because "the judge ran and I want to look at
+ * its output now" is a thing that happens constantly and must not require
+ * closing the debug session.
+ */
+const bottomTab = ref<'output' | 'debug'>('output')
+
+/** The open debug session, or null. The sidecar owns its real state. */
+const debugSession = ref<DebugSession | null>(null)
+const debugBusy = ref(false)
+const debugLoading = ref(false)
+/** A failed debug action. Kept separate from the judge's `errorMsg`. */
+const debugError = ref<string>('')
+/** A transient confirmation — "断点已保存" — never styled as an error. */
+const debugNotice = ref<string>('')
+
+/**
+ * Whether this machine can debug, from `GET /debug/availability`.
+ *
+ * Defaults to `false` with a reason, so a failed check shows the
+ * explanation rather than a control bar whose buttons all fail: the
+ * loading state must not look like the available state.
+ */
+const debugAvailable = ref(false)
+const debugUnavailableReason = ref('正在检查调试环境…')
+
+/**
+ * The breakpoint lines, kept as a `Set` for membership and exposed sorted.
+ *
+ * The editor compares a serialised form of this (see its watcher), so the
+ * array identity changing on every render is harmless — but the *order*
+ * has to be stable or every render would look like a change.
+ */
+const breakpoints = ref<Set<number>>(new Set())
+const breakpointLines = computed<number[]>(() => [...breakpoints.value].sort((a, b) => a - b))
+
+/** Where the debugger is stopped, for the editor's current-line tint. */
+const debugCurrentLine = computed<number | null>(() => debugSession.value?.stop?.line ?? null)
+
+/** True once a session exists, which is what the 调试 tab needs to show. */
+const hasDebugSession = computed<boolean>(() => debugSession.value !== null)
+
+/**
+ * Which of the two bottom panels is on screen.
+ *
+ * Falls back to the output panel when there is no session: the 调试 tab is
+ * not offered until one exists, and a tab strip that is showing a tab it
+ * does not offer is a state nothing can return from.
+ */
+const activeBottomTab = computed<'output' | 'debug'>(() =>
+  hasDebugSession.value ? bottomTab.value : 'output'
+)
+
+/**
+ * Check the toolchain once, on mount.
+ *
+ * Cheap by construction — the sidecar's probe is a file-existence test,
+ * not a launch — so it runs on every page load rather than being cached
+ * across the app. A stale "unavailable" after a student installs the
+ * toolchain would be worse than the repeated check it saves.
+ */
+async function loadDebugAvailability(): Promise<void> {
+  try {
+    const info = await getAvailability()
+    debugAvailable.value = info.available
+    if (!info.available) {
+      debugUnavailableReason.value = info.reason ?? '调试环境不可用。'
+    }
+  } catch {
+    // A failed *check* is not a failed *toolchain*, but from this page
+    // the two are indistinguishable and the safe reading is "assume
+    // unavailable" — offering a button that errors is worse.
+    debugAvailable.value = false
+    debugUnavailableReason.value = '无法确认调试环境是否可用，请稍后重试或联系老师。'
+  }
+}
+
+/**
+ * Turn a thrown request into something a student can act on.
+ *
+ * axios puts the sidecar's own `detail` on `response.data`, and those
+ * messages are written for this exact purpose (a compile error names the
+ * line; an unavailable toolchain names the files). Falling back to
+ * `err.message` keeps a network failure from rendering as `[object
+ * Object]`.
+ */
+function describeDebugError(err: unknown): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof detail === 'string' && detail) return detail
+  if (err instanceof Error && err.message) return err.message
+  return '调试请求失败。'
+}
+
+/**
+ * Open a session, compiling the code with debug info.
+ *
+ * Compiling at open rather than on the first step is the sidecar's
+ * choice, and this page relies on it: a compile error arrives here, while
+ * the student is looking at the moment they expected a build, instead of
+ * as a confusing failure of 单步跳过.
+ */
+async function onDebugStart(): Promise<void> {
+  if (debugBusy.value || debugLoading.value) return
+  debugLoading.value = true
+  debugError.value = ''
+  debugNotice.value = ''
+
+  try {
+    const session = await createSession(code.value, breakpointLines.value)
+    debugSession.value = session
+    bottomTab.value = 'debug'
+  } catch (err) {
+    debugError.value = describeDebugError(err)
+  } finally {
+    debugLoading.value = false
+  }
+}
+
+/**
+ * Toggle a breakpoint from the editor's gutter, and tell the sidecar.
+ *
+ * The optimistic update is deliberate — the dot appears on click, not
+ * after a round trip — and the request follows to make it true. If that
+ * request fails, the local set is *not* rolled back: the next session
+ * sends the whole set again, and reverting would move the dot away from
+ * under the student's cursor while they read an error message.
+ */
+async function toggleBreakpoint(line: number): Promise<void> {
+  const next = new Set(breakpoints.value)
+  if (next.has(line)) next.delete(line)
+  else next.add(line)
+  breakpoints.value = next
+
+  if (!debugSession.value) return
+
+  try {
+    await putBreakpoints(debugSession.value.session_id, [...next].sort((a, b) => a - b))
+    debugError.value = ''
+    debugNotice.value = '断点已保存，下次单步生效'
+  } catch (err) {
+    debugError.value = describeDebugError(err)
+    debugNotice.value = ''
+  }
+}
+
+/** Move the program and adopt the returned state. */
+async function onDebugStep(action: DebugAction): Promise<void> {
+  const session = debugSession.value
+  if (!session || debugBusy.value) return
+  debugBusy.value = true
+  debugError.value = ''
+  debugNotice.value = ''
+
+  try {
+    debugSession.value = await stepDebug(session.session_id, action)
+  } catch (err) {
+    // The session survives most step failures (a timeout, a missing
+    // binary), so it is kept: the position and variables on screen are
+    // still true and worth more than an empty panel.
+    debugError.value = describeDebugError(err)
+  } finally {
+    debugBusy.value = false
+  }
+}
+
+/**
+ * Close the session and go back to the output panel.
+ *
+ * Called both by the panel's 结束调试 and by unmount, so the `finally`
+ * matters: the local state must be cleared even when the request fails,
+ * or a session the sidecar has already dropped (expired, evicted) would
+ * leave this page convinced it still has one.
+ */
+async function onDebugClose(): Promise<void> {
+  const session = debugSession.value
+  debugSession.value = null
+  debugBusy.value = false
+  debugError.value = ''
+  debugNotice.value = ''
+  bottomTab.value = 'output'
+  if (!session) return
+
+  try {
+    await closeSession(session.session_id)
+  } catch {
+    // Cleanup is best-effort: the store has its own TTL and cap, and an
+    // error here is not something the student can act on.
+  }
+}
+
+/**
+ * Drop a session whose code no longer matches.
+ *
+ * Switching language replaces the buffer with a starter template, which
+ * is a different program: every breakpoint line refers to code that is
+ * gone and the compiled binary is the old source. Keeping the session
+ * would show variables for a program that is not on screen — the exact
+ * kind of quiet wrongness this panel must not produce.
+ */
+watch(code, () => {
+  if (debugSession.value) void onDebugClose()
+})
+
 onMounted(async () => {
   // Language catalogue and problem load are independent; run them
   // together so a slow env-check does not delay the statement. The
   // assistance rules are on the same footing — a failure there must not
-  // be able to delay the code page.
-  await Promise.all([loadLanguages(), loadProblem(), loadAssistanceLevels()])
+  // be able to delay the code page. The debug probe joins them because it
+  // is a file-existence check, not a launch.
+  await Promise.all([
+    loadLanguages(),
+    loadProblem(),
+    loadAssistanceLevels(),
+    loadDebugAvailability()
+  ])
   window.addEventListener('keydown', onKeydown)
 })
 
@@ -408,10 +641,13 @@ watch(problemTitle, (title) => publishPageCrumb(isProblemMode.value ? title : nu
 
 // Leaving the page must clear the label, or the next route would inherit
 // a crumb naming a problem it is not showing — and the keyboard handler
-// must not outlive the page.
+// must not outlive the page. An open debug session must not outlive it
+// either: it holds a compiled binary in a scratch directory, and nothing
+// on another page can close it.
 onUnmounted(() => {
   publishPageCrumb(null)
   window.removeEventListener('keydown', onKeydown)
+  void onDebugClose()
 })
 
 /**
@@ -896,17 +1132,112 @@ function submit(): Promise<void> {
             No `theme` prop (PU-10): the editor defaults to the AlgoForge
             theme registered by `monaco-theme.ts`. Passing a name from
             here is how the two would drift.
+
+            The gutter props (PU-17) are always passed, not only while
+            debugging: breakpoints are set *before* starting, which is the
+            order a student expects, and the markers have to survive the
+            session ending.
           -->
-          <CodeEditor v-model="code" :language="monacoLanguage" />
+          <CodeEditor
+            v-model="code"
+            :language="monacoLanguage"
+            :breakpoints="breakpointLines"
+            :current-line="debugCurrentLine"
+            @toggle-breakpoint="toggleBreakpoint"
+          />
         </div>
 
-        <OutputPanel
-          :events="events"
-          :result="result"
-          :error-msg="errorMsg"
-          :is-running="isRunning"
-          :is-scratch="lastRunKind === 'run'"
-        />
+        <!--
+          The bottom half: the judge's output, or the debugger.
+
+          The debugger can only be reached once a session exists, and the
+          tab is only offered then — see `activeBottomTab`.
+        -->
+        <div class="bottom-panel">
+          <div class="bottom-tabs" role="tablist">
+            <button
+              class="bottom-tab"
+              :class="{ 'is-active': activeBottomTab === 'output' }"
+              role="tab"
+              :aria-selected="activeBottomTab === 'output'"
+              @click="bottomTab = 'output'"
+            >
+              判题输出
+            </button>
+            <button
+              v-if="hasDebugSession"
+              class="bottom-tab"
+              :class="{ 'is-active': activeBottomTab === 'debug' }"
+              role="tab"
+              :aria-selected="activeBottomTab === 'debug'"
+              @click="bottomTab = 'debug'"
+            >
+              调试
+              <span v-if="breakpointLines.length" class="tab-badge">
+                {{ breakpointLines.length }}
+              </span>
+            </button>
+
+            <span class="bottom-tabs-spacer" />
+
+            <!--
+              The entry point. Hidden once a session exists, because from
+              then on the 调试 tab is the way in and two controls doing the
+              same thing is one to get out of step.
+            -->
+            <button
+              v-if="!hasDebugSession"
+              class="debug-start"
+              :disabled="debugBusy || debugLoading || !debugAvailable || !code"
+              :title="
+                !debugAvailable
+                  ? debugUnavailableReason
+                  : '编译你的代码并逐步运行，可以打断点'
+              "
+              @click="onDebugStart"
+            >
+              {{ debugLoading ? '正在编译…' : '开始调试' }}
+            </button>
+          </div>
+
+          <!--
+            A failed build is reported on the tab strip rather than inside
+            the debug panel: there is no session to put in a panel, and
+            the message names a source line the student needs to see next
+            to their code.
+          -->
+          <div v-if="debugError && !hasDebugSession" class="notice notice-error">
+            {{ debugError }}
+          </div>
+          <div v-else-if="!debugAvailable && !hasDebugSession" class="notice">
+            调试不可用：{{ debugUnavailableReason }}
+          </div>
+          <div v-else-if="debugNotice && !hasDebugSession" class="notice">
+            {{ debugNotice }}
+          </div>
+
+          <OutputPanel
+            v-show="activeBottomTab === 'output'"
+            :events="events"
+            :result="result"
+            :error-msg="errorMsg"
+            :is-running="isRunning"
+            :is-scratch="lastRunKind === 'run'"
+          />
+
+          <DebugPanel
+            v-if="activeBottomTab === 'debug'"
+            :session="debugSession"
+            :busy="debugBusy"
+            :error-msg="debugError"
+            :notice="debugNotice"
+            :available="debugAvailable"
+            :unavailable-reason="debugUnavailableReason"
+            :has-code="!!code"
+            @step="onDebugStep"
+            @close="onDebugClose"
+          />
+        </div>
       </section>
 
       <!--
@@ -1049,10 +1380,16 @@ function submit(): Promise<void> {
 }
 
 .btn-primary {
-  /* White rather than a token: this is the one foreground whose job is to
-   * stay legible on the accent fill, and no PU-0 token expresses that
-   * relationship. Retuning the accent is what would change it. */
-  color: #ffffff;
+  /* This comment used to read "White rather than a token: no PU-0 token
+   * expresses that relationship." That was true when it was written, and
+   * stopped being true on 2026-09-25: `--af-text-inverse` now names
+   * exactly this relationship.
+   *
+   * It is also no longer merely a matter of taste. The old accent was a
+   * dark blue that white sat on comfortably; the new one is a light blue
+   * where white measures ~3:1 — below AA — and the inverse measures
+   * ~6.3:1. So this line is a contrast fix, not a cleanup. */
+  color: var(--af-text-inverse);
   background: var(--af-accent);
 }
 
@@ -1218,6 +1555,120 @@ function submit(): Promise<void> {
   overflow: hidden;
   border: 1px solid var(--af-border);
   border-radius: var(--af-radius-md);
+}
+
+/*
+ * The bottom half: a tab strip plus whichever panel owns it.
+ *
+ * A bounded height rather than `flex: 1`, so a long variable list or a
+ * 40-case verdict scrolls inside this box instead of pushing the toolbar
+ * off the top of the page. Both panels already scroll internally, which
+ * is what makes a fixed height safe.
+ */
+.bottom-panel {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 280px;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-md);
+  background: var(--af-surface);
+}
+
+.bottom-tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+  align-items: center;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--af-border);
+}
+
+.bottom-tabs-spacer {
+  flex: 1;
+}
+
+.bottom-tab {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--af-text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  /* The rule sits under the active tab only — a full-width underline
+   * would not say which of the two is selected. */
+  border-bottom: 2px solid transparent;
+  transition: color var(--af-duration-fast) var(--af-ease);
+}
+
+.bottom-tab:hover {
+  color: var(--af-text-secondary);
+}
+
+.bottom-tab.is-active {
+  font-weight: 600;
+  color: var(--af-text-primary);
+  border-bottom-color: var(--af-accent);
+}
+
+/*
+ * How many breakpoints are set. Worth surfacing on the strip because a
+ * session with breakpoints the student forgot about is the commonest
+ * reason a 运行 appears to do nothing.
+ */
+.tab-badge {
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--af-text-secondary);
+  background: var(--af-elevated);
+  border-radius: 999px;
+}
+
+.debug-start {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--af-text-primary);
+  cursor: pointer;
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-sm);
+  transition: background var(--af-duration-fast) var(--af-ease);
+}
+
+.debug-start:hover:not(:disabled) {
+  background: var(--af-canvas);
+}
+
+.debug-start:disabled {
+  color: var(--af-text-muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/*
+ * Notices about the debug entry point, above the panel rather than
+ * inside it: there is no session to render a panel for when these fire,
+ * and the message names a source line the student needs next to the code.
+ */
+.notice {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--af-text-secondary);
+  border-bottom: 1px solid var(--af-border);
+  word-break: break-word;
+}
+
+.notice-error {
+  color: var(--af-text-primary);
+  background: color-mix(in srgb, var(--af-danger) 15%, transparent);
 }
 
 /*

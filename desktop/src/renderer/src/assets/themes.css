@@ -1,0 +1,249 @@
+/* ============================================================
+ * Theme overrides (2026-09-25).
+ *
+ * The default theme is `neon` (霓虹深空), and its values live in
+ * `tokens.css` under `:root` — this file does not repeat them. Each
+ * block below overrides only `--af-*`, the runtime namespace, which is
+ * enough because `tokens.css`'s `@theme` now expresses every Tailwind
+ * colour as `var(--af-*)`. See that file for why the indirection exists.
+ *
+ * Why an attribute on `<html>` and not a class
+ * --------------------------------------------
+ * `[data-theme]` is a single attribute whose value is the whole answer,
+ * so it cannot get into contradictory states the way two classes can
+ * (`theme-dark theme-light` is a state three rules can disagree about).
+ * It is also what the mockup in `docs/redesign-preview.html` used, so a
+ * reader moving between the two files sees the same selector.
+ *
+ * Why these are unlayered
+ * -----------------------
+ * Tailwind's utilities live in `@layer utilities`, and `:root` in
+ * `tokens.css` is unlayered. To win over the default without depending
+ * on source order — and over `tokens.css` being imported first — these
+ * rules are unlayered too. Specificity does the rest: `[data-theme=…]`
+ * (0,1,0) equals `:root` (0,1,0), and this file is imported after.
+ *
+ * What every theme must set
+ * -------------------------
+ * The full list below is longer than feels necessary, and that is the
+ * point: a theme that forgets `--af-verdict-wa` does not error, it just
+ * renders WA badges in the previous theme's colour. So each block sets
+ * the whole palette rather than the parts it cares about, and the
+ * comment on each group says what breaks if it is skipped.
+ *
+ * `--af-text-inverse` in particular **must flip with the accent**. It is
+ * the colour of text sitting on an accent fill, so it is dark when the
+ * accent is light and light when the accent is dark. Leaving it at one
+ * value is the exact bug the 2026-09-25 repaint introduced and fixed:
+ * white on `#6d8dff` measures ~3:1, below AA.
+ * ============================================================ */
+
+/* ============================================================
+ * 赛制终端 (terminal) — the Codeforces / judge-machine end.
+ *
+ * Near-black, square corners, amber accent, no glow, no glass. It is
+ * the most *legible* of the three for a crowded screen because there is
+ * almost nothing competing for attention: no shadows, no halos, no
+ * gradient. The cost is that it is also the least warm, which is fine
+ * for a contest and wrong for a classroom — hence not the default.
+ * ============================================================ */
+[data-theme='terminal'] {
+  /* Surfaces. Opaque, and stepping in a narrow band from #08090b to
+   * #1b1f26: the depth has to come from value alone, because there is
+   * no shadow to separate one panel from another. */
+  --af-canvas: #08090b;
+  --af-surface: #0f1115;
+  --af-elevated: #15181e;
+  --af-overlay: #1b1f26;
+  /* Opaque borders, unlike `neon`'s translucent ones: with no
+   * backdrop-blur there is nothing behind a border to pick up, and a
+   * 14%-alpha hairline on near-black is simply invisible. */
+  --af-border: #21252c;
+  --af-border-strong: #333941;
+
+  --af-text-primary: #e7eaee;
+  --af-text-secondary: #9aa1aa;
+  --af-text-muted: #666c75;
+  /* The amber accent (#d8a227) is a *light* colour, so text on it is
+   * dark. Same rule as `neon`, opposite value. */
+  --af-text-inverse: #08090b;
+
+  --af-accent: #d8a227;
+  --af-accent-hover: #e8b84a;
+  --af-accent-active: #bf8f22;
+  --af-accent-subtle: #2a2415;
+  /* No violet end: the terminal has no gradients, so `accentAlt` is
+   * just the hover shade. Naming it anyway is what keeps
+   * `--af-accent-gradient` from rendering a two-colour gradient on a
+   * theme that has no use for one. */
+  --af-accent-alt: #e8b84a;
+
+  --af-success: #2ee6a8;
+  --af-warning: #d8a227;
+  --af-danger: #ff5c5c;
+  --af-info: #4fd6ff;
+  --af-purple: #a78bfa;
+  --af-orange: #ff8a4c;
+
+  /* Verdicts — must stay tellable apart at 11px on a near-black chip.
+   * These are the same six hues as `neon`, re-tuned for a darker
+   * background rather than copied. */
+  --af-verdict-ac: #2ee6a8;
+  --af-verdict-wa: #ff5c5c;
+  --af-verdict-tle: #d8a227;
+  --af-verdict-mle: #4fd6ff;
+  --af-verdict-ce: #a78bfa;
+  --af-verdict-re: #ff8a4c;
+  --af-verdict-unknown: #9aa1aa;
+
+  /* Square-ish corners: 2/3/4px is "a deliberate corner", not "a circle".
+   * This is the single most recognisable thing about the theme, so it is
+   * set here rather than left to any component. */
+  --af-radius-sm: 2px;
+  --af-radius-md: 3px;
+  --af-radius-lg: 4px;
+
+  /* No elevation at all. A shadow on a near-black panel is invisible
+   * anyway, and `none` is cheaper than a shadow nobody can see. */
+  --af-shadow-sm: none;
+  --af-shadow-md: none;
+  --af-shadow-lg: none;
+
+  /* No canvas glow, no grid: the terminal's surface is flat and that is
+   * the aesthetic. `transparent` rather than removing the gradient —
+   * `body` always paints both, so the way to turn them off is to make
+   * them paint nothing. */
+  --af-grid-line: transparent;
+  --af-glow-blue: transparent;
+  --af-glow-violet: transparent;
+
+  /* No halos. `--af-glow-focus` becomes a solid ring instead, because
+   * focus still has to be visible — this theme removes decoration, not
+   * accessibility. */
+  --af-glow-accent: 0 0 0 1px #d8a227;
+  --af-glow-accent-soft: none;
+  --af-glow-focus: 0 0 0 2px #d8a227;
+  --af-glow-danger: none;
+  --af-glow-success: none;
+  --af-glow-warning: none;
+
+  --af-accent-gradient: linear-gradient(180deg, #d8a227 0%, #d8a227 100%);
+
+  /* Glass is switched off by making it opaque: `backdrop-filter` is
+   * still applied by `.af-glass`, but blurring a solid panel is a
+   * no-op, and this way no component needs to know about themes. */
+  --af-glass-elevated: #15181e;
+
+  color-scheme: dark;
+}
+
+/* ============================================================
+ * 纸感学术 (paper) — the print / projector end.
+ *
+ * Warm off-white, serif headings, muted-but-dark semantic colours. It
+ * is the only light theme, which makes it the right one for two real
+ * situations: a projector in a lit room (a dark UI loses contrast
+ * against a bright room) and printing a mistake list.
+ *
+ * Note the semantic colours are all *darker* than the dark themes'
+ * equivalents — `#2f7a4d` rather than `#34e39a`. A bright mint that
+ * reads as "passed" on #101728 is unreadable on #fffefb; every hue had
+ * to be re-derived for the light ground rather than reused.
+ * ============================================================ */
+[data-theme='paper'] {
+  --af-canvas: #f7f4ee;
+  --af-surface: #fffefb;
+  --af-elevated: #f1ece2;
+  --af-overlay: #e8e1d3;
+  --af-border: #e4ddd0;
+  --af-border-strong: #d3c9b7;
+
+  --af-text-primary: #1c1a16;
+  --af-text-secondary: #5d574d;
+  --af-text-muted: #918a7c;
+  /* The accent here is a *dark* blue (#1f4e79), so text on it is light.
+   * This is the flip the docstring warns about: keeping the dark theme's
+   * near-black here would put #070a14 on #1f4e79, unreadable. */
+  --af-text-inverse: #fffefb;
+
+  --af-accent: #1f4e79;
+  --af-accent-hover: #2d6ba5;
+  --af-accent-active: #16405f;
+  --af-accent-subtle: #e3ecf5;
+  /* A second, lighter blue so the accent gradient still has two ends. */
+  --af-accent-alt: #2d6ba5;
+
+  --af-success: #2f7a4d;
+  --af-warning: #a8700f;
+  --af-danger: #b03a2e;
+  --af-info: #2a6f8a;
+  --af-purple: #6b4a9e;
+  --af-orange: #b5601f;
+
+  --af-verdict-ac: #2f7a4d;
+  --af-verdict-wa: #b03a2e;
+  --af-verdict-tle: #a8700f;
+  --af-verdict-mle: #2a6f8a;
+  --af-verdict-ce: #6b4a9e;
+  --af-verdict-re: #b5601f;
+  --af-verdict-unknown: #5d574d;
+
+  /* Softer corners than neon: 5/9/13 reads as "paper and print" where
+   * 8/12/16 reads as "glass and screens". */
+  --af-radius-sm: 5px;
+  --af-radius-md: 9px;
+  --af-radius-lg: 13px;
+
+  /* Warm, low-opacity shadows. On a light ground a shadow is what
+   * separates a panel from the page — the opposite of `terminal`, where
+   * a shadow cannot be seen. */
+  --af-shadow-sm: 0 1px 2px rgb(60 50 30 / 0.06);
+  --af-shadow-md: 0 1px 2px rgb(60 50 30 / 0.05), 0 10px 28px -18px rgb(60 50 30 / 0.28);
+  --af-shadow-lg: 0 2px 4px rgb(60 50 30 / 0.06), 0 24px 48px -28px rgb(60 50 30 / 0.35);
+
+  /* No neon glow and no grid on paper — they belong to the dark canvas. */
+  --af-grid-line: transparent;
+  --af-glow-blue: transparent;
+  --af-glow-violet: transparent;
+
+  /* Halos become ring shadows, which is what a glow *is* on a light
+   * ground: light-on-light needs a dark edge, not a bright one. */
+  --af-glow-accent: 0 0 0 1px rgb(31 78 121 / 0.35);
+  --af-glow-accent-soft: 0 1px 3px rgb(31 78 121 / 0.22);
+  --af-glow-focus: 0 0 0 3px rgb(31 78 121 / 0.32);
+  --af-glow-danger: 0 0 0 1px rgb(176 58 46 / 0.4);
+  --af-glow-success: 0 0 0 1px rgb(47 122 77 / 0.4);
+  --af-glow-warning: 0 0 0 1px rgb(168 112 15 / 0.4);
+
+  --af-accent-gradient: linear-gradient(135deg, #1f4e79 0%, #2d6ba5 100%);
+
+  --af-glass-elevated: rgb(241 236 226 / 0.86);
+
+  /* Drives `color-scheme`, which is what makes native controls
+   * (scrollbars, form widgets, spelling underlines) dark or light. It is
+   * also how `monaco-theme.ts` picks Monaco's `base` — see that file. */
+  color-scheme: light;
+
+  /* Serif headings. Kept as one token rather than applied to `h1…h6`
+   * here, because which *elements* are headings-in-the-design-sense
+   * rather than headings-in-the-markup-sense is a component decision. */
+  --af-font-head: Georgia, 'Songti SC', 'SimSun', serif;
+}
+
+/* ============================================================
+ * Serif headings, applied (paper only).
+ *
+ * Scoped to the light theme rather than applied globally so the other
+ * two keep the sans stack they were designed with — swapping the type
+ * is part of what makes `paper` a different *document*, not just a
+ * different palette.
+ *
+ * `--af-font-head` is read with a `sans-serif` fallback so a machine
+ * without the named serif still gets a serif, not a default UI font.
+ * ============================================================ */
+[data-theme='paper'] h1,
+[data-theme='paper'] h2,
+[data-theme='paper'] h3 {
+  font-family: var(--af-font-head, Georgia), serif;
+  letter-spacing: -0.005em;
+}

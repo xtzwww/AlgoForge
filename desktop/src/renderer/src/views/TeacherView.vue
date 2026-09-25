@@ -5,7 +5,7 @@
  * Four states, and the first three are not error states:
  *
  *   1. 会话恢复中  — the startup round trip has not answered yet.
- *   2. 未登录      — a login form, inline rather than on its own route.
+ *   2. 未登录      — a signpost to `/login`（表单以前长在这里）.
  *   3. 已登录但不是教师 — a plain statement and a way out.
  *   4. 教师        — the console itself.
  *
@@ -20,14 +20,21 @@
  * server, and this page deliberately does not re-sort them — a second
  * sort is a second opinion about what matters, and the two would drift.
  *
- * Why the login is inline
- * -----------------------
- * A separate `/login` route would need a guard deciding where to send
- * you afterwards, and a guard is a place to get the role question wrong.
- * Here the page you asked for is the page you get, authenticated or not,
- * which is also the honest shape: every teacher route refuses an
- * unauthenticated request anyway (see `app/api/teacher.py`), so showing
- * the form is a convenience, never the boundary.
+ * Why the login moved to its own route
+ * ------------------------------------
+ * This page used to carry its own login form, and the reasoning was that
+ * a `/login` route needs a guard deciding where to send you afterwards,
+ * and a guard is a place to get the role question wrong.
+ *
+ * That reasoning still holds — which is why there is still no guard. What
+ * changed is that the *student* side needed a login too, and two forms on
+ * two pages is one form too many: somebody told "go and log in" should
+ * not have to work out which of them is the real one. The form now lives
+ * in `views/LoginView.vue`, and this page points at it.
+ *
+ * The boundary is unchanged, and was never here: every teacher route
+ * refuses an unauthenticated request server-side (see
+ * `app/api/teacher.py`). The card below is a signpost, not a gate.
  *
  * Why the drill-down is a panel and not a route
  * ---------------------------------------------
@@ -46,10 +53,12 @@
  */
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import AttentionAlerts from '../components/AttentionAlerts.vue'
 import PageHeader from '../components/PageHeader.vue'
 import { masteryColorFor } from '../assets/tokens'
-import { isLoggedIn, isTeacher, login, logout, sessionReady, sessionUser } from '../api/session'
+import { isLoggedIn, isTeacher, logout, sessionReady, sessionUser } from '../api/session'
+import { listClassrooms, type ClassroomOut } from '../api/classroom'
 import {
   createAssignment,
   deleteAssignment,
@@ -106,32 +115,9 @@ const timeline = ref<TimelineEntryOut[]>([])
 const timelineLoading = ref(false)
 
 // --- Login ------------------------------------------------------------
-
-const loginName = ref('')
-const loginPassword = ref('')
-const loginError = ref('')
-const loginBusy = ref(false)
-
-async function submitLogin(): Promise<void> {
-  if (!loginName.value || !loginPassword.value) {
-    loginError.value = '请填写用户名和密码'
-    return
-  }
-  loginBusy.value = true
-  loginError.value = ''
-  try {
-    await login(loginName.value, loginPassword.value)
-    loginPassword.value = ''
-    await load()
-  } catch (err) {
-    // The server's message is already the whole story: it answers 401
-    // with one string for both a wrong password and an unknown user, on
-    // purpose, so there is nothing to add here.
-    loginError.value = messageOf(err, '登录失败')
-  } finally {
-    loginBusy.value = false
-  }
-}
+//
+// The form itself is `views/LoginView.vue` — see the docstring for why it
+// is no longer here. This page only has to offer a way to get there.
 
 async function submitLogout(): Promise<void> {
   await logout()
@@ -171,7 +157,12 @@ async function load(): Promise<void> {
     students.value = stud
     flagged.value = flag
     alerts.value = warn
-    await Promise.all([loadAssignments(), loadAssistanceUsage(), loadAssistanceLevels()])
+    await Promise.all([
+      loadAssignments(),
+      loadAssistanceUsage(),
+      loadAssistanceLevels(),
+      loadClassrooms()
+    ])
     // A student who has left the roster (deleted, re-roled) must not
     // leave their timeline open behind them.
     if (selected.value && !stud.some((s) => s.user_id === selected.value?.user_id)) {
@@ -238,6 +229,28 @@ const assignmentBusy = ref(false)
  * publish a 五档 assignment by accident.
  */
 const newAssignmentLevel = ref<number | null>(null)
+
+/**
+ * Which class the homework is for (PU-13). `null` is "everyone", and it
+ * is the default on purpose: a teacher who has not thought about classes
+ * yet should be able to publish practice problems without first having
+ * to create one.
+ */
+const newAssignmentClassId = ref<number | null>(null)
+
+/** This teacher's classes, for the picker. Empty hides the select. */
+const classrooms = ref<ClassroomOut[]>([])
+
+async function loadClassrooms(): Promise<void> {
+  try {
+    classrooms.value = await listClassrooms()
+  } catch {
+    // Degrade to "no picker": homework can still be published to
+    // everyone, which is the state before classes existed. An error
+    // banner here would block a working action over a missing option.
+    classrooms.value = []
+  }
+}
 
 /** The five levels, for the picker. Fetched once — the table is static. */
 const assistanceLevels = ref<AssistancePolicy[]>([])
@@ -361,13 +374,17 @@ async function submitAssignment(): Promise<void> {
       due_at: newAssignmentDue.value ? newAssignmentDue.value : undefined,
       // Omitted (not sent as null) when untouched, so the server's
       // default is what applies — see `newAssignmentLevel`.
-      assistance_level: newAssignmentLevel.value ?? undefined
+      assistance_level: newAssignmentLevel.value ?? undefined,
+      // Omitted for "everyone" rather than sent as null, so the request
+      // has one spelling of that idea — see `newAssignmentClassId`.
+      class_id: newAssignmentClassId.value ?? undefined
     })
     addingAssignment.value = false
     newAssignmentTitle.value = ''
     newAssignmentProblems.value = ''
     newAssignmentDue.value = ''
     newAssignmentLevel.value = null
+    newAssignmentClassId.value = null
     await Promise.all([loadAssignments(), loadAssistanceUsage()])
   } catch (err) {
     errorMsg.value = messageOf(err, '无法发布作业')
@@ -722,31 +739,14 @@ onMounted(() => {
       <!-- 1. Session still resolving. -->
       <div v-if="!sessionReady" class="placeholder">正在恢复登录状态…</div>
 
-      <!-- 2. Nobody is logged in. -->
+      <!-- 2. Nobody is logged in. A signpost, not a form: the form is
+           the shared `/login` page, so there is exactly one of them. -->
       <div v-else-if="!isLoggedIn" class="gate">
-        <h2 class="gate-title">教师登录</h2>
+        <h2 class="gate-title">学情看板需要登录</h2>
         <p class="gate-body">
-          学情看板需要教师账号。学生侧的练习、错题本和画像不需要登录，照常可用。
+          学情看板使用教师账号。学生侧的练习、错题本和画像不需要登录，照常可用。
         </p>
-        <form class="gate-form" @submit.prevent="submitLogin">
-          <label class="field">
-            <span class="field-label">用户名</span>
-            <input v-model="loginName" class="input" type="text" autocomplete="username" />
-          </label>
-          <label class="field">
-            <span class="field-label">密码</span>
-            <input
-              v-model="loginPassword"
-              class="input"
-              type="password"
-              autocomplete="current-password"
-            />
-          </label>
-          <p v-if="loginError" class="gate-error">{{ loginError }}</p>
-          <button class="primary" type="submit" :disabled="loginBusy">
-            {{ loginBusy ? '登录中…' : '登录' }}
-          </button>
-        </form>
+        <RouterLink class="primary gate-link" :to="{ name: 'login' }">去登录</RouterLink>
       </div>
 
       <!-- 3. Logged in, but not as a teacher. -->
@@ -1164,6 +1164,22 @@ onMounted(() => {
               </label>
 
               <!--
+                Which class (PU-13). Only rendered once the teacher has
+                one: an empty select would offer nothing but "everyone",
+                which is the default anyway, and a disabled control is
+                worse than no control.
+              -->
+              <label v-if="classrooms.length" class="field">
+                <span class="field-label">布置给</span>
+                <select v-model="newAssignmentClassId" class="input">
+                  <option :value="null">所有人（不限定班级）</option>
+                  <option v-for="room in classrooms" :key="room.id" :value="room.id">
+                    {{ room.name }}
+                  </option>
+                </select>
+              </label>
+
+              <!--
                 Assistant strength (阶段 5). Only rendered when the level
                 table loaded: a select with no options would silently
                 publish homework at whatever the browser falls back to.
@@ -1518,24 +1534,50 @@ onMounted(() => {
   padding: 7px 14px;
   font-size: 13px;
   font-family: inherit;
-  /* White rather than a token, for the same reason as Practice.vue's
-   * `.btn-primary`: this is the one foreground whose job is to stay
-   * legible on the accent fill, and no token expresses that
-   * relationship. */
-  color: #ffffff;
+  /* Text on the accent fill. Was `#ffffff` with a comment saying no token
+   * expressed the relationship — `--af-text-inverse` does now, and the
+   * repaint made it the only correct choice (see tokens.css). */
+  color: var(--af-text-inverse);
   background: var(--af-accent);
   border: none;
   border-radius: var(--af-radius-sm);
   cursor: pointer;
+  transition:
+    background var(--af-duration-fast) var(--af-ease),
+    box-shadow var(--af-duration-fast) var(--af-ease),
+    transform var(--af-duration-fast) var(--af-ease-pop);
 }
 
 .primary:hover:not(:disabled) {
   background: var(--af-accent-hover);
+  box-shadow: var(--af-glow-accent-soft);
 }
 
+.primary:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Consolidated (2026-09-25). There were two `.primary:disabled` rules and
+ * two `.primary:hover` rules after the repaint; the surviving one changes
+ * the disabled treatment from `opacity: 0.6` to a flat surface, for the
+ * same reason as ProblemListView's refresh button: a dimmed accent still
+ * reads as the primary action and invites a click that does nothing.
+ * `cursor: not-allowed` replaces `default` to match every other disabled
+ * control in the app. */
 .primary:disabled {
-  opacity: 0.6;
-  cursor: default;
+  color: var(--af-text-muted);
+  background: var(--af-elevated);
+  cursor: not-allowed;
+}
+
+/* The 未登录 card's only control is a link, not a button — it navigates,
+ * it does not submit. `.primary` supplies the fill; this adds the two
+ * things an <a> needs to sit the way the buttons do, and which a
+ * <button> gets for free. */
+.gate-link {
+  display: inline-block;
+  margin-top: 4px;
+  text-decoration: none;
 }
 
 .ghost {
@@ -1969,7 +2011,7 @@ onMounted(() => {
   margin-left: 6px;
   padding: 0;
   font-size: 12px;
-  color: var(--af-accent, #3b82f6);
+  color: var(--af-accent);
   background: none;
   border: none;
   cursor: pointer;

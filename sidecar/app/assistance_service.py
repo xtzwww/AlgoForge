@@ -280,8 +280,14 @@ def handle_completion(
     level: Optional[int],
     prefix: str,
     language: str = "cpp",
+    provider: Optional[str] = None,
 ) -> AssistanceResult:
-    """补全请求。一档走本机词表，二档起走模型。"""
+    """补全请求。一档走本机词表，二档起走模型。
+
+    ``provider`` 是**本次请求**用哪个模型。它是逐请求的，因此一个人换
+    模型不会影响别人 —— 与「老师设定的默认」是两件事，见
+    :func:`app.api.assistance.set_model`。
+    """
     policy = policy_for(level)
     policy_dict = policy_to_dict(policy)
     allowed, reason = decide(level, ACTION_COMPLETE)
@@ -315,7 +321,9 @@ def handle_completion(
         {"role": "user", "content": prefix},
     ]
     try:
-        text = chat_completion(messages, temperature=0.2, max_tokens=200)
+        text = chat_completion(
+            messages, temperature=0.2, max_tokens=200, provider=provider
+        )
     except LLMGatewayError as exc:
         logger.warning("assistance: 补全调用失败：%s", exc)
         # 退回本机候选，而不是空手而归 —— 一档能做到的事，没理由因为
@@ -346,6 +354,7 @@ def handle_chat(
     level: Optional[int],
     question: str,
     statement: str = "",
+    provider: Optional[str] = None,
 ) -> AssistanceResult:
     """对话请求（三档起）。三档的内容门在这里。"""
     policy = policy_for(level)
@@ -385,7 +394,9 @@ def handle_chat(
     messages.append({"role": "user", "content": question})
 
     try:
-        text = chat_completion(messages, temperature=0.4, max_tokens=800)
+        text = chat_completion(
+            messages, temperature=0.4, max_tokens=800, provider=provider
+        )
     except LLMGatewayError as exc:
         logger.warning("assistance: 对话调用失败：%s", exc)
         return AssistanceResult(
@@ -422,6 +433,7 @@ def handle_solution(
     level: Optional[int],
     statement: str,
     language: str = "cpp",
+    provider: Optional[str] = None,
 ) -> AssistanceResult:
     """请求完整解法（只有五档放行）。
 
@@ -456,7 +468,9 @@ def handle_solution(
         {"role": "user", "content": statement},
     ]
     try:
-        text = chat_completion(messages, temperature=0.3, max_tokens=1500)
+        text = chat_completion(
+            messages, temperature=0.3, max_tokens=1500, provider=provider
+        )
     except LLMGatewayError as exc:
         logger.warning("assistance: 完整解法调用失败：%s", exc)
         return AssistanceResult(
@@ -485,6 +499,7 @@ def handle_insert(
     instruction: str,
     current_code: str = "",
     language: str = "cpp",
+    provider: Optional[str] = None,
 ) -> AssistanceResult:
     """请求 AI 写一段代码插进编辑器（四档起）。
 
@@ -524,7 +539,9 @@ def handle_insert(
         },
     ]
     try:
-        text = chat_completion(messages, temperature=0.3, max_tokens=900)
+        text = chat_completion(
+            messages, temperature=0.3, max_tokens=900, provider=provider
+        )
     except LLMGatewayError as exc:
         logger.warning("assistance: 写码调用失败：%s", exc)
         return AssistanceResult(

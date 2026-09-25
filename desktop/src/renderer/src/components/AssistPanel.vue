@@ -41,7 +41,6 @@ import {
   complete as requestComplete,
   insert as requestInsert,
   listModels,
-  setModel,
   solution as requestSolution,
   type AssistancePolicy,
   type AssistResponse,
@@ -144,13 +143,22 @@ watch(
   }
 )
 
-function common(): { assignment_id?: number; problem_id?: number; language?: string } {
+function common(): {
+  assignment_id?: number
+  problem_id?: number
+  language?: string
+  provider?: string
+} {
   return {
     // 只有真的绑在作业上才传。传 null 会被服务端当成"没有作业"，与省略等价，
     // 但显式传 null 会让 pydantic 收到一个 None 而不是缺省值 —— 少一层歧义。
     ...(props.assignmentId === null ? {} : { assignment_id: props.assignmentId }),
     ...(props.problemId === null ? {} : { problem_id: props.problemId }),
-    language: props.language
+    language: props.language,
+    // 选了模型就随请求带上，逐请求生效、只影响自己。不再走 setModel 改
+    // 服务端的进程级默认值（那需要教师身份，且会牵动所有人）—— 见
+    // api/assistance.ts 里 setModel 与 AssistRequest.provider 的注释。
+    ...(activeModel.value ? { provider: activeModel.value } : {})
   }
 }
 
@@ -251,6 +259,10 @@ const modelError = ref('')
  * 不渲染（`v-if="models.length > 1"`），学生照常提问 —— 用的是服务端
  * 的默认模型，与没有这个功能时完全一样。把附属功能的失败变成一条红色
  * 横幅，会让学生以为整个 AI 都不能用了。
+ *
+ * `activeModel` 仅作**本地偏好**用：它会被放进每个请求体的 `provider`
+ * 字段里，逐请求生效、只影响自己，不会改服务端的进程级默认值（那是
+ * 教师端 `setModel` 的职责，需要教师身份）。
  */
 async function loadModels(): Promise<void> {
   try {
@@ -265,24 +277,27 @@ async function loadModels(): Promise<void> {
   }
 }
 
+/**
+ * 选模型：只改本地状态，不调服务端。
+ *
+ * 选中的 id 通过 `common()` 里的 `provider` 字段随请求发出去，因此只影响
+ * 自己接下来的提问 —— 不需要任何权限，也不会牵动别人。这与修改服务端进程
+ * 默认（`setModel`，教师专属）是两条路，分开之后"学生换个能连上的模型"
+ * 和"老师给全班改默认"互不干扰。
+ */
 async function chooseModel(id: string): Promise<void> {
   modelMenuOpen.value = false
   if (id === activeModel.value) return
   modelError.value = ''
-  try {
-    const snap = await setModel(id)
-    activeModel.value = snap.active
-    models.value = snap.models
-    // 换模型后旧回答是新模型给的还是旧的？说不清，所以提示一句。
-    turns.value.push({
-      role: 'assistant',
-      text: `已切换到 ${snap.models.find((m) => m.id === snap.active)?.label ?? snap.active}，接下来的回答由它给出。`,
-      refused: false
-    })
-    await scrollToBottom()
-  } catch (err) {
-    modelError.value = err instanceof Error ? err.message : '切换失败'
-  }
+  const label = models.value.find((m) => m.id === id)?.label ?? id
+  activeModel.value = id
+  // 旧回答是哪个模型给的、新回答是哪个给的，说不清，提示一句即可。
+  turns.value.push({
+    role: 'assistant',
+    text: `已切换到 ${label}，接下来的回答由它给出。`,
+    refused: false
+  })
+  await scrollToBottom()
 }
 
 const activeLabel = computed<string>(() => {
@@ -755,6 +770,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDo
   padding: 4px;
   list-style: none;
   background: var(--af-glass-elevated, var(--af-elevated));
+  /* Both prefixes, unlike the rest of this file: the token is a raw CSS
+   * value rather than a Tailwind utility, and Tailwind is what normally
+   * supplies the `-webkit-` form. */
+  -webkit-backdrop-filter: var(--af-glass-blur, none);
   backdrop-filter: var(--af-glass-blur, none);
   border: 1px solid var(--af-border-strong);
   border-radius: var(--af-radius-sm);
@@ -864,7 +883,10 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDo
 }
 
 .assist-turn.is-student .assist-bubble {
-  color: #fff;
+  /* The student's own message, i.e. text on the accent fill — so the
+   * inverse token, not white. See tokens.css for why that flipped with
+   * the repaint. */
+  color: var(--af-text-inverse);
   background: var(--af-accent);
   border-bottom-right-radius: 3px;
 }
@@ -963,8 +985,8 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDo
 .assist-tag {
   padding: 0 5px;
   font-size: 10px;
-  color: var(--af-warning, #e8a33d);
-  border: 1px solid var(--af-warning, #e8a33d);
+  color: var(--af-warning);
+  border: 1px solid var(--af-warning);
   border-radius: var(--af-radius-sm);
 }
 
@@ -1048,7 +1070,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDo
 }
 
 .assist-candidate:hover {
-  border-color: var(--af-accent, #3b82f6);
+  border-color: var(--af-accent);
 }
 
 @media (max-width: 899px) {

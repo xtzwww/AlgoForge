@@ -1,0 +1,1174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlgoForge 界面改版 · 三套风格方向</title>
+<style>
+/* ============================================================
+ * 这是一份「风格方向对比页」，不是最终界面。
+ *
+ * 页面的边框（chrome）故意做成中性的深灰：它不该抢镜，
+ * 否则你看到的偏好里会混进"我觉得这页壳子好看"。
+ *
+ * 三个方向共用同一套页面结构（见文末 mockHTML / dashHTML），
+ * 只换 CSS 变量。所以差异是纯视觉差异，不是信息架构差异。
+ * ============================================================ */
+
+:root{
+  --bg:#0b0b10;
+  --panel:#121218;
+  --panel-2:#17171f;
+  --line:rgba(255,255,255,.09);
+  --line-soft:rgba(255,255,255,.055);
+  --tx:#ececf2;
+  --tx2:#a2a2b0;
+  --tx3:#6d6d7d;
+  --hi:#ffffff;
+  --mono:ui-monospace,'Cascadia Mono','SF Mono',Consolas,'Liberation Mono',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg);
+  color:var(--tx);
+  font-family:var(--sans);
+  font-size:14px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  font-variant-numeric:tabular-nums;
+}
+a{color:inherit}
+
+/* ---------- 顶栏 ---------- */
+.top{
+  position:sticky;top:0;z-index:50;
+  background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);
+}
+.top-in{
+  max-width:1400px;margin:0 auto;padding:12px 28px;
+  display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+}
+.top-title{font-size:14px;font-weight:600;letter-spacing:.2px;white-space:nowrap}
+.top-title small{display:block;font-size:11.5px;font-weight:400;color:var(--tx3);letter-spacing:0}
+.tabs{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.tab{
+  appearance:none;border:1px solid var(--line);background:transparent;color:var(--tx2);
+  font:inherit;font-size:12.5px;padding:6px 14px;border-radius:999px;cursor:pointer;
+  transition:background .16s,border-color .16s,color .16s;
+  display:flex;align-items:center;gap:8px;white-space:nowrap;
+}
+.tab:hover{color:var(--tx);border-color:rgba(255,255,255,.2)}
+.tab .dot{width:9px;height:9px;border-radius:3px;background:var(--dot,#888);flex:none}
+.tab.is-active{background:#fff;color:#0b0b10;border-color:#fff;font-weight:600}
+.tab.is-active .dot{box-shadow:0 0 0 2px rgba(0,0,0,.12) inset}
+
+/* ---------- 版心 ---------- */
+main{max-width:1400px;margin:0 auto;padding:0 28px 96px}
+.sec{padding:44px 0 0}
+.sec-h{font-size:22px;font-weight:600;margin:0 0 6px;letter-spacing:.2px}
+.sec-p{color:var(--tx2);margin:0 0 22px;max-width:78ch;font-size:13.5px}
+.sec-p b{color:var(--tx);font-weight:600}
+
+/* ---------- 说明区 ---------- */
+.hero{padding:52px 0 8px}
+.hero h1{font-size:30px;line-height:1.25;margin:0 0 14px;letter-spacing:-.2px}
+.hero h1 em{font-style:normal;color:#c9b8ff}
+.hero .lead{color:var(--tx2);font-size:15px;max-width:74ch;margin:0 0 26px}
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-bottom:8px}
+.rule{
+  background:var(--panel);border:1px solid var(--line-soft);border-radius:12px;padding:16px 18px;
+}
+.rule .n{font:600 11px/1 var(--mono);color:var(--tx3);letter-spacing:.14em;margin-bottom:9px}
+.rule b{display:block;font-size:13.5px;margin-bottom:5px}
+.rule p{margin:0;font-size:12.5px;color:var(--tx2);line-height:1.65}
+
+/* ---------- 总览三卡 ---------- */
+.ov{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px}
+.ovcard{
+  background:var(--panel);border:1px solid var(--line-soft);border-radius:16px;
+  overflow:hidden;display:flex;flex-direction:column;
+  transition:border-color .18s,transform .18s;
+}
+.ovcard:hover{border-color:rgba(255,255,255,.2);transform:translateY(-2px)}
+.ovcard-h{padding:18px 20px 14px;border-bottom:1px solid var(--line-soft)}
+.ovcard-h .nm{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:600}
+.ovcard-h .nm i{width:12px;height:12px;border-radius:4px;flex:none}
+.ovcard-h .en{font:400 11px/1 var(--mono);color:var(--tx3);letter-spacing:.1em;margin:7px 0 0 22px;text-transform:uppercase}
+.ovcard-h .say{margin:10px 0 0;font-size:13px;color:var(--tx2)}
+.ov-thumb{padding:18px 20px;background:#0d0d12;flex:1;display:flex;align-items:center;justify-content:center}
+.ov-foot{padding:14px 20px 18px;border-top:1px solid var(--line-soft)}
+.ov-foot .k{font:600 10.5px/1 var(--mono);letter-spacing:.14em;color:var(--tx3);text-transform:uppercase;margin-bottom:8px}
+.ov-foot ul{margin:0;padding-left:16px;font-size:12.5px;color:var(--tx2)}
+.ov-foot li{margin:3px 0}
+
+/* 缩略示意（抽象线框，不是真页面） */
+.mini{width:100%;max-width:250px;border-radius:8px;padding:9px;display:flex;flex-direction:column;gap:7px}
+.mini .row{display:flex;gap:7px}
+.mini .bar{height:7px;border-radius:3px}
+.mini .blk{border-radius:5px}
+.mini .col{display:flex;flex-direction:column;gap:6px}
+.mini .grow{flex:1}
+.mi-i{background:#0d0f12;border:1px solid #26303c}
+.mi-w{background:#fffdf8;border:1px solid #e2dacb}
+.mi-f{background:#0a0a0f;border:1px solid rgba(255,255,255,.09)}
+
+/* ---------- 方向面板 ---------- */
+.panel{display:none}
+.panel.is-active{display:block}
+
+.dir-head{padding:48px 0 0}
+.dir-head .tag{display:inline-flex;align-items:center;gap:9px;font:600 11px/1 var(--mono);letter-spacing:.16em;color:var(--tx3);text-transform:uppercase}
+.dir-head .tag i{width:10px;height:10px;border-radius:3px}
+.dir-head h2{font-size:27px;margin:14px 0 8px;letter-spacing:-.2px}
+.dir-head .decl{font-size:15.5px;color:var(--tx2);max-width:70ch;margin:0 0 18px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:26px}
+.chip{
+  font-size:12px;padding:5px 12px;border-radius:999px;
+  border:1px solid var(--line);color:var(--tx2);background:var(--panel);
+}
+.chip.acc{border-color:color-mix(in srgb,var(--acc) 45%,transparent);color:var(--acc)}
+
+/* 参数三栏 */
+.specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:28px}
+.spec{background:var(--panel);border:1px solid var(--line-soft);border-radius:12px;padding:15px 17px}
+.spec .k{font:600 10.5px/1 var(--mono);letter-spacing:.14em;color:var(--tx3);text-transform:uppercase;margin-bottom:9px}
+.spec .v{font-size:15px;font-weight:600;margin-bottom:4px}
+.spec .d{font-size:12.5px;color:var(--tx2);line-height:1.6}
+
+/* 色板 */
+.sw{display:flex;gap:0;border-radius:12px;overflow:hidden;border:1px solid var(--line-soft);margin-bottom:28px}
+.sw div{flex:1;padding:22px 8px 10px;font:500 10.5px/1.3 var(--mono);text-align:center;letter-spacing:.02em}
+
+/* 画框 */
+.frame{margin-bottom:34px}
+.frame-cap{display:flex;align-items:baseline;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.frame-cap .t{font-size:14.5px;font-weight:600}
+.frame-cap .s{font-size:12.5px;color:var(--tx3)}
+.frame-box{
+  border:1px solid var(--line);border-radius:14px;padding:14px;
+  background:repeating-linear-gradient(45deg,#0e0e14 0 10px,#0c0c11 10px 20px);
+  overflow:hidden;
+}
+.fit{transform-origin:top left}
+
+/* 意图三栏 */
+.intent{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:20px}
+.int{background:var(--panel);border:1px solid var(--line-soft);border-radius:12px;padding:17px 19px}
+.int .k{display:flex;align-items:center;gap:8px;font:600 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--tx3);margin-bottom:10px}
+.int .k b{width:7px;height:7px;border-radius:2px}
+.int ul{margin:0;padding-left:17px;font-size:13px;color:var(--tx2);line-height:1.7}
+.int p{margin:0;font-size:13px;color:var(--tx2);line-height:1.7}
+
+/* ---------- 对比表 ---------- */
+.tbl-wrap{border:1px solid var(--line-soft);border-radius:14px;overflow-x:auto;background:var(--panel)}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:13px}
+th,td{padding:12px 16px;text-align:left;border-bottom:1px solid var(--line-soft);vertical-align:top}
+thead th{
+  font:600 11px/1.4 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--tx3);
+  background:var(--panel-2);position:sticky;top:0;white-space:nowrap;
+}
+tbody th{font-weight:500;color:var(--tx2);width:170px;white-space:nowrap}
+tbody tr:last-child th,tbody tr:last-child td{border-bottom:0}
+td b{font-weight:600}
+.col-i{border-left:2px solid #2dd4bf}
+.col-w{border-left:2px solid #c2410c}
+.col-f{border-left:2px solid #8b7cff}
+
+/* ---------- 结论 ---------- */
+.verdict{
+  margin-top:40px;border:1px solid var(--line);border-radius:16px;overflow:hidden;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));
+}
+.verdict-h{padding:22px 26px 18px;border-bottom:1px solid var(--line-soft)}
+.verdict-h .k{font:600 10.5px/1 var(--mono);letter-spacing:.16em;color:#c9b8ff;text-transform:uppercase;margin-bottom:11px}
+.verdict-h h3{margin:0 0 10px;font-size:20px}
+.verdict-h p{margin:0;color:var(--tx2);font-size:13.5px;max-width:80ch}
+.verdict-b{padding:22px 26px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+.vb{font-size:13px;color:var(--tx2);line-height:1.7}
+.vb b{display:block;color:var(--tx);font-size:13.5px;margin-bottom:5px}
+.next{
+  padding:20px 26px 24px;border-top:1px solid var(--line-soft);
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+}
+.next .q{font-size:14px;font-weight:600}
+.next .hint{font-size:12.5px;color:var(--tx3)}
+
+.foot{padding:40px 0 0;color:var(--tx3);font-size:12px;line-height:1.8}
+
+/* ============================================================
+ * 以下为「被设计的界面」本身。三个方向共用结构，只换变量。
+ * 命名空间 m- 前缀，避免和对比页自身的样式打架。
+ * ============================================================ */
+
+.mock{
+  width:1280px;height:764px;overflow:hidden;
+  background:var(--c-canvas);color:var(--c-text);
+  font-size:var(--c-fs);line-height:1.5;
+  display:flex;flex-direction:column;
+  border-radius:var(--c-panel-radius);
+  font-family:var(--c-sans);
+}
+
+/* 顶栏 */
+.m-top{
+  height:46px;flex:none;display:flex;align-items:center;gap:12px;
+  padding:0 16px;background:var(--c-nav-bg);
+  border-bottom:1px solid var(--c-border);
+}
+.m-brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:var(--c-fs);white-space:nowrap}
+.m-logo{width:16px;height:16px;border-radius:var(--c-radius);background:var(--c-accent);flex:none}
+.m-crumb{font-size:var(--c-fs-sm);color:var(--c-text3);display:flex;gap:7px;white-space:nowrap}
+.m-grow{flex:1}
+.m-chip{
+  font-size:var(--c-fs-sm);padding:2px 9px;border-radius:999px;
+  border:1px solid var(--c-border);color:var(--c-text2);white-space:nowrap;
+}
+.m-chip.diff{color:var(--c-warn);border-color:color-mix(in srgb,var(--c-warn) 45%,transparent)}
+.m-avatar{
+  width:26px;height:26px;border-radius:999px;flex:none;
+  background:var(--c-accent-soft);color:var(--c-accent);
+  display:flex;align-items:center;justify-content:center;
+  font-size:var(--c-fs-sm);font-weight:600;
+}
+
+/* 外壳 */
+.m-shell{flex:1;display:flex;min-height:0}
+
+/* 侧边导航 */
+.m-nav{
+  width:152px;flex:none;background:var(--c-nav-bg);
+  border-right:1px solid var(--c-border);
+  padding:12px 10px;display:flex;flex-direction:column;gap:2px;
+}
+.m-nav-i{
+  display:flex;align-items:center;gap:9px;
+  padding:7px 10px;border-radius:var(--c-radius);
+  font-size:var(--c-fs-sm);color:var(--c-text2);
+}
+.m-nav-i i{
+  width:12px;height:12px;border-radius:3px;flex:none;
+  border:1.5px solid currentColor;opacity:.7;
+}
+.m-nav-i.on{background:var(--c-accent-soft);color:var(--c-accent);font-weight:600}
+.m-nav-i.on i{opacity:1;background:currentColor}
+.m-nav-sep{height:1px;background:var(--c-border);margin:9px 4px}
+.m-nav-foot{margin-top:auto;font-size:10.5px;color:var(--c-text3);padding:8px 10px 2px;display:flex;align-items:center;gap:7px}
+.m-dot{width:7px;height:7px;border-radius:999px;background:var(--c-ok);flex:none}
+
+/* 主区 */
+.m-main{flex:1;display:flex;min-width:0;padding:var(--c-gap);gap:var(--c-gap);background:var(--c-canvas)}
+
+/* 通用面板 */
+.m-panel{
+  background:var(--c-surface);
+  border:1px solid var(--c-border);
+  border-radius:var(--c-panel-radius);
+  box-shadow:var(--c-shadow);
+  display:flex;flex-direction:column;min-height:0;overflow:hidden;
+}
+.m-ph{
+  flex:none;padding:11px var(--c-pad);border-bottom:1px solid var(--c-border-soft);
+  display:flex;align-items:center;gap:9px;
+  font-size:var(--c-fs-sm);font-weight:600;letter-spacing:.02em;
+}
+.m-ph .m-grow{flex:1}
+.m-ph .tag{
+  font-size:10.5px;font-weight:500;color:var(--c-text3);
+  border:1px solid var(--c-border);border-radius:999px;padding:1px 8px;
+}
+
+/* 题面 */
+.m-problem{width:272px;flex:none}
+.m-pb{padding:var(--c-pad);overflow:hidden;flex:1;min-height:0}
+.m-pt{font-size:var(--c-fs-title);font-weight:700;margin:0 0 10px;line-height:1.35}
+.m-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.m-tag{font-size:10.5px;padding:2px 8px;border-radius:var(--c-radius);background:var(--c-elevated);color:var(--c-text2)}
+.m-body{font-size:var(--c-fs);color:var(--c-text2);line-height:1.75;font-family:var(--c-serif)}
+.m-body p{margin:0 0 11px}
+.m-body code{font-family:var(--mono);font-size:.92em;background:var(--c-elevated);padding:1px 5px;border-radius:3px;color:var(--c-text)}
+.m-ex{
+  background:var(--c-elevated);border-radius:var(--c-radius);
+  padding:11px 13px;font-family:var(--mono);font-size:var(--c-fs-sm);
+  color:var(--c-text2);line-height:1.75;margin:0 0 12px;
+}
+.m-ex b{color:var(--c-text);font-weight:500}
+
+/* 代码区 */
+/* gap 刻意留 0：工具栏 / 编辑器 / 输出是同一块面板里的三段，
+ * 中间露出底色会被读成"这块面板裂开了"。 */
+.m-code{flex:1;min-width:0;gap:0}
+.m-ed{flex:1;min-height:0;background:var(--c-code-bg);overflow:hidden;position:relative}
+.m-ed-bar{
+  flex:none;height:34px;display:flex;align-items:center;gap:10px;
+  padding:0 var(--c-pad);border-bottom:1px solid var(--c-border-soft);
+  background:var(--c-surface);font-size:var(--c-fs-sm);color:var(--c-text3);
+}
+.m-ed-bar .f{color:var(--c-text);font-family:var(--mono);font-size:var(--c-fs-sm)}
+.m-btn{
+  font:inherit;font-size:var(--c-fs-sm);padding:5px 13px;border-radius:var(--c-radius);
+  border:1px solid var(--c-border);background:var(--c-elevated);color:var(--c-text);
+  cursor:default;white-space:nowrap;
+}
+.m-btn.pri{background:var(--c-accent);border-color:var(--c-accent);color:var(--c-accent-ink);font-weight:600}
+pre.code{
+  margin:0;padding:12px 0;font-family:var(--mono);
+  font-size:12.5px;line-height:1.72;overflow:hidden;
+  background:var(--c-code-bg);
+}
+pre.code .ln{
+  display:inline-block;width:38px;text-align:right;padding-right:14px;
+  color:var(--c-gutter);user-select:none;
+}
+pre.code .k{color:var(--c-kw)}
+pre.code .ty{color:var(--c-ty)}
+pre.code .f{color:var(--c-fn)}
+pre.code .n{color:var(--c-num)}
+pre.code .p{color:var(--c-punct)}
+pre.code .c{color:var(--c-cmt)}
+
+/* 输出/判定 */
+.m-out{flex:none;height:186px;border-top:1px solid var(--c-border)}
+.m-verdict{
+  display:flex;align-items:center;gap:12px;padding:11px var(--c-pad);
+  border-bottom:1px solid var(--c-border-soft);flex:none;
+}
+.m-badge{
+  font:700 12px/1 var(--mono);letter-spacing:.06em;
+  padding:5px 11px;border-radius:var(--c-radius);
+  background:color-mix(in srgb,var(--c-danger) 16%,transparent);
+  color:var(--c-danger);border:1px solid color-mix(in srgb,var(--c-danger) 42%,transparent);
+}
+.m-score{font-size:var(--c-fs-sm);color:var(--c-text2)}
+.m-score b{color:var(--c-text);font-family:var(--mono)}
+.m-logs{padding:10px var(--c-pad);font-family:var(--mono);font-size:11.5px;line-height:1.8;color:var(--c-text2);overflow:hidden}
+.m-logs .ok{color:var(--c-ok)}
+.m-logs .bad{color:var(--c-danger)}
+.m-logs .dim{color:var(--c-text3)}
+
+/* 反馈面板 */
+.m-fb{width:330px;flex:none}
+.m-fb-b{padding:var(--c-pad);flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:13px}
+
+/* 历史联动 */
+.m-recall{
+  display:flex;gap:10px;align-items:flex-start;
+  padding:10px 12px;border-radius:var(--c-radius);
+  background:color-mix(in srgb,var(--c-warn) 11%,transparent);
+  border:1px solid color-mix(in srgb,var(--c-warn) 30%,transparent);
+  font-size:var(--c-fs-sm);color:var(--c-text2);line-height:1.6;
+}
+.m-recall i{width:8px;height:8px;border-radius:2px;background:var(--c-warn);flex:none;margin-top:6px}
+.m-recall b{color:var(--c-warn);font-weight:600}
+
+/* 分层释放 */
+.m-layer{border-radius:var(--c-radius);padding:13px 14px}
+.m-layer.now{
+  background:var(--c-elevated);
+  border:1px solid var(--c-border);
+}
+.m-layer.lock{
+  border:1px dashed var(--c-border);color:var(--c-text3);
+  display:flex;align-items:center;gap:9px;padding:11px 14px;font-size:var(--c-fs-sm);
+}
+.m-layer.lock i{
+  width:11px;height:11px;border-radius:2px;flex:none;
+  border:1.5px solid currentColor;opacity:.65;
+}
+.m-lh{
+  display:flex;align-items:center;gap:8px;
+  font-size:10.5px;font-weight:700;letter-spacing:.12em;
+  color:var(--c-accent);margin-bottom:9px;text-transform:uppercase;
+}
+.m-lh s{width:16px;height:16px;border-radius:50%;background:var(--c-accent);color:var(--c-accent-ink);
+  display:flex;align-items:center;justify-content:center;font-size:10px;text-decoration:none;flex:none}
+.m-lt{font-size:var(--c-fs);line-height:1.8;color:var(--c-text)}
+.m-lt em{font-style:normal;color:var(--c-accent);font-weight:600}
+.m-fb-btn{
+  width:100%;text-align:center;font:inherit;font-size:var(--c-fs-sm);font-weight:600;
+  padding:9px;border-radius:var(--c-radius);cursor:default;
+  background:var(--c-accent);border:1px solid var(--c-accent);color:var(--c-accent-ink);
+}
+.m-fb-note{font-size:10.5px;color:var(--c-text3);text-align:center;line-height:1.6}
+
+/* 聚焦方向：反馈接管整屏 */
+.mock.takeover .m-problem,.mock.takeover .m-code{display:none}
+.mock.takeover .m-fb{width:auto;flex:1;background:transparent;border-color:transparent}
+.mock.takeover .m-fb .m-ph{border-bottom-color:transparent;padding-top:6px}
+.mock.takeover .m-fb-b{padding:26px 88px;gap:20px;justify-content:center}
+/* 常规布局里那个把按钮顶到底部的撑高块，在接管态下会把居中挤掉。 */
+.mock.takeover .m-fb-b > .m-grow{display:none}
+.mock.takeover .m-lt{font-size:17px;line-height:2}
+/* 接管态下所有元素统一到一个宽度并居中。
+ * 之前提示层/按钮/提示条各自写了 max-width，结果同一列里出现
+ * 670 / 520 / 340 三种宽度，看上去像是没对齐的失误而不是设计。 */
+.mock.takeover .m-fb-b > *{width:100%;max-width:560px;align-self:center}
+.mock.takeover .m-fb-btn{padding:13px;font-size:14px}
+.mock.takeover .m-fb-note{align-self:center}
+
+/* ============================================================
+ * 教师端 · 学情看板
+ * ============================================================ */
+.dash{
+  width:1280px;height:764px;overflow:hidden;
+  background:var(--c-canvas);color:var(--c-text);
+  font-size:var(--c-fs);font-family:var(--c-sans);
+  display:flex;flex-direction:column;border-radius:var(--c-panel-radius);
+}
+.d-main{flex:1;display:flex;flex-direction:column;gap:var(--c-gap);padding:var(--c-gap);min-height:0}
+.d-kpis{display:flex;gap:var(--c-gap);flex:none}
+.d-kpi{
+  flex:1;background:var(--c-surface);border:1px solid var(--c-border);
+  border-radius:var(--c-panel-radius);padding:13px 16px;box-shadow:var(--c-shadow);
+}
+.d-kpi .k{font-size:var(--c-fs-sm);color:var(--c-text3);margin-bottom:7px}
+.d-kpi .v{font:700 25px/1 var(--mono);letter-spacing:-.01em}
+.d-kpi .v small{font-size:13px;font-weight:500;color:var(--c-text3);margin-left:3px}
+.d-kpi .sub{font-size:10.5px;color:var(--c-text3);margin-top:6px}
+.d-kpi.warn .v{color:var(--c-warn)}
+.d-row{display:flex;gap:var(--c-gap);flex:1;min-height:0}
+
+.d-card{
+  background:var(--c-surface);border:1px solid var(--c-border);
+  border-radius:var(--c-panel-radius);box-shadow:var(--c-shadow);
+  display:flex;flex-direction:column;min-height:0;overflow:hidden;
+}
+.d-card-h{
+  flex:none;padding:11px var(--c-pad);border-bottom:1px solid var(--c-border-soft);
+  font-size:var(--c-fs-sm);font-weight:600;display:flex;align-items:center;gap:9px;
+}
+.d-card-h .m-grow{flex:1}
+.d-card-b{padding:var(--c-pad);flex:1;min-height:0;overflow:hidden}
+.d-mastery{flex:1;min-width:0}
+/* 下周建议固定宽，剩下的宽度全给掌握度条。它自己就是一张卡片，
+ * 所以这里只给宽度 —— 再叠一层 flex 列布局会在标题和正文之间多出一条缝。 */
+.d-side{width:360px;flex:none}
+/* 学生名单占满整行 —— 它有六列，挤在侧栏里会被自己的 overflow 裁掉两列，
+ * 表现为"正确率和状态凭空消失"，而不是出现横向滚动条。 */
+.d-bottom{flex:none}
+
+/* 掌握度条 */
+/* .fill 是 span，必须显式 block —— 行内元素会忽略 width/height，
+ * 结果就是六条进度条全部不可见（踩过）。 */
+.mst{display:flex;align-items:center;gap:13px;margin-bottom:15px}
+.mst:last-child{margin-bottom:0}
+.mst .nm{width:104px;flex:none;font-size:var(--c-fs-sm);color:var(--c-text2);white-space:nowrap}
+.mst .track{flex:1;height:9px;border-radius:999px;background:var(--c-elevated);overflow:hidden}
+.mst .fill{display:block;height:100%;border-radius:999px}
+.mst .pc{width:46px;flex:none;text-align:right;font-family:var(--mono);font-size:var(--c-fs-sm);color:var(--c-text)}
+/* 只有六条数据，卡片却按整行高度撑开 —— 均匀铺满比挤在顶部好看。 */
+.d-mastery .d-card-b{display:flex;flex-direction:column;justify-content:space-between}
+.d-mastery .mst{margin-bottom:0}
+
+/* 讲授顺序 */
+.ord{display:flex;gap:11px;align-items:flex-start;margin-bottom:14px}
+.ord:last-child{margin-bottom:0}
+.ord .n{
+  width:21px;height:21px;flex:none;border-radius:var(--c-radius);
+  background:var(--c-accent-soft);color:var(--c-accent);
+  display:flex;align-items:center;justify-content:center;
+  font:700 11px/1 var(--mono);
+}
+.ord .t{font-size:var(--c-fs-sm);color:var(--c-text);line-height:1.5}
+.ord .t span{display:block;color:var(--c-text3);font-size:10.5px;margin-top:2px}
+
+/* 学生表 */
+/* table-layout:fixed + 百分比列宽：卡片只有 390 多像素，四列不定宽时
+ * 表格会横向溢出，被卡片自己的 overflow:hidden 裁掉 —— 表现为"正确率
+ * 和状态两列凭空消失"，而不是出现滚动条。 */
+.d-table{width:100%;border-collapse:collapse;font-size:var(--c-fs-sm);table-layout:fixed}
+.d-table th{
+  text-align:left;font-weight:500;color:var(--c-text3);padding:0 8px 9px;
+  border-bottom:1px solid var(--c-border);white-space:nowrap;
+}
+.d-table td{padding:9px 8px;border-bottom:1px solid var(--c-border-soft);color:var(--c-text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.d-table tr:last-child td{border-bottom:0}
+.d-table td.nm{color:var(--c-text);font-weight:500}
+.d-table td.num{font-family:var(--mono);text-align:right}
+.d-table td.dim{color:var(--c-text3)}
+.d-table td.pc{font-family:var(--mono);text-align:right;font-weight:600}
+.d-table td.pc.good{color:var(--c-ok)}
+.d-table td.pc.mid{color:var(--c-warn)}
+.d-table td.pc.low{color:var(--c-danger)}
+.d-tagline{display:flex;gap:6px;overflow:hidden}
+.d-tagline span{
+  font-size:10.5px;padding:1px 8px;border-radius:999px;
+  background:var(--c-elevated);color:var(--c-text2);white-space:nowrap;
+}
+.d-st{
+  font-size:10.5px;padding:2px 9px;border-radius:999px;white-space:nowrap;
+  background:var(--c-elevated);color:var(--c-text3);
+}
+.d-st.bad{background:color-mix(in srgb,var(--c-danger) 15%,transparent);color:var(--c-danger)}
+
+/* 分方向微调：面板边框的"硬/软" */
+.dir-workbook .m-panel,.dir-workbook .d-card,.dir-workbook .d-kpi{border-width:1px}
+.dir-focus .m-panel,.dir-focus .d-card,.dir-focus .d-kpi{border-color:var(--c-border-soft);box-shadow:none}
+.dir-focus .m-problem,.dir-focus .m-code,.dir-focus .m-fb{background:transparent;border-color:transparent}
+.dir-focus .m-pb{padding:6px 4px}
+.dir-focus .m-lt{font-size:15px;line-height:1.95}
+.dir-focus .m-fb-b{gap:17px;padding:22px 20px}
+.dir-focus .d-card-b{padding:24px}
+.dir-focus .d-kpi{padding:17px 20px}
+.dir-focus .mst{margin-bottom:19px}
+.dir-focus .m-nav-i{padding:9px 10px}
+
+/* 方向主题 */
+.dir-instrument{
+  --c-canvas:#0b0f13;--c-surface:#111820;--c-elevated:#18212b;--c-nav-bg:#0e141a;
+  --c-border:#243040;--c-border-soft:#1a232e;
+  --c-text:#e3eaf1;--c-text2:#93a2b2;--c-text3:#64717f;
+  --c-accent:#2dd4bf;--c-accent-ink:#04201c;--c-accent-soft:#0d2e2b;
+  --c-ok:#34d399;--c-warn:#fbbf24;--c-danger:#f87171;--c-info:#38bdf8;
+  --c-code-bg:#0e1418;--c-gutter:#4a5665;
+  --c-kw:#56b6c2;--c-ty:#61afef;--c-fn:#98c379;--c-num:#d19a66;--c-punct:#8b98a8;--c-cmt:#5c6773;
+  --c-radius:5px;--c-panel-radius:6px;--c-pad:14px;--c-gap:10px;
+  --c-fs:13px;--c-fs-sm:11.5px;--c-fs-title:15px;
+  --c-sans:var(--sans);--c-serif:inherit;--c-shadow:none;
+}
+.dir-workbook{
+  --c-canvas:#f5f1e8;--c-surface:#fffdf8;--c-elevated:#f7f2e7;--c-nav-bg:#fbf8f1;
+  --c-border:#e2dacb;--c-border-soft:#ece5d8;
+  --c-text:#2a251e;--c-text2:#6d6455;--c-text3:#a2988a;
+  --c-accent:#c2410c;--c-accent-ink:#fff8f2;--c-accent-soft:#fbe9dd;
+  --c-ok:#15803d;--c-warn:#b45309;--c-danger:#b91c1c;--c-info:#1d4ed8;
+  --c-code-bg:#fbf7ef;--c-gutter:#b8ac9a;
+  --c-kw:#a626a4;--c-ty:#c18401;--c-fn:#4078f2;--c-num:#986801;--c-punct:#7d7263;--c-cmt:#a8a094;
+  --c-radius:10px;--c-panel-radius:14px;--c-pad:19px;--c-gap:14px;
+  --c-fs:14px;--c-fs-sm:12.5px;--c-fs-title:17px;
+  --c-sans:var(--sans);--c-serif:Georgia,'Times New Roman','Songti SC',SimSun,serif;
+  --c-shadow:0 1px 2px rgba(92,72,40,.07);
+}
+.dir-focus{
+  --c-canvas:#08080c;--c-surface:#0f0f15;--c-elevated:#16161f;--c-nav-bg:#0c0c12;
+  --c-border:rgba(255,255,255,.09);--c-border-soft:rgba(255,255,255,.055);
+  --c-text:#f4f4f8;--c-text2:#a5a5b6;--c-text3:#6b6b7d;
+  --c-accent:#8b7cff;--c-accent-ink:#0b0813;--c-accent-soft:#1c1832;
+  --c-ok:#4ade80;--c-warn:#fbbf24;--c-danger:#fb7185;--c-info:#22d3ee;
+  --c-code-bg:#0c0c12;--c-gutter:#4b4b5c;
+  --c-kw:#8b7cff;--c-ty:#7dd3fc;--c-fn:#34d399;--c-num:#fbbf24;--c-punct:#6f6f85;--c-cmt:#4e4e60;
+  --c-radius:10px;--c-panel-radius:16px;--c-pad:22px;--c-gap:16px;
+  --c-fs:14.5px;--c-fs-sm:12.5px;--c-fs-title:19px;
+  --c-sans:var(--sans);--c-serif:inherit;--c-shadow:none;
+}
+
+@media (max-width:900px){
+  .top-in,main{padding-left:18px;padding-right:18px}
+  .hero h1{font-size:24px}
+  .frame-box{padding:8px}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="top-in">
+    <div class="top-title">
+      AlgoForge 界面改版
+      <small>三套风格方向 · 学生端 + 教师端</small>
+    </div>
+    <div class="tabs" id="tabs">
+      <button class="tab is-active" data-go="instrument"><span class="dot" style="--dot:#2dd4bf"></span>方向一 · 仪器台</button>
+      <button class="tab" data-go="workbook"><span class="dot" style="--dot:#c2410c"></span>方向二 · 讲义纸</button>
+      <button class="tab" data-go="focus"><span class="dot" style="--dot:#8b7cff"></span>方向三 · 聚焦镜</button>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ========== 开场 ========== -->
+  <section class="hero">
+    <h1>同一个系统，<em>三种性格</em>。</h1>
+    <p class="lead">
+      下面三套方案用的是<strong>完全相同的页面结构和功能</strong>——同样的侧边栏、同样的题面/代码/反馈三栏、
+      同样的教师看板。我只换了颜色、间距、圆角和字体。所以你在挑的是一件纯粹的审美和气质的事，
+      不用担心"选了 A 是不是功能就少了"。
+    </p>
+    <div class="rules">
+      <div class="rule">
+        <div class="n">01</div>
+        <b>为什么先挑风格，不先挑页面</b>
+        <p>风格是地基。地基定了，后面十几个页面的每一处细节才有唯一答案；地基不定，每页都会长成另一个样子。</p>
+      </div>
+      <div class="rule">
+        <div class="n">02</div>
+        <b>怎么用这一页</b>
+        <p>上面三个按钮切换方向。每个方向里有两张"效果图"：学生做题的页面，和老师看班级的页面。滚到最后有横向对比表。</p>
+      </div>
+      <div class="rule">
+        <div class="n">03</div>
+        <b>你只需要回答一个问题</b>
+        <p>哪一套让你觉得"这就是我想让人看到的软件"。剩下所有的页面、按钮、空状态，我按这个方向铺开。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== 总览 ========== -->
+  <section class="sec">
+    <h2 class="sec-h">一眼看三者</h2>
+    <p class="sec-p">左边是深色高密度的"专业工具"，中间是浅色宽松的"教学讲义"，右边是深色极简的"一次一件事"。三者最大的差别不是颜色，是<b>一屏放多少信息</b>。</p>
+    <div class="ov" id="ov"></div>
+  </section>
+
+  <!-- ========== 方向面板 ========== -->
+  <section id="panels"></section>
+
+  <!-- ========== 对比表 ========== -->
+  <section class="sec" id="compare">
+    <h2 class="sec-h">横向对比</h2>
+    <p class="sec-p">按"这套界面要服务什么"来比，不按好看程度比——好看是主观的，能不能用是客观的。</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th class="col-i">方向一 · 仪器台</th>
+            <th class="col-w">方向二 · 讲义纸</th>
+            <th class="col-f">方向三 · 聚焦镜</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th>一句话气质</th>
+            <td>像一台专业仪器，精密、克制、不废话</td>
+            <td>像一本会批改的练习册，温和、好读</td>
+            <td>像一个只讲一件事的教练，专注、不打扰</td>
+          </tr>
+          <tr>
+            <th>底色 / 强调色</th>
+            <td>近黑蓝灰 / 青绿</td>
+            <td>米白纸 / 暖橙</td>
+            <td>纯黑 / 紫罗兰</td>
+          </tr>
+          <tr>
+            <th>一屏信息量</th>
+            <td><b>高</b>：题面、代码、判定、反馈全在一屏</td>
+            <td>中：留白多，需要轻微滚动</td>
+            <td><b>低</b>：一次只呈现一件事</td>
+          </tr>
+          <tr>
+            <th>学生长时间盯代码</th>
+            <td>最舒服</td>
+            <td>偏刺眼，需再压暗</td>
+            <td>舒服</td>
+          </tr>
+          <tr>
+            <th>教师看密集报表</th>
+            <td>最合适</td>
+            <td>合适，表格更像报表</td>
+            <td>偏松，要多点几下</td>
+          </tr>
+          <tr>
+            <th>答辩投影效果</th>
+            <td>一般（深色投影会发灰）</td>
+            <td><b>最好</b>（浅色投影最清楚）</td>
+            <td>好</td>
+          </tr>
+          <tr>
+            <th>和"分层释放反馈"的契合</th>
+            <td>中：反馈是四栏里的一栏</td>
+            <td>中：反馈是一张卡片</td>
+            <td><b>高</b>：反馈本身就是一个整屏</td>
+          </tr>
+          <tr>
+            <th>别人看一眼会不会记住</th>
+            <td>不太会，但很"正经"</td>
+            <td>会，很有辨识度</td>
+            <td><b>最会</b></td>
+          </tr>
+          <tr>
+            <th>改动量</th>
+            <td>小（现有配色接近）</td>
+            <td>大（深浅翻转，全站要重调）</td>
+            <td>中</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ========== 结论 ========== -->
+  <section class="verdict">
+    <div class="verdict-h">
+      <div class="k">我的建议</div>
+      <h3>选「聚焦镜」，教师端把密度调到中档。</h3>
+      <p>
+        理由只有一条：你这套系统真正跟别人不一样的地方，是<b>把 AI 的诊断拆成三层、一层一层放给学生</b>。
+        这是教学设计上的创新点，也是答辩时最该被看见的东西。而"仪器台"和"讲义纸"都把反馈挤成了屏幕边上的一个小栏，
+        等于把最亮的牌扣在手里。聚焦镜让反馈占据整屏——学生的注意力别无选择。
+      </p>
+    </div>
+    <div class="verdict-b">
+      <div class="vb">
+        <b>如果你更在意"老师端要显得专业"</b>
+        那就选仪器台。它一屏能放下班级所有数据，老师不用翻页；代价是它看起来像很多同类工具，缺一点自己的脸。
+      </div>
+      <div class="vb">
+        <b>如果你更在意"答辩时投影要清楚"</b>
+        那就选讲义纸。浅底投影仪上最清楚，也最不像"学生自己写的小工具"。代价是要接受它和深色代码编辑器拼在一起时有一点反差。
+      </div>
+      <div class="vb">
+        <b>三个都不满意也完全可以</b>
+        直接告诉我哪里不对——是颜色、是松紧、是太冷还是太素。风格可以杂交：比如取聚焦镜的松，配仪器台的青。
+      </div>
+    </div>
+    <div class="next">
+      <div class="q">你定一个方向，我接着做：</div>
+      <div class="hint">把这个方向铺到全部页面（练习 / 我的作业 / 题库 / 错题本 / 画像 / 复习 / 学情看板 / 班级管理），补上按钮、输入框、弹窗、加载和空状态，再给一份配色和字号清单。</div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <p>
+      说明：本页所有界面均为<strong>静态示意图</strong>，不是可以真的操作的软件。里面出现的班级名、学生姓名、分数、
+      报错信息都是编造的示例数据，用来说明"东西多了之后长什么样"。真实开发时这套样式会落到项目现有的 Vue 组件里，
+      不改变任何功能。
+    </p>
+  </div>
+
+</main>
+
+<script>
+/* ============================================================
+ * 1) 三个方向共用的界面结构
+ *
+ * 刻意写成"一份 markup、三份皮肤"：如果三个方向的布局各写一份，
+ * 对比就失真了 —— 你会分不清自己在挑风格还是在挑布局。
+ * ============================================================ */
+
+const NAV = ['练习', '我的作业', '题库', '错题本', '画像', '复习', 'SEP', '学情看板', '班级管理'];
+
+const CODE = [
+  '<span class="k">#include</span> <span class="p">&lt;</span><span class="ty">vector</span><span class="p">&gt;</span>',
+  '<span class="k">using</span> <span class="k">namespace</span> <span class="ty">std</span><span class="p">;</span>',
+  '',
+  '<span class="k">class</span> <span class="ty">Solution</span> <span class="p">{</span>',
+  '<span class="k">public:</span>',
+  '    <span class="ty">vector</span><span class="p">&lt;</span><span class="ty">int</span><span class="p">&gt;</span> <span class="f">twoSum</span><span class="p">(</span><span class="ty">vector</span><span class="p">&lt;</span><span class="ty">int</span><span class="p">&gt;&amp;</span> nums<span class="p">,</span> <span class="ty">int</span> target<span class="p">)</span> <span class="p">{</span>',
+  '        <span class="k">for</span> <span class="p">(</span><span class="ty">int</span> i <span class="p">=</span> <span class="n">0</span><span class="p">;</span> i <span class="p">&lt;</span> nums<span class="p">.</span><span class="f">size</span><span class="p">();</span> i<span class="p">++)</span> <span class="p">{</span>',
+  '            <span class="k">for</span> <span class="p">(</span><span class="ty">int</span> j <span class="p">=</span> i <span class="p">+</span> <span class="n">1</span><span class="p">;</span> j <span class="p">&lt;</span> nums<span class="p">.</span><span class="f">size</span><span class="p">();</span> j<span class="p">++)</span> <span class="p">{</span>',
+  '                <span class="k">if</span> <span class="p">(</span>nums<span class="p">[</span>i<span class="p">]</span> <span class="p">+</span> nums<span class="p">[</span>j<span class="p">]</span> <span class="p">==</span> target<span class="p">)</span>',
+  '                    <span class="k">return</span> <span class="p">{</span>i<span class="p">,</span> j<span class="p">};</span>',
+  '            <span class="p">}</span>',
+  '        <span class="p">}</span>',
+  '        <span class="k">return</span> <span class="p">{};</span>',
+  '    <span class="p">}</span>',
+  '<span class="p">};</span>'
+];
+
+function codeBlock(){
+  return '<pre class="code">' + CODE.map(function(l,i){
+    return '<span class="ln">' + (i+1) + '</span>' + (l || '&nbsp;');
+  }).join('\n') + '</pre>';
+}
+
+/* 高亮项由调用方传入 —— 学生页和教师页高亮的不是同一项，
+ * 教师看着学情看板而侧边栏亮着「练习」是个会被一眼看穿的错。 */
+function navHTML(active){
+  return NAV.map(function(n){
+    if (n === 'SEP') return '<div class="m-nav-sep"></div>';
+    return '<div class="m-nav-i' + (n === active ? ' on' : '') + '"><i></i>' + n + '</div>';
+  }).join('');
+}
+
+/* 学生端 · 练习页 */
+function mockHTML(takeover){
+  return '' +
+  '<div class="mock' + (takeover ? ' takeover' : '') + '">' +
+
+    '<div class="m-top">' +
+      '<div class="m-brand"><span class="m-logo"></span>智能学情反馈</div>' +
+      '<div class="m-crumb">题库<span>/</span><span>两数之和</span></div>' +
+      '<div class="m-grow"></div>' +
+      '<span class="m-chip diff">困难</span>' +
+      '<span class="m-chip">C++ 17</span>' +
+      '<span class="m-avatar">刘</span>' +
+    '</div>' +
+
+    '<div class="m-shell">' +
+      '<nav class="m-nav">' + navHTML('练习') +
+        '<div class="m-nav-foot"><span class="m-dot"></span>分析引擎正常</div>' +
+      '</nav>' +
+
+      '<div class="m-main">' +
+
+        /* --- 题面 --- */
+        '<aside class="m-panel m-problem">' +
+          '<div class="m-ph">题目<span class="m-grow"></span><span class="tag">2 / 8</span></div>' +
+          '<div class="m-pb">' +
+            '<h3 class="m-pt">两数之和</h3>' +
+            '<div class="m-tags"><span class="m-tag">数组</span><span class="m-tag">哈希表</span><span class="m-tag">入门</span></div>' +
+            '<div class="m-body">' +
+              '<p>给定一个整数数组 <code>nums</code> 和一个目标值 <code>target</code>，请你在该数组中找出和为目标值的那两个整数，并返回它们的数组下标。</p>' +
+              '<p>你可以假设每种输入只会对应一个答案，且同一个元素不能重复使用。</p>' +
+              '<div class="m-ex"><b>输入</b>　nums = [2, 7, 11, 15], target = 9<br><b>输出</b>　[0, 1]</div>' +
+              '<p>数据范围：2 ≤ nums.length ≤ 10⁴，−10⁹ ≤ nums[i] ≤ 10⁹。</p>' +
+            '</div>' +
+          '</div>' +
+        '</aside>' +
+
+        /* --- 代码 + 判定 --- */
+        '<section class="m-panel m-code">' +
+          '<div class="m-ed-bar">' +
+            '<span class="f">solution.cpp</span>' +
+            '<span>· 已保存</span>' +
+            '<div class="m-grow"></div>' +
+            '<span class="m-btn">运行样例</span>' +
+            '<span class="m-btn pri">提交评测</span>' +
+          '</div>' +
+          '<div class="m-ed">' + codeBlock() + '</div>' +
+          '<div class="m-out">' +
+            '<div class="m-verdict">' +
+              '<span class="m-badge">TLE</span>' +
+              '<span class="m-score">通过 <b>9</b> / <b>10</b> 个测试点</span>' +
+              '<div class="m-grow"></div>' +
+              '<span class="m-score">1420 ms <span style="opacity:.6">/ 限 1000 ms</span></span>' +
+            '</div>' +
+            '<div class="m-logs">' +
+              '<div class="dim">测试点 1–9 <span class="ok">AC</span>　用时 12–86 ms</div>' +
+              '<div>测试点 10 <span class="bad">TLE</span>　超时终止（n = 10000）</div>' +
+              '<div class="dim">已采集本次编辑过程：输入 214 字，粘贴 0 次，修改 37 次</div>' +
+            '</div>' +
+          '</div>' +
+        '</section>' +
+
+        /* --- 反馈 --- */
+        '<aside class="m-panel m-fb">' +
+          '<div class="m-ph">学习反馈<span class="m-grow"></span><span class="tag">分层</span></div>' +
+          '<div class="m-fb-b">' +
+
+            '<div class="m-recall"><i></i><div>这个错误你<b>上次也犯过</b>　3 天前 · 最长连续子数组</div></div>' +
+
+            '<div class="m-layer now">' +
+              '<div class="m-lh"><s>1</s>错在哪</div>' +
+              '<div class="m-lt">你用了<em>两层循环</em>，每个数都要和剩下所有数比一次。数据量到 1 万时，比较次数约 5000 万次，超过了 1 秒的时限。</div>' +
+            '</div>' +
+
+            '<div class="m-layer lock"><i></i>第二层 · 提示（还差一步）</div>' +
+            '<div class="m-layer lock"><i></i>第三层 · 怎么改</div>' +
+
+            '<div class="m-grow"></div>' +
+
+            '<div class="m-fb-btn">还是不会，给点提示</div>' +
+            '<div class="m-fb-note">看过第三层后可以点「重新自己想」收起</div>' +
+          '</div>' +
+        '</aside>' +
+
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/* 教师端 · 学情看板 */
+function dashHTML(){
+  const mst = [
+    ['数组与遍历', 82, 'var(--c-ok)'],
+    ['字符串处理', 74, 'var(--c-ok)'],
+    ['哈希表', 58, 'var(--c-warn)'],
+    ['双指针', 46, 'var(--c-warn)'],
+    ['动态规划', 31, 'var(--c-danger)'],
+    ['图论', 19, 'var(--c-danger)']
+  ].map(function(m){
+    return '<div class="mst"><span class="nm">' + m[0] + '</span>' +
+      '<span class="track"><span class="fill" style="width:' + m[1] + '%;background:' + m[2] + '"></span></span>' +
+      '<span class="pc">' + m[1] + '%</span></div>';
+  }).join('');
+
+  const stu = [
+    ['王*涵', 32, 78, '今天 14:20', ['边界条件'], '正常', 0],
+    ['李*辰', 28, 64, '今天 11:05', ['复杂度过高'], '正常', 0],
+    ['周*宁', 25, 71, '昨天 21:40', ['边界条件', '输入解析'], '正常', 0],
+    ['吴*桐', 23, 55, '今天 09:12', ['复杂度过高', '输出格式'], '正常', 0],
+    ['陈*豪', 21, 38, '昨天 16:30', ['边界条件', '复杂度过高'], '需关注', 1],
+    ['张*宇', 9, 22, '3 天前', ['边界条件'], '3 天未交', 1]
+  ].map(function(s){
+    const band = s[2] >= 70 ? 'good' : s[2] >= 45 ? 'mid' : 'low';
+    const tags = s[4].map(function(t){ return '<span>' + t + '</span>'; }).join('');
+    return '<tr>' +
+      '<td class="nm">' + s[0] + '</td>' +
+      '<td class="num">' + s[1] + '</td>' +
+      '<td class="pc ' + band + '">' + s[2] + '%</td>' +
+      '<td class="dim">' + s[3] + '</td>' +
+      '<td><div class="d-tagline">' + tags + '</div></td>' +
+      '<td><span class="d-st' + (s[6] ? ' bad' : '') + '">' + s[5] + '</span></td>' +
+    '</tr>';
+  }).join('');
+
+  return '' +
+  '<div class="dash">' +
+    '<div class="m-top">' +
+      '<div class="m-brand"><span class="m-logo"></span>智能学情反馈</div>' +
+      '<div class="m-crumb">学情看板<span>/</span><span>25 软工专升本 2 班</span></div>' +
+      '<div class="m-grow"></div>' +
+      '<span class="m-chip">近 7 天</span>' +
+      '<span class="m-btn">导出报表</span>' +
+      '<span class="m-avatar">冯</span>' +
+    '</div>' +
+
+    '<div class="m-shell">' +
+      '<nav class="m-nav">' + navHTML('学情看板') +
+        '<div class="m-nav-foot"><span class="m-dot"></span>分析引擎正常</div>' +
+      '</nav>' +
+
+      '<div class="d-main">' +
+        '<div class="d-kpis">' +
+          '<div class="d-kpi"><div class="k">提交总数</div><div class="v">428</div><div class="sub">较上周 +36</div></div>' +
+          '<div class="d-kpi"><div class="k">平均正确率</div><div class="v">61<small>%</small></div><div class="sub">较上周 −4%</div></div>' +
+          '<div class="d-kpi"><div class="k">参与学生</div><div class="v">37<small>/ 42</small></div><div class="sub">5 人本周未提交</div></div>' +
+          '<div class="d-kpi warn"><div class="k">需要关注</div><div class="v">5<small> 人</small></div><div class="sub">正确率低于 40%</div></div>' +
+        '</div>' +
+
+        '<div class="d-row">' +
+          '<div class="d-card d-mastery">' +
+            '<div class="d-card-h">班级知识点掌握度<span class="m-grow"></span><span class="tag">按提交加权</span></div>' +
+            '<div class="d-card-b">' + mst + '</div>' +
+          '</div>' +
+
+          '<div class="d-card d-side">' +
+            '<div class="d-card-h">下周建议讲授顺序</div>' +
+            '<div class="d-card-b">' +
+              '<div class="ord"><span class="n">1</span><div class="t">图论基础：连通性与遍历<span>全班正确率 19%，且 21 人卡在同一错误</span></div></div>' +
+              '<div class="ord"><span class="n">2</span><div class="t">动态规划入门：状态定义<span>多数学生写不出转移方程</span></div></div>' +
+              '<div class="ord"><span class="n">3</span><div class="t">双指针：边界处理<span>错误集中在越界与死循环</span></div></div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="d-card d-bottom">' +
+          '<div class="d-card-h">学生明细<span class="m-grow"></span><span class="tag">按正确率升序 · 显示 6 / 37</span></div>' +
+          '<div class="d-card-b" style="padding-top:12px">' +
+            '<table class="d-table"><thead><tr>' +
+              '<th style="width:11%">学生</th>' +
+              '<th style="width:8%;text-align:right">提交</th>' +
+              '<th style="width:10%;text-align:right">正确率</th>' +
+              '<th style="width:14%">最近提交</th>' +
+              '<th style="width:36%">反复出错的知识点</th>' +
+              '<th style="width:21%">状态</th>' +
+            '</tr></thead><tbody>' + stu + '</tbody></table>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/* ============================================================
+ * 2) 方向定义
+ * ============================================================ */
+
+const DIRS = {
+  instrument: {
+    name: '仪器台',
+    en: 'Instrument',
+    dot: '#2dd4bf',
+    acc: '#2dd4bf',
+    say: '像一台专业仪器：精密、克制、不废话。',
+    decl: '把界面当成仪表盘来设计。近黑蓝灰的底，一个克制的青绿作为唯一强调色，数字全部用等宽字体对齐，边框是 1 像素的硬线，圆角收到 5 像素。没有任何渐变和光晕——需要被读的东西，不该被装饰分心。',
+    chips: [['acc','深色'],['','高信息密度'],['','单一强调色'],['','硬边框 / 小圆角'],['','等宽数字'],['','零装饰']],
+    specs: [
+      ['底色', '近黑蓝灰 #0b0f13', '接近 IDE 的默认底色，学生从别的编辑器切过来没有落差。'],
+      ['密度', '高（一屏看全）', '题面、代码、判定、反馈四块同屏，不需要滚动就能完成一次"提交→看反馈"的循环。'],
+      ['圆角与质感', '5px / 1px 硬边', '方正、平面、无阴影。信息分层靠边框和底色深浅，不靠浮起感。']
+    ],
+    swatches: [['#0b0f13','底'],['#111820','面板'],['#18212b','浮起'],['#243040','描边'],['#2dd4bf','强调'],['#34d399','通过'],['#fbbf24','超时'],['#f87171','错误']],
+    studentCap: ['学生端 · 练习页', '四块同屏。反馈在最右侧一栏，与代码并列可见。'],
+    teacherCap: ['教师端 · 学情看板', '四个数字卡 + 掌握度条形 + 关注名单，一屏读完。'],
+    intent: {
+      good: ['信息密度最高，学生和老师都少滚动', '深色长时间看不累，和代码编辑器最协调', '看起来"正经"，像已经上线的产品'],
+      cost: ['气质偏冷，有点像系统监控而不是学习工具', '同类型工具大量使用这个路子，缺少辨识度', '投影仪上深色会发灰，答辩效果一般'],
+      fit: '如果你更在意"效率"和"专业感"，选它。它最不容易出错，也最不容易被记住。'
+    }
+  },
+
+  workbook: {
+    name: '讲义纸',
+    en: 'Workbook',
+    dot: '#c2410c',
+    acc: '#c2410c',
+    say: '像一本会批改的练习册：温和、好读、有耐心。',
+    decl: '把界面当成纸质讲义来设计。米白的纸底，深墨色的字，暖橙只用在"该动手的地方"（按钮、当前步骤）。题面用衬线字体，读起来像教材而不是表单。面板之间靠留白和细线分隔，几乎没有阴影——纸是没有立体感的。',
+    chips: [['acc','浅色'],['','中等密度'],['','暖橙强调'],['','衬线题面'],['','大留白'],['','纸感']],
+    specs: [
+      ['底色', '米白纸 #f5f1e8', '比纯白柔一档，长时间阅读不刺眼，投影仪上最清楚。'],
+      ['密度', '中（留白优先）', '同样的内容会占到更多屏幕，需要轻微滚动，但每一块都更容易读进去。'],
+      ['圆角与质感', '14px / 细线分隔', '圆角柔和，靠 1 像素暖灰细线和留白分区，不用阴影堆层次。']
+    ],
+    swatches: [['#f5f1e8','底'],['#fffdf8','面板'],['#f7f2e7','浮起'],['#e2dacb','描边'],['#c2410c','强调'],['#15803d','通过'],['#b45309','超时'],['#b91c1c','错误']],
+    studentCap: ['学生端 · 练习页', '同样的四块，但底色是纸。反馈卡片像老师写在边上的批注。'],
+    teacherCap: ['教师端 · 学情看板', '表格更像一份报表，适合直接打印或投屏给全班看。'],
+    intent: {
+      good: ['投影和打印效果最好，答辩时后排也看得清', '气质温和，学生不会被"被监控"的感觉压住', '辨识度高，一眼就和常见的深色工具区分开'],
+      cost: ['长时间看代码偏刺眼，需要把代码区单独压暗处理', '和深色的代码编辑器拼在一起时，明暗反差比较大', '改动量最大：现有配色是深色，等于整站翻过来'],
+      fit: '如果你更在意"答辩时老师一眼看懂"和"学生觉得亲切"，选它。'
+    }
+  },
+
+  focus: {
+    name: '聚焦镜',
+    en: 'Focus',
+    dot: '#8b7cff',
+    acc: '#8b7cff',
+    say: '像一个只讲一件事的教练：专注、安静、不打扰。',
+    decl: '把界面当成一次对话来设计。纯黑偏中性的底，单一紫罗兰强调色，字号比常规大一档，间距大一倍。核心主张是：屏幕上同一时刻只应该有一件值得看的事。所以反馈不是边栏里的一栏，而是接管整屏的一张卡片——你只能看它。',
+    chips: [['acc','深色'],['','低密度'],['','紫罗兰强调'],['','大字大留白'],['','反馈接管整屏'],['','安静']],
+    specs: [
+      ['底色', '中性纯黑 #08080c', '不带蓝也不带紫的中性黑，让强调色成为画面里唯一有颜色的东西。'],
+      ['密度', '低（一次一件事）', '学生看完判定后，反馈会铺满整个内容区，题面和代码暂时退场，注意力没有第二个去处。'],
+      ['圆角与质感', '16px / 几乎无边框', '面板之间主要靠间距和底色深浅分开，边框淡到几乎看不见，像一层层叠起来的卡片。']
+    ],
+    swatches: [['#08080c','底'],['#0f0f15','面板'],['#16161f','浮起'],['#2a2a38','描边'],['#8b7cff','强调'],['#4ade80','通过'],['#fbbf24','超时'],['#fb7185','错误']],
+    studentCap: ['学生端 · 练习页', '常规状态下仍是四块同屏，但反馈栏更松、字更大。'],
+    teacherCap: ['教师端 · 学情看板', '教师端保留较高密度，但用同一套颜色和圆角，观感一致。'],
+    studentCap2: ['学生端 · 反馈接管整屏（这个方向的独有设计）', '看完判定后，反馈铺满内容区。这一步是这套系统最该被看见的地方，不该挤在边栏里。'],
+    intent: {
+      good: ['把"分层释放反馈"这个核心创新点直接推到台前', '演示和答辩时最有记忆点，一眼就记得住', '学生不会被一屏四块的信息量压住，思考更容易发生'],
+      cost: ['老师看班级数据时偏松，比仪器台要多点几下', '低密度意味着要滚动，效率不如高密度方案', '深色投影仍不如浅色清楚'],
+      fit: '如果你更在意"让人记住这个系统到底解决了什么"，选它。'
+    }
+  }
+};
+
+/* ============================================================
+ * 3) 渲染
+ * ============================================================ */
+
+function miniThumb(kind){
+  if (kind === 'instrument'){
+    return '<div class="mini mi-i">' +
+      '<div class="row"><div class="bar" style="flex:1;background:#243040"></div><div class="bar" style="width:34px;background:#2dd4bf"></div></div>' +
+      '<div class="row" style="height:74px">' +
+        '<div class="blk col" style="width:34px;background:#0e141a"></div>' +
+        '<div class="blk" style="width:52px;background:#111820"></div>' +
+        '<div class="blk grow" style="background:#0e1418"></div>' +
+        '<div class="blk" style="width:58px;background:#18212b"></div>' +
+      '</div>' +
+      '<div class="row" style="height:20px"><div class="blk grow" style="background:#111820"></div></div>' +
+    '</div>';
+  }
+  if (kind === 'workbook'){
+    return '<div class="mini mi-w">' +
+      '<div class="row"><div class="bar" style="flex:1;background:#e2dacb"></div><div class="bar" style="width:34px;background:#c2410c"></div></div>' +
+      '<div class="row" style="height:74px">' +
+        '<div class="blk col" style="width:34px;background:#fbf8f1"></div>' +
+        '<div class="blk" style="width:52px;background:#fffdf8"></div>' +
+        '<div class="blk grow" style="background:#fbf7ef"></div>' +
+        '<div class="blk" style="width:58px;background:#fffdf8"></div>' +
+      '</div>' +
+      '<div class="row" style="height:20px"><div class="blk grow" style="background:#fffdf8"></div></div>' +
+    '</div>';
+  }
+  return '<div class="mini mi-f">' +
+    '<div class="row"><div class="bar" style="flex:1;background:#22222e"></div><div class="bar" style="width:34px;background:#8b7cff"></div></div>' +
+    '<div class="row" style="height:74px">' +
+      '<div class="blk col" style="width:34px;background:#0c0c12"></div>' +
+      '<div class="blk grow" style="background:#0f0f15"></div>' +
+      '<div class="blk" style="width:74px;background:#141420"></div>' +
+    '</div>' +
+    '<div class="row" style="height:20px"><div class="blk grow" style="background:#0f0f15"></div></div>' +
+  '</div>';
+}
+
+function ovCard(k){
+  const d = DIRS[k];
+  return '<div class="ovcard">' +
+    '<div class="ovcard-h">' +
+      '<div class="nm"><i style="background:' + d.dot + '"></i>' + d.name + '</div>' +
+      '<div class="en">' + d.en + '</div>' +
+      '<p class="say">' + d.say + '</p>' +
+    '</div>' +
+    '<div class="ov-thumb">' + miniThumb(k) + '</div>' +
+    '<div class="ov-foot">' +
+      '<div class="k">选它意味着</div>' +
+      '<ul><li>' + d.intent.good[0] + '</li><li>' + d.intent.good[1] + '</li></ul>' +
+    '</div>' +
+  '</div>';
+}
+
+function panel(k){
+  const d = DIRS[k];
+  const takeover = k === 'focus';
+
+  const chips = d.chips.map(function(c){
+    return '<span class="chip' + (c[0] ? ' acc' : '') + '">' + c[1] + '</span>';
+  }).join('');
+
+  const specs = d.specs.map(function(s){
+    return '<div class="spec"><div class="k">' + s[0] + '</div><div class="v">' + s[1] + '</div><div class="d">' + s[2] + '</div></div>';
+  }).join('');
+
+  const sw = d.swatches.map(function(s){
+    const light = ['#f5f1e8','#fffdf8','#f7f2e7','#e2dacb'].indexOf(s[0]) >= 0;
+    return '<div style="background:' + s[0] + ';color:' + (light ? '#6d6455' : '#cfd6e2') + '">' + s[1] + '<br>' + s[0] + '</div>';
+  }).join('');
+
+  const frames =
+    '<div class="frame"><div class="frame-cap"><span class="t">' + d.studentCap[0] + '</span><span class="s">' + d.studentCap[1] + '</span></div>' +
+      '<div class="frame-box"><div class="dir-' + k + ' fit" data-fit>' + mockHTML(false) + '</div></div></div>' +
+
+    (d.studentCap2 ?
+      '<div class="frame"><div class="frame-cap"><span class="t">' + d.studentCap2[0] + '</span><span class="s">' + d.studentCap2[1] + '</span></div>' +
+      '<div class="frame-box"><div class="dir-' + k + ' fit" data-fit>' + mockHTML(true) + '</div></div></div>' : '') +
+
+    '<div class="frame"><div class="frame-cap"><span class="t">' + d.teacherCap[0] + '</span><span class="s">' + d.teacherCap[1] + '</span></div>' +
+      '<div class="frame-box"><div class="dir-' + k + ' fit" data-fit>' + dashHTML() + '</div></div></div>';
+
+  const good = d.intent.good.map(function(x){ return '<li>' + x + '</li>'; }).join('');
+  const cost = d.intent.cost.map(function(x){ return '<li>' + x + '</li>'; }).join('');
+
+  return '<div class="panel" id="p-' + k + '">' +
+    '<div class="dir-head" style="--acc:' + d.acc + '">' +
+      '<span class="tag"><i style="background:' + d.dot + '"></i>方向' + (k === 'instrument' ? '一' : k === 'workbook' ? '二' : '三') + ' · ' + d.en + '</span>' +
+      '<h2>' + d.name + '</h2>' +
+      '<p class="decl">' + d.decl + '</p>' +
+      '<div class="chips">' + chips + '</div>' +
+    '</div>' +
+
+    '<div class="specs">' + specs + '</div>' +
+    '<div class="sw">' + sw + '</div>' +
+
+    frames +
+
+    '<div class="intent">' +
+      '<div class="int"><div class="k"><b style="background:#4ade80"></b>这个方向擅长什么</div><ul>' + good + '</ul></div>' +
+      '<div class="int"><div class="k"><b style="background:#fbbf24"></b>代价是什么</div><ul>' + cost + '</ul></div>' +
+      '<div class="int"><div class="k"><b style="background:' + d.dot + '"></b>一句话</div><p>' + d.intent.fit + '</p></div>' +
+    '</div>' +
+  '</div>';
+}
+
+/* 挂载 */
+document.getElementById('ov').innerHTML = ['instrument','workbook','focus'].map(ovCard).join('');
+document.getElementById('panels').innerHTML = ['instrument','workbook','focus'].map(panel).join('');
+document.getElementById('p-instrument').classList.add('is-active');
+
+/* ---------- 画框自适应缩放 ---------- */
+function fitAll(){
+  document.querySelectorAll('[data-fit]').forEach(function(el){
+    const host = el.parentElement;
+    const avail = host.clientWidth - 28; /* frame-box 的左右内边距 */
+    const s = Math.min(1, avail / 1280);
+    el.style.transform = 'scale(' + s + ')';
+    host.style.height = (el.offsetHeight * s + 28) + 'px';
+  });
+}
+window.addEventListener('resize', fitAll);
+window.addEventListener('load', fitAll);
+fitAll();
+
+/* ---------- 切换方向 ---------- */
+document.getElementById('tabs').addEventListener('click', function(e){
+  const btn = e.target.closest('.tab');
+  if (!btn) return;
+  const go = btn.dataset.go;
+  document.querySelectorAll('.tab').forEach(function(b){ b.classList.toggle('is-active', b === btn); });
+  document.querySelectorAll('.panel').forEach(function(p){ p.classList.toggle('is-active', p.id === 'p-' + go); });
+  fitAll();
+});
+</script>
+</body>
+</html>

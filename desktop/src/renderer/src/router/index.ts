@@ -38,6 +38,10 @@ import MistakesView from '../views/MistakesView.vue'
 import ProfileView from '../views/ProfileView.vue'
 import PlanView from '../views/PlanView.vue'
 import TeacherView from '../views/TeacherView.vue'
+import TeacherClassesView from '../views/TeacherClassesView.vue'
+import AssignmentsView from '../views/AssignmentsView.vue'
+import LoginView from '../views/LoginView.vue'
+import RegisterView from '../views/RegisterView.vue'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -48,6 +52,14 @@ declare module 'vue-router' {
      * top-level pages, which are their own root.
      */
     parent?: string
+    /**
+     * A page you reach from somewhere else rather than from the sidebar
+     * (PU-13). Sign-in is the case this exists for: it needs a
+     * `meta.title` so the breadcrumb can name it, but a permanent
+     * 「登录」 entry in the nav is an invitation to sign in while already
+     * signed in.
+     */
+    hidden?: boolean
   }
 }
 
@@ -68,6 +80,16 @@ export const routes: RouteRecordRaw[] = [
     name: 'practice',
     component: Practice,
     meta: { title: '练习' }
+  },
+  {
+    // Where a student lands after signing in (PU-13). Not role-gated:
+    // a teacher opening it sees the same list, which is empty for them
+    // because they have joined no class — an honest answer, and one
+    // that needs no redirect to explain.
+    path: '/assignments',
+    name: 'assignments',
+    component: AssignmentsView,
+    meta: { title: '我的作业' }
   },
   {
     path: '/problems',
@@ -116,6 +138,40 @@ export const routes: RouteRecordRaw[] = [
     component: TeacherView,
     meta: { title: '学情看板' }
   },
+  {
+    // A top-level page rather than a child of `/teacher`, because a
+    // teacher arrives here to set up a class *before* there is any
+    // learning data to look at — it is not a drill-down from the
+    // console, it is the step that makes the console meaningful.
+    // Not role-gated here for the same reason `/teacher` is not: the
+    // server refuses the calls, and the page explains itself.
+    path: '/teacher/classes',
+    name: 'teacher-classes',
+    component: TeacherClassesView,
+    meta: { title: '班级管理' }
+  },
+  {
+    // `hidden` keeps this out of the sidebar while leaving the crumb
+    // working — see the note on `RouteMeta.hidden`.
+    path: '/login',
+    name: 'login',
+    component: LoginView,
+    meta: { title: '登录', hidden: true }
+  },
+  {
+    // A page of its own, not a tab or a modal on `/login` (2026-09-25).
+    // The two flows share a shape and almost nothing else — see the
+    // docstring in `RegisterView.vue` for why one card with two modes
+    // was the wrong trade.
+    //
+    // `hidden` for the same reason as `/login`: a permanent 「注册」 entry
+    // in the nav is an invitation to create a second account while
+    // already signed in as the first.
+    path: '/register',
+    name: 'register',
+    component: RegisterView,
+    meta: { title: '注册', hidden: true }
+  },
 
   // A hand-typed or stale URL should land on the editor, not on a blank
   // page with a console warning.
@@ -133,14 +189,19 @@ export interface NavRoute {
 /**
  * The sidebar's navigation, derived from the route table.
  *
- * "Top-level page" is expressed as *has a title and no parent* rather than
- * as a second hardcoded list, so adding a page means adding one route —
- * not a route plus a nav entry that can drift from it. The redirect and
- * the catch-all carry no `meta.title`, and `/problems/:id` has a parent,
- * which is exactly the distinction wanted.
+ * "Top-level page" is expressed as *has a title, no parent, and not
+ * `hidden`* rather than as a second hardcoded list, so adding a page
+ * means adding one route — not a route plus a nav entry that can drift
+ * from it. The redirect and the catch-all carry no `meta.title`,
+ * `/problems/:id` has a parent, and `/login` is `hidden`, which is
+ * exactly the three distinctions wanted.
  */
 export const navRoutes: NavRoute[] = routes
-  .filter((r) => typeof r.name === 'string' && r.meta?.title && r.meta.parent === undefined)
+  .filter(
+    (r) =>
+      typeof r.name === 'string' &&
+      r.meta?.title && r.meta.parent === undefined && !r.meta.hidden
+  )
   .map((r) => ({ name: r.name as string, title: r.meta!.title }))
 
 export const router = createRouter({

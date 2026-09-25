@@ -42,8 +42,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.auth import require_teacher
-from app.api.mistake_book import get_session
 from app.auth import create_user
+from app.db import get_session
 from app.models.alerts import Alert, compute_alerts
 from app.models.class_stats import (
     compute_class_overview,
@@ -318,10 +318,13 @@ def add_student(
 ) -> dict:
     """Create a student account.
 
-    Students cannot register themselves — see :mod:`app.api.auth`. A
-    roster is produced by the person running the class, which is both
-    how it actually works and a much smaller surface to defend on a
-    process that compiles arbitrary code.
+    Students *can* now register themselves
+    (``POST /api/v1/auth/register``, added 2026-09-25), so this endpoint
+    is no longer the only way an account comes into existence. It stays
+    because a teacher building a roster in one go is still the normal
+    path for a class, and because it can do two things self-registration
+    deliberately cannot: set the display name to whatever the teacher
+    wants, and create the account *before* the student ever shows up.
 
     Returns 409 for a taken username rather than 400: the client can do
     something about it (pick another name), and a 400 would lump it in

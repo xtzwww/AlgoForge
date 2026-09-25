@@ -17,11 +17,11 @@
  *
  * 1. *Every colour is a PU-0 token.* The old stylesheet carried
  *    `#1a1a2e`, `#16213e`, `#3b82f6`, `#ef4444` and friends; the file now
- *    holds exactly one literal, documented below. The reviewed /
- *    not-reviewed distinction used two fixed colours per state, which is
- *    four literals for one bit of state — it is now the shared
- *    `VerdictBadge`'s neutral-vs-success pair, so this page agrees with
- *    the practice page about what "green" means.
+ *    holds no colour literals at all. The reviewed / not-reviewed
+ *    distinction used two fixed colours per state, which is four literals
+ *    for one bit of state — it is now the shared `VerdictBadge`'s
+ *    neutral-vs-success pair, so this page agrees with the practice page
+ *    about what "green" means.
  *
  * 2. *The empty state offers a way out.* It used to read "错题本为空。
  *    判题失败后，可在练习页面将错题加入错题本。" — an accurate sentence
@@ -960,7 +960,11 @@ onMounted(load)
  * deleting look as safe as reviewing.
  */
 .btn-review {
-  color: #ffffff;
+  /* Was `#ffffff`, described below as "the one literal". It is now the
+   * `--af-text-inverse` token — the repaint made the accent light enough
+   * that white on it fails AA, so this stopped being a documented
+   * exception and became a bug. See tokens.css. */
+  color: var(--af-text-inverse);
   background: var(--af-accent);
 }
 

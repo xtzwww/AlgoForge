@@ -359,7 +359,7 @@ onMounted(load)
     </div>
 
     <!-- Problem cards -->
-    <div v-if="filteredProblems.length > 0" class="problem-list">
+    <div v-if="filteredProblems.length > 0" class="problem-list af-stagger">
       <article
         v-for="p in filteredProblems"
         :key="p.id"
@@ -392,7 +392,7 @@ onMounted(load)
         </div>
 
         <div class="card-actions">
-          <button class="practice-btn" @click="practice(p.id)">开始练习</button>
+          <button class="practice-btn af-sheen" @click="practice(p.id)">开始练习</button>
         </div>
       </article>
     </div>
@@ -432,16 +432,27 @@ onMounted(load)
   border: 1px solid var(--af-border-strong);
   border-radius: 999px;
   cursor: pointer;
+  transition:
+    border-color var(--af-duration-fast) var(--af-ease),
+    background var(--af-duration-fast) var(--af-ease),
+    color var(--af-duration-fast) var(--af-ease),
+    box-shadow var(--af-duration-fast) var(--af-ease);
 }
 
 .assignment-chip:hover {
   border-color: var(--af-accent);
 }
 
+/* The one place on this page with text sitting ON the accent fill, and
+ * therefore the one place that needs `--af-text-inverse`. See the note
+ * in tokens.css: the repaint moved the accent from a dark blue to a
+ * light one, so white text stopped being legible here and the correct
+ * colour inverted. */
 .assignment-chip.active {
-  color: #ffffff;
+  color: var(--af-text-inverse);
   background: var(--af-accent);
   border-color: var(--af-accent);
+  box-shadow: var(--af-glow-accent-soft);
 }
 
 .assignment-chip.overdue:not(.active) {
@@ -455,7 +466,9 @@ onMounted(load)
 }
 
 .assignment-chip.active .assignment-due {
-  color: #ffffff;
+  /* Deliberately NOT full inverse: the due date is secondary and should
+   * recede into the fill instead of competing with the label. */
+  color: color-mix(in srgb, var(--af-text-inverse) 72%, transparent);
 }
 
 .problem-list-view {
@@ -466,8 +479,13 @@ onMounted(load)
   height: 100%;
   padding: 16px;
   box-sizing: border-box;
-  color: #e5e7eb;
-  background: #1a1a2e;
+  color: var(--af-text-primary);
+  /* No `background` (2026-09-25). This used to paint `#1a1a2e` over the
+   * entire page, which on the new palette would have hidden the canvas
+   * glow and grid completely — this would have been the one screen that
+   * still looked like the old design, and it is the screen a student
+   * opens most. The canvas belongs to `body`; a page's job is to not
+   * cover it. */
   overflow-y: auto;
 }
 
@@ -481,6 +499,8 @@ onMounted(load)
 .header h1 {
   margin: 0;
   font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .header-right {
@@ -491,33 +511,57 @@ onMounted(load)
 
 .solved-summary {
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--af-text-secondary);
 }
 
 .solved-summary strong {
-  color: #22c55e;
+  color: var(--af-success);
   font-size: 16px;
+  /* The number people actually read on this page, so it gets a halo.
+   * `tabular-nums` is already inherited from `body`, which is what keeps
+   * it from jittering as the count changes. */
+  text-shadow: 0 0 14px color-mix(in srgb, var(--af-success) 45%, transparent);
 }
 
 .refresh-btn {
   padding: 6px 16px;
   font-size: 13px;
-  color: white;
-  background: #3b82f6;
+  /* Buttons do not inherit font-family by default, and the original rule
+   * never set it — so this control has been rendering in the browser's
+   * default UI font, not the app's, since it was written. */
+  font-family: inherit;
+  color: var(--af-text-inverse);
+  background: var(--af-accent-gradient);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--af-radius-sm);
   cursor: pointer;
+  transition:
+    filter var(--af-duration-fast) var(--af-ease),
+    box-shadow var(--af-duration-fast) var(--af-ease),
+    transform var(--af-duration-fast) var(--af-ease-pop);
 }
 
+.refresh-btn:hover:not(:disabled) {
+  filter: brightness(1.12);
+  box-shadow: var(--af-glow-accent);
+}
+
+.refresh-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Disabled is a surface, not a faded accent: a dimmed gradient still
+ * reads as the primary action and invites a click that does nothing. */
 .refresh-btn:disabled {
-  background: #6b7280;
+  color: var(--af-text-muted);
+  background: var(--af-elevated);
   cursor: not-allowed;
 }
 
 .filter-bar {
   margin-bottom: 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid #374151;
+  border-bottom: 1px solid var(--af-border);
 }
 
 .filter-row {
@@ -536,17 +580,25 @@ onMounted(load)
 
 .filter-label {
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--af-text-secondary);
 }
 
 .filter-select {
   padding: 6px 10px;
   font-size: 13px;
-  color: #e5e7eb;
-  background: #16213e;
-  border: 1px solid #374151;
-  border-radius: 4px;
+  font-family: inherit;
+  color: var(--af-text-primary);
+  /* Inputs keep the OPAQUE `--af-surface`, not the glass treatment. A
+   * translucent field over the canvas grid is harder to read and gains
+   * nothing: there is no content behind an input worth seeing through
+   * it. Glass is for panels that *contain* things. */
+  background: var(--af-surface);
+  border: 1px solid var(--af-border-strong);
+  border-radius: var(--af-radius-sm);
   cursor: pointer;
+  transition:
+    border-color var(--af-duration-fast) var(--af-ease),
+    box-shadow var(--af-duration-fast) var(--af-ease);
 }
 
 /* The search field is the only free-text control in this bar, so it
@@ -561,64 +613,58 @@ onMounted(load)
   flex: 1;
   padding: 6px 10px;
   font-size: 13px;
-  color: #e5e7eb;
-  background: #16213e;
-  border: 1px solid #374151;
-  border-radius: 4px;
+  font-family: inherit;
+  color: var(--af-text-primary);
+  background: var(--af-surface);
+  border: 1px solid var(--af-border-strong);
+  border-radius: var(--af-radius-sm);
+  transition:
+    border-color var(--af-duration-fast) var(--af-ease),
+    box-shadow var(--af-duration-fast) var(--af-ease);
+}
+
+.filter-select:hover,
+.filter-input:hover {
+  border-color: var(--af-accent);
 }
 
 .filter-input::placeholder {
-  color: #6b7280;
+  color: var(--af-text-muted);
 }
 
-.filter-input:focus {
+/* `outline: none` is deliberate, not an oversight: the glow IS the focus
+ * indicator here, matching `:focus-visible` in tokens.css. Note that a
+ * text input matches `:focus-visible` even on a mouse click, so keeping
+ * the outline would draw a ring on every click rather than only for
+ * keyboard users — the glow is what tells the two apart. */
+.filter-input:focus,
+.filter-select:focus {
   outline: none;
-  border-color: #3b82f6;
+  border-color: var(--af-accent);
+  box-shadow: var(--af-glow-focus);
 }
 
 .filter-input::-webkit-search-cancel-button {
   cursor: pointer;
 }
 
-/* The search field is the only free-text control in this bar, so it
-   gets to be wider than the selects — a title fragment is longer than
-   a dropdown label. */
-.filter-group-search {
-  flex: 1 1 220px;
-  min-width: 180px;
-}
-
-.filter-input {
-  flex: 1;
-  padding: 6px 10px;
-  font-size: 13px;
-  color: #e5e7eb;
-  background: #16213e;
-  border: 1px solid #374151;
-  border-radius: 4px;
-}
-
-.filter-input::placeholder {
-  color: #6b7280;
-}
-
-.filter-input:focus {
-  outline: none;
-  border-color: #3b82f6;
-}
-
 .reset-btn {
   padding: 5px 12px;
   font-size: 12px;
-  color: #d1d5db;
+  font-family: inherit;
+  color: var(--af-text-secondary);
   background: transparent;
-  border: 1px solid #4b5563;
-  border-radius: 4px;
+  border: 1px solid var(--af-border-strong);
+  border-radius: var(--af-radius-sm);
   cursor: pointer;
+  transition:
+    background var(--af-duration-fast) var(--af-ease),
+    color var(--af-duration-fast) var(--af-ease);
 }
 
 .reset-btn:hover {
-  background: #374151;
+  color: var(--af-text-primary);
+  background: var(--af-elevated);
 }
 
 .tag-bar {
@@ -630,52 +676,79 @@ onMounted(load)
 .tag-chip {
   padding: 4px 12px;
   font-size: 13px;
-  color: #d1d5db;
-  background: #374151;
-  border: none;
-  border-radius: 16px;
+  font-family: inherit;
+  color: var(--af-text-secondary);
+  background: var(--af-elevated);
+  /* Transparent rather than `border: none`, so the active state can add
+   * an accent border without the chip changing size by 2px when it
+   * becomes active. */
+  border: 1px solid transparent;
+  border-radius: 999px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition:
+    background var(--af-duration-fast) var(--af-ease),
+    color var(--af-duration-fast) var(--af-ease),
+    border-color var(--af-duration-fast) var(--af-ease),
+    box-shadow var(--af-duration-fast) var(--af-ease);
 }
 
 .tag-chip:hover {
-  background: #4b5563;
+  color: var(--af-text-primary);
+  background: var(--af-overlay);
+  border-color: var(--af-border-strong);
 }
 
 .tag-chip.active {
-  background: #3b82f6;
-  color: white;
+  color: var(--af-text-inverse);
+  background: var(--af-accent);
+  border-color: var(--af-accent);
+  box-shadow: var(--af-glow-accent-soft);
 }
 
+/* Message blocks.
+ *
+ * The old values were opaque dark red and brown (`#7f1d1d`, `#78350f`)
+ * tuned for the old flat navy. On a translucent panel they read as
+ * opaque stickers glued on top, so these are now a tint of the semantic
+ * colour plus a matching hairline: the meaning survives, the panel shows
+ * through, and the full-strength colour stays on the *text*, which is
+ * where contrast actually matters.
+ *
+ * `font-size` is now set on both. `.warn-msg` had 13px and `.error-msg`
+ * had none, so the two messages that occupy the same slot in the
+ * template rendered at different sizes. */
 .error-msg {
-  color: #ef4444;
   padding: 8px 12px;
-  background: #7f1d1d;
-  border-radius: 4px;
   margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--af-danger);
+  background: color-mix(in srgb, var(--af-danger) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--af-danger) 35%, transparent);
+  border-radius: var(--af-radius-sm);
 }
 
 .warn-msg {
-  color: #fbbf24;
   padding: 8px 12px;
-  background: #78350f;
-  border-radius: 4px;
   margin-bottom: 12px;
   font-size: 13px;
+  color: var(--af-warning);
+  background: color-mix(in srgb, var(--af-warning) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--af-warning) 35%, transparent);
+  border-radius: var(--af-radius-sm);
 }
 
 .empty {
-  color: #6b7280;
-  text-align: center;
   padding: 40px 16px;
   font-size: 14px;
+  color: var(--af-text-muted);
+  text-align: center;
 }
 
 .empty code {
   padding: 2px 6px;
-  background: #16213e;
-  border-radius: 4px;
-  color: #93c5fd;
+  color: var(--af-accent-hover);
+  background: var(--af-elevated);
+  border-radius: var(--af-radius-sm);
 }
 
 .problem-list {
@@ -684,16 +757,43 @@ onMounted(load)
   gap: 12px;
 }
 
+/* Glass plus a hover lift (2026-09-25). These are the rows a student
+ * scans and clicks all session, so they get the two treatments that say
+ * "this is a thing you can open": the panel lets the canvas through,
+ * and it rises 2px under the cursor.
+ *
+ * The left border is NOT repainted on hover, unlike the generic
+ * `.af-lift` in motion.css — here it carries the difficulty/availability
+ * marker, so recolouring it would make the row look like it changed
+ * state rather than like it is under the cursor. */
 .problem-card {
   padding: 16px;
-  background: #16213e;
-  border-radius: 8px;
-  border-left: 4px solid #3b82f6;
+  background: var(--af-surface);
+  border-radius: var(--af-radius-md);
+  border-left: 4px solid var(--af-accent);
+  transition:
+    transform var(--af-duration-base) var(--af-ease),
+    box-shadow var(--af-duration-base) var(--af-ease),
+    background var(--af-duration-base) var(--af-ease);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .problem-card {
+    background: color-mix(in srgb, var(--af-surface) 78%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    backdrop-filter: blur(14px) saturate(140%);
+  }
+}
+
+.problem-card:hover {
+  transform: translateY(-2px);
+  background: var(--af-elevated);
+  box-shadow: var(--af-glow-accent-soft);
 }
 
 .problem-card.inactive {
-  opacity: 0.6;
-  border-left-color: #6b7280;
+  opacity: 0.55;
+  border-left-color: var(--af-text-muted);
 }
 
 .card-header {
@@ -706,8 +806,8 @@ onMounted(load)
 
 .problem-id {
   font-size: 13px;
-  color: #6b7280;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--af-font-mono);
+  color: var(--af-text-muted);
 }
 
 .problem-title {
@@ -716,47 +816,52 @@ onMounted(load)
   font-weight: 600;
 }
 
+/* Badges.
+ *
+ * Each is a 16% tint of its semantic colour for the fill, with the
+ * full-strength colour as the text. The old design did the opposite:
+ * opaque dark blocks (`#14532d`, `#78350f`, `#7f1d1d`) with a pale tint
+ * as the text. That only works on a flat opaque background — on a glass
+ * card those solid blocks punch holes in the panel. Swapping which end
+ * is the fill also *raises* the text contrast instead of lowering it. */
 .badge {
   padding: 2px 8px;
   font-size: 11px;
-  border-radius: 10px;
+  font-weight: 500;
+  border-radius: 999px;
   white-space: nowrap;
 }
 
-.badge-easy {
-  background: #14532d;
-  color: #86efac;
+.badge-easy,
+.badge-solved {
+  color: var(--af-success);
+  background: color-mix(in srgb, var(--af-success) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--af-success) 32%, transparent);
 }
 
 .badge-medium {
-  background: #78350f;
-  color: #fbbf24;
+  color: var(--af-warning);
+  background: color-mix(in srgb, var(--af-warning) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--af-warning) 32%, transparent);
 }
 
 .badge-hard {
-  background: #7f1d1d;
-  color: #fca5a5;
+  color: var(--af-danger);
+  background: color-mix(in srgb, var(--af-danger) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--af-danger) 32%, transparent);
 }
 
-.badge-solved {
-  background: #14532d;
-  color: #86efac;
-}
-
-.badge-unsolved {
-  background: #374151;
-  color: #9ca3af;
-}
-
+.badge-unsolved,
 .badge-inactive {
-  background: #374151;
-  color: #d1d5db;
+  color: var(--af-text-secondary);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border);
 }
 
 .card-tags {
   margin: 0 0 8px 0;
   font-size: 12px;
-  color: #93c5fd;
+  color: var(--af-accent-hover);
 }
 
 .card-meta {
@@ -764,7 +869,7 @@ onMounted(load)
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--af-text-secondary);
   margin-bottom: 12px;
 }
 
@@ -773,19 +878,39 @@ onMounted(load)
   justify-content: flex-end;
 }
 
+/* The row's primary action. `af-sheen` in the template adds the diagonal
+ * highlight on hover — the one unabashedly decorative flourish in the
+ * repaint, kept to the primary action on each row so that it still reads
+ * as *the* action rather than as a texture. */
 .practice-btn {
   padding: 6px 20px;
   font-size: 13px;
   font-weight: 600;
-  color: white;
-  background: #3b82f6;
+  font-family: inherit;
+  color: var(--af-text-inverse);
+  background: var(--af-accent-gradient);
   border: none;
-  border-radius: 4px;
+  border-radius: var(--af-radius-sm);
   cursor: pointer;
-  transition: background 0.2s;
+  transition:
+    filter var(--af-duration-fast) var(--af-ease),
+    box-shadow var(--af-duration-fast) var(--af-ease),
+    transform var(--af-duration-fast) var(--af-ease-pop);
 }
 
 .practice-btn:hover {
-  background: #2563eb;
+  filter: brightness(1.12);
+  box-shadow: var(--af-glow-accent);
+}
+
+.practice-btn:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .problem-card:hover,
+  .practice-btn:active {
+    transform: none;
+  }
 }
 </style>

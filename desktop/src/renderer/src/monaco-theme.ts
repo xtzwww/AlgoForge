@@ -65,6 +65,7 @@
 import type * as monacoNs from 'monaco-editor'
 import monaco from './monaco'
 import { palette } from './assets/tokens'
+import { theme } from './composables/useTheme'
 
 /** Monaco's theme name for AlgoForge. Referenced by `CodeEditor.vue`. */
 export const ALGOFORGE_THEME = 'algoforge-dark'
@@ -97,6 +98,53 @@ let installed = false
 function readToken(styles: CSSStyleDeclaration, name: string, fallback: string): string {
   const value = styles.getPropertyValue(name).trim()
   return value || fallback
+}
+
+/**
+ * Convert a token into the `#RRGGBB` / `#RRGGBBAA` form `defineTheme`
+ * demands.
+ *
+ * Monaco validates its `colors` map against that shape and — crucially —
+ * *warns and ignores* anything else rather than throwing. `--af-border-strong`
+ * is written `rgb(122 162 255 / 0.3)`: a hairline border has to be
+ * translucent to pick up the canvas behind it, which an opaque hex cannot
+ * express (see tokens.css). Passed through raw, Monaco would drop it and
+ * leave the widget border on the `vs-dark` default, with nothing visible
+ * in the UI to say why.
+ *
+ * Alpha survives as the 8-digit form, which Monaco does parse — losing it
+ * would turn a hairline into a solid line and undo the reason the token is
+ * translucent.
+ */
+function toMonacoHex(color: string): string {
+  const value = color.trim()
+
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(value)
+  if (hex) {
+    // #rgb → #rrggbb. The 8-digit form is already what we want.
+    return hex[1].length === 3 ? `#${hex[1].replace(/./g, (c) => c + c)}` : value
+  }
+
+  // `rgb(r, g, b)`, `rgba(r, g, b, a)` and the CSS Color 4
+  // `rgb(r g b / a)` all reduce to three channels plus an optional alpha
+  // once the separators stop mattering — which is what this does.
+  const channels =
+    /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*(?:[,/]\s*([\d.]+%?)\s*)?\)$/i.exec(value)
+  if (!channels) return value
+
+  const byte = (n: number): string =>
+    Math.max(0, Math.min(255, Math.round(n)))
+      .toString(16)
+      .padStart(2, '0')
+
+  const [, r, g, b, rawAlpha] = channels
+  const base = `#${byte(Number.parseFloat(r))}${byte(Number.parseFloat(g))}${byte(Number.parseFloat(b))}`
+  if (rawAlpha === undefined) return base
+
+  const alpha = rawAlpha.endsWith('%')
+    ? Number.parseFloat(rawAlpha) / 100
+    : Number.parseFloat(rawAlpha)
+  return `${base}${byte(alpha * 255)}`
 }
 
 /**
@@ -148,24 +196,32 @@ interface ThemePalette {
 function resolveThemePalette(): ThemePalette {
   const styles = getComputedStyle(document.documentElement)
 
-  const accent = readToken(styles, '--af-accent', palette.accent)
+  /**
+   * Every read goes through `toMonacoHex()`. These strings are handed to
+   * Monaco, not to CSS, and Monaco's tolerance for CSS colour syntax is
+   * much narrower than the browser's — see `toMonacoHex`.
+   */
+  const token = (name: string, fallback: string): string =>
+    toMonacoHex(readToken(styles, name, fallback))
+
+  const accent = token('--af-accent', palette.accent)
 
   return {
-    background: readToken(styles, '--af-surface', palette.surface),
-    foreground: readToken(styles, '--af-text-primary', palette.textPrimary),
+    background: token('--af-surface', palette.surface),
+    foreground: token('--af-text-primary', palette.textPrimary),
 
     // The gutter is deliberately one step *below* the app's muted text:
     // line numbers sit behind the code and should recede further than a
     // label does, or a long file becomes a wall of digits.
-    gutter: readToken(styles, '--af-text-muted', palette.textMuted),
-    gutterActive: readToken(styles, '--af-text-secondary', palette.textSecondary),
+    gutter: token('--af-text-muted', palette.textMuted),
+    gutterActive: token('--af-text-secondary', palette.textSecondary),
 
-    lineHighlight: readToken(styles, '--af-elevated', palette.elevated),
-    selection: readToken(styles, '--af-accent-subtle', palette.accentSubtle),
-    selectionInactive: readToken(styles, '--af-overlay', palette.overlay),
+    lineHighlight: token('--af-elevated', palette.elevated),
+    selection: token('--af-accent-subtle', palette.accentSubtle),
+    selectionInactive: token('--af-overlay', palette.overlay),
 
-    widget: readToken(styles, '--af-elevated', palette.elevated),
-    widgetBorder: readToken(styles, '--af-border-strong', palette.borderStrong),
+    widget: token('--af-elevated', palette.elevated),
+    widgetBorder: token('--af-border-strong', palette.borderStrong),
 
     accent,
 
@@ -174,17 +230,17 @@ function resolveThemePalette(): ThemePalette {
     // happens to reuse the semantic palette. Giving them tokens would
     // invite them being used for UI, where `purple` means "compile
     // error" and not "keyword".
-    comment: readToken(styles, '--af-text-muted', palette.textMuted),
-    keyword: readToken(styles, '--af-purple', palette.purple),
-    string: readToken(styles, '--af-success', palette.success),
-    number: readToken(styles, '--af-orange', palette.orange),
-    type: readToken(styles, '--af-info', palette.info),
+    comment: token('--af-text-muted', palette.textMuted),
+    keyword: token('--af-purple', palette.purple),
+    string: token('--af-success', palette.success),
+    number: token('--af-orange', palette.orange),
+    type: token('--af-info', palette.info),
     function: accent,
-    variable: readToken(styles, '--af-text-primary', palette.textPrimary),
-    operator: readToken(styles, '--af-text-secondary', palette.textSecondary),
-    tag: readToken(styles, '--af-danger', palette.danger),
-    constant: readToken(styles, '--af-warning', palette.warning),
-    invalid: readToken(styles, '--af-danger', palette.danger)
+    variable: token('--af-text-primary', palette.textPrimary),
+    operator: token('--af-text-secondary', palette.textSecondary),
+    tag: token('--af-danger', palette.danger),
+    constant: token('--af-warning', palette.warning),
+    invalid: token('--af-danger', palette.danger)
   }
 }
 
@@ -223,28 +279,36 @@ function buildRules(p: ThemePalette): monacoNs.editor.ITokenThemeRule[] {
 }
 
 /**
- * Register the AlgoForge theme with Monaco.
+ * The Monaco base the active theme needs.
  *
- * Idempotent, and must run before the first editor is created —
- * `monaco.editor.create({ theme })` with an unregistered name silently
- * falls back to `vs` (light), so a missed call looks like "the theme
- * didn't apply" rather than an error.
- *
- * Called from `CodeEditor.vue`'s module scope rather than from
- * `main.ts`, so the theme and its only consumer cannot get separated:
- * importing the component is what installs the theme.
+ * Neon and Terminal are dark surfaces, so they inherit from `vs-dark`;
+ * Paper is a light surface (projector / printed handout), and a dark
+ * base under light `--af-*` colours would render light-on-light text.
+ * Switching the base with the theme is what keeps the editor legible in
+ * all three — see the `themeVersion` watcher in `CodeEditor.vue`, which
+ * re-applies this theme after every switch.
  */
-export function installAlgoforgeTheme(): void {
-  if (installed) return
-  installed = true
+function baseForTheme(): 'vs' | 'vs-dark' {
+  return theme.value === 'paper' ? 'vs' : 'vs-dark'
+}
 
+/**
+ * Resolve the current tokens and (re)define the AlgoForge theme.
+ *
+ * `defineTheme` with an already-registered name updates every live
+ * editor that uses it, so this is safe to call repeatedly. The base is
+ * re-read each call, which is why a Paper switch takes effect rather
+ * than being frozen at the first install.
+ */
+function defineNow(): void {
   const p = resolveThemePalette()
 
   monaco.editor.defineTheme(ALGOFORGE_THEME, {
-    // `vs-dark` is the base so the ~200 token names we do not list keep
-    // a readable inherited colour. `base: 'vs'` would need every slot
-    // filled in or the editor would be light-on-light.
-    base: 'vs-dark',
+    // `vs-dark` is the base for the dark themes so the ~200 token names
+    // we do not list keep a readable inherited colour. `base: 'vs'` for
+    // Paper needs no slot to be filled: the light base inherits light
+    // defaults, and our explicit `colors` override the surface.
+    base: baseForTheme(),
     inherit: true,
     rules: buildRules(p),
     colors: {
@@ -276,6 +340,37 @@ export function installAlgoforgeTheme(): void {
       'scrollbarSlider.activeBackground': p.accent
     }
   })
+}
+
+/**
+ * Register the AlgoForge theme with Monaco.
+ *
+ * Idempotent, and must run before the first editor is created —
+ * `monaco.editor.create({ theme })` with an unregistered name silently
+ * falls back to `vs` (light), so a missed call looks like "the theme
+ * didn't apply" rather than an error.
+ *
+ * Called from `CodeEditor.vue`'s module scope rather than from
+ * `main.ts`, so the theme and its only consumer cannot get separated:
+ * importing the component is what installs the theme.
+ */
+export function installAlgoforgeTheme(): void {
+  if (installed) return
+  installed = true
+  defineNow()
+}
+
+/**
+ * Re-resolve tokens and redefine the theme after a visual-style switch.
+ *
+ * The theme's literals are read from CSS, so when `data-theme` changes
+ * the resolved colours differ. `CodeEditor.vue` watches `themeVersion`
+ * and calls this, then re-applies the theme name — redefining with a
+ * new `base` (Paper is `vs`, the dark themes are `vs-dark`) does not
+ * take effect on a live editor until `setTheme` is called again.
+ */
+export function refreshAlgoforgeTheme(): void {
+  defineNow()
 }
 
 /**

@@ -52,11 +52,26 @@ class AssistRequest(BaseModel):
 
     ``assignment_id`` 可选：自由练习时没有作业，仍应能用 AI，只是落在
     默认档上。
+
+    ``provider`` 是**本次请求**用哪个模型（``deepseek`` / ``ollama`` /
+    ``openai_compatible``）。留空用当前生效的那个（老师设的默认或 .env
+    的默认）。
+
+    为什么它是逐请求的而不是一个全局开关
+    ------------------------------------
+    曾经只有一条 ``PUT /assistance/models`` 改一个**进程级变量**，于是
+    "换模型"实际是"给所有人换" —— 教师端与学生端共用同一 sidecar 时，
+    一个学生把模型切走，其他人的下一次提问就跟着变。而它当初不设权限的
+    理由又是对的：学生遇到一个连不上的模型，应该能自己换一个再问一次。
+
+    逐请求的 provider 同时满足两边：**换只影响自己**，所以不需要任何
+    权限；而"给全班改默认"是另一件事，那一条路由要求教师身份。
     """
 
     assignment_id: Optional[int] = None
     problem_id: Optional[int] = None
     language: str = "cpp"
+    provider: Optional[str] = None
 
 
 class CompleteRequest(AssistRequest):
@@ -121,12 +136,20 @@ def list_models() -> dict:
 
 
 @router.put("/assistance/models")
-def set_model(req: SetModelRequest) -> dict:
-    """切换模型。传 ``model_id: null`` 恢复 .env 里的默认值。
+def set_model(
+    req: SetModelRequest,
+    _teacher: User = Depends(require_teacher),
+) -> dict:
+    """改**进程默认**模型。传 ``model_id: null`` 恢复 .env 里的默认值。
 
-    不设权限：这是本机偏好，不是教学设置。老师压"辅助强度"是为了教学
-    效果，压"用哪个模型"没有对应的教学理由，反而会挡住学生把问题换到
-    一个连得上的模型上再问一次。
+    要求教师身份，因为它改的是**所有人**共享的那个默认值：本进程只有一个
+    变量，教师端与学生端共用同一 sidecar 时，改它会让其他人的下一次提问
+    跟着变 —— 这不是"偏好"，是一次影响全班的配置变更。
+
+    学生想把某个模型换成另一个再试一次，走的是另一条路：请求体里的
+    ``provider`` 字段（见 :class:`AssistRequest`）。它逐请求生效，只影响
+    自己，因此不需要任何权限。两条路分开之后，"老师压辅助强度"仍然只
+    管档位、不管模型，而"学生换个能连上的模型"也仍然做得到。
     """
     from app import model_catalog
 
@@ -171,6 +194,7 @@ def complete(
             level=level,
             prefix=req.prefix,
             language=req.language,
+            provider=req.provider,
         )
     return AssistResponse(**result.to_dict())
 
@@ -191,6 +215,7 @@ def chat(
             level=level,
             question=req.question,
             statement=req.statement,
+            provider=req.provider,
         )
     return AssistResponse(**result.to_dict())
 
@@ -212,6 +237,7 @@ def insert(
             instruction=req.instruction,
             current_code=req.current_code,
             language=req.language,
+            provider=req.provider,
         )
     return AssistResponse(**result.to_dict())
 
@@ -232,6 +258,7 @@ def solution(
             level=level,
             statement=req.statement,
             language=req.language,
+            provider=req.provider,
         )
     return AssistResponse(**result.to_dict())
 

@@ -1,0 +1,372 @@
+/* ============================================================
+ * AlgoForge motion system (2026-09-25)
+ *
+ * The second half of the 霓虹深空 repaint. `tokens.css` answers "what
+ * colour is this"; this file answers "what happens when you touch it".
+ *
+ * ---- Why a separate file ----
+ *
+ * Motion and colour fail differently. A wrong colour is visible in a
+ * screenshot; a wrong animation is only visible in the hand, and it is
+ * the thing people describe as "feels cheap" without being able to say
+ * why. Keeping the primitives in one file means the timing curve and the
+ * distances are decided once, here, instead of being re-guessed inside
+ * twelve components.
+ *
+ * ---- The four rules this file follows ----
+ *
+ * 1. **Short.** Nothing exceeds `--af-duration-slow` (320ms). This is a
+ *    desktop tool somebody keeps open for an hour; a 400ms page
+ *    transition is charming on the first click and irritating on the
+ *    hundredth.
+ * 2. **Distance is small.** Hover lift is 2px, page entrance is 8px.
+ *    Big travel reads as "web page"; small travel reads as "instrument".
+ * 3. **Nothing moves that carries text the user is reading.** Lists
+ *    animate in once, on mount. Panels that are already on screen do not
+ *    drift while the eye is on them.
+ * 4. **Everything is opt-out.** Every animation lives behind
+ *    `@media (prefers-reduced-motion: no-preference)`, so a user who has
+ *    asked their OS for less motion gets a completely static app rather
+ *    than a slightly calmer one. The glass treatment below is *not*
+ *    motion and sits outside the guard.
+ *
+ * ---- What is in here ----
+ *
+ *   .af-glass        translucent blurred panel (static — see above)
+ *   .af-lift         card/row hover: rise 2px + accent border
+ *   .af-press        button press: squash to 0.97 and spring back
+ *   .af-sheen        primary-button light sweep on hover
+ *   .af-stagger      children rise in one after another, on mount
+ *   .af-pulse        status dot breathing halo
+ *   .af-grow         progress bar filling from the left
+ *   .af-beam         animated hairline for the topbar (the "tech" note)
+ *   .af-page-*       route transition classes, wired up in App.vue
+ * ============================================================ */
+
+/* ============================================================
+ * Glass — NOT behind the reduced-motion guard.
+ *
+ * Blur is a static surface treatment, not an animation: a user who
+ * disabled motion still expects a translucent panel to look translucent.
+ * `--af-surface` stays opaque for anything that must not see through
+ * (inputs, the code editor), so this is an explicit opt-in class rather
+ * than a change to the token.
+ *
+ * The fallback matters. `@supports` guards the blur because without it
+ * the panel would be 72% opaque over a moving canvas — legible, but
+ * muddy. Where blur is unavailable we simply go opaque.
+ * ============================================================ */
+.af-glass {
+  background-color: var(--af-surface);
+  border: 1px solid var(--af-border);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .af-glass {
+    background-color: color-mix(in srgb, var(--af-surface) 72%, transparent);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    backdrop-filter: blur(14px) saturate(140%);
+  }
+}
+
+/* A denser variant, for panels that sit directly on the canvas rather
+ * than inside another panel — the extra opacity is what keeps text
+ * legible when there is nothing behind it to break up the glow. */
+.af-glass-solid {
+  background-color: color-mix(in srgb, var(--af-surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
+/* ============================================================
+ * Route transition — used by <Transition name="af-page"> in App.vue.
+ *
+ * `mode="out-in"` in the template means the two never overlap, which is
+ * why there is no `position: absolute` here. Overlapping transitions
+ * need the leaving page taken out of flow, and taking it out of flow is
+ * how you get a one-frame layout jump on every navigation.
+ *
+ * Leave is deliberately the faster half: the outgoing page is already
+ * read, so making the user watch it fade is pure cost. Enter gets the
+ * longer beat because that is the part that has to feel like arrival.
+ * ============================================================ */
+@media (prefers-reduced-motion: no-preference) {
+  .af-page-enter-active {
+    transition:
+      opacity var(--af-duration-base) var(--af-ease),
+      transform var(--af-duration-base) var(--af-ease);
+  }
+
+  .af-page-leave-active {
+    transition:
+      opacity var(--af-duration-fast) var(--af-ease),
+      transform var(--af-duration-fast) var(--af-ease);
+  }
+
+  .af-page-enter-from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.995);
+  }
+
+  .af-page-leave-to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  /* ---- Hover lift ----
+   * For things that are themselves clickable: a stat card, a problem row.
+   * `will-change` is intentionally absent — these are dozens of elements
+   * on a page, and promoting all of them costs more than the animation
+   * saves.
+   *
+   * The border colour change is what actually sells it. A 2px rise alone
+   * is hard to notice at this size; a border that lights up in the accent
+   * reads instantly, and it survives being glanced at peripherally. */
+  .af-lift {
+    transition:
+      transform var(--af-duration-base) var(--af-ease),
+      border-color var(--af-duration-base) var(--af-ease),
+      box-shadow var(--af-duration-base) var(--af-ease);
+  }
+
+  .af-lift:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--af-accent) 55%, var(--af-border));
+    box-shadow: var(--af-glow-accent-soft);
+  }
+
+  /* ---- Press feedback ----
+   * `--af-ease-pop` overshoots on the way back, and the overshoot IS the
+   * feedback — it is what makes a click feel like a physical switch
+   * rather than a state change. Applied to the active state only, so
+   * hovering never squashes anything. */
+  .af-press {
+    transition:
+      transform var(--af-duration-fast) var(--af-ease-pop),
+      box-shadow var(--af-duration-fast) var(--af-ease),
+      background-color var(--af-duration-fast) var(--af-ease);
+  }
+
+  .af-press:active {
+    transform: scale(0.97);
+  }
+
+  /* ---- Sheen ----
+   * A single diagonal highlight that crosses a primary button on hover.
+   * This is the one unabashedly decorative piece in the file, and it is
+   * scoped to the primary action on purpose: if every button sheens,
+   * none of them is the primary action any more.
+   *
+   * The pseudo-element is `pointer-events: none` so it cannot steal the
+   * click it is decorating, and the button needs `overflow: hidden` —
+   * without it the sweep escapes the rounded corners. */
+  .af-sheen {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  .af-sheen::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(
+      115deg,
+      transparent 30%,
+      rgb(255 255 255 / 0.22) 50%,
+      transparent 70%
+    );
+    transform: translateX(-120%);
+    transition: transform var(--af-duration-slow) var(--af-ease);
+  }
+
+  .af-sheen:hover::after {
+    transform: translateX(120%);
+  }
+
+  /* ---- List stagger ----
+   * Children rise in sequence on mount. The delays are `nth-child`
+   * rather than a JS-set `--af-i`, because an inline style per row means
+   * a re-render on every data change and the delay is not worth a
+   * render.
+   *
+   * Capped at 12: past a dozen rows the last one would be waiting ~600ms
+   * to appear, which is a list that feels broken rather than choreographed.
+   * Rows beyond 12 simply render with no delay. */
+  .af-stagger > * {
+    animation: af-rise var(--af-duration-slow) var(--af-ease) backwards;
+  }
+
+  .af-stagger > *:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .af-stagger > *:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .af-stagger > *:nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .af-stagger > *:nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .af-stagger > *:nth-child(5) {
+    animation-delay: 160ms;
+  }
+  .af-stagger > *:nth-child(6) {
+    animation-delay: 200ms;
+  }
+  .af-stagger > *:nth-child(7) {
+    animation-delay: 240ms;
+  }
+  .af-stagger > *:nth-child(8) {
+    animation-delay: 280ms;
+  }
+  .af-stagger > *:nth-child(9) {
+    animation-delay: 320ms;
+  }
+  .af-stagger > *:nth-child(10) {
+    animation-delay: 360ms;
+  }
+  .af-stagger > *:nth-child(11) {
+    animation-delay: 400ms;
+  }
+  .af-stagger > *:nth-child(12) {
+    animation-delay: 440ms;
+  }
+
+  /* ---- Status pulse ----
+   * The sidecar health dot. A halo that expands and fades, which reads as
+   * "alive and being watched" where a static dot reads as "a value that
+   * happens to be green".
+   *
+   * `box-shadow` rather than `transform: scale()` on the element itself,
+   * because scaling the dot would also scale the text baseline next to
+   * it if they share a flex line. */
+  .af-pulse {
+    animation: af-pulse 2.4s var(--af-ease) infinite;
+  }
+
+  /* ---- Progress growth ----
+   * Applied to the filled half of a progress bar. `transform-origin: left`
+   * plus `scaleX` rather than animating `width`, so the browser composites
+   * it on the GPU instead of laying out on every frame — which is the
+   * difference between a smooth bar and a bar that stutters when the list
+   * above it is still rendering. */
+  .af-grow {
+    transform-origin: left center;
+    animation: af-grow 520ms var(--af-ease) backwards;
+  }
+
+  /* ---- Topbar beam ----
+   * A hairline of slowly travelling accent under the topbar. Cheap, and
+   * it is the detail that makes the chrome read as "instrument panel"
+   * rather than "toolbar". `background-size: 200%` is what gives the
+   * gradient room to move. */
+  .af-beam {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--af-accent) 30%,
+      var(--af-accent-alt) 50%,
+      var(--af-accent) 70%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: af-beam 6s linear infinite;
+  }
+}
+
+/* ============================================================
+ * Keyframes
+ *
+ * Declared outside the media query. A `@keyframes` block defines an
+ * animation; it does not run one. Keeping them at the top level means
+ * the reduced-motion block below only has to undo the *usage*, and a
+ * reader looking for "what does af-rise do" finds it in one place.
+ * ============================================================ */
+
+@keyframes af-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes af-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--af-success) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes af-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes af-beam {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ============================================================
+ * Reduced motion — the belt to the media-query braces.
+ *
+ * The `no-preference` blocks above already stop these animations from
+ * being applied. This block exists for the case they miss: an element
+ * that got `animation` from somewhere else (a Tailwind `animate-*`
+ * utility, a component's scoped style) while also carrying one of our
+ * classes. `animation: none` here wins on specificity for anything that
+ * opted into our naming.
+ *
+ * `transform: none` on the hover states is the important line. A user
+ * with vestibular sensitivity is not helped by a 2px lift, and the
+ * border glow alone still communicates "this is interactive".
+ * ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .af-stagger > *,
+  .af-pulse,
+  .af-grow,
+  .af-beam {
+    animation: none;
+  }
+
+  /* A stopped beam is not the same as a beam with no travel: without
+   * this, `animation: none` would leave the 200%-wide gradient parked at
+   * `background-position: 0 0`, which shows its left half only and makes
+   * the hairline fade out halfway across the topbar. A symmetric
+   * gradient is what a static separator wants. */
+  .af-beam {
+    background-image: linear-gradient(90deg, transparent, var(--af-accent), transparent);
+  }
+
+  .af-lift:hover,
+  .af-press:active {
+    transform: none;
+  }
+
+  .af-page-enter-from,
+  .af-page-leave-to {
+    opacity: 1;
+    transform: none;
+  }
+}

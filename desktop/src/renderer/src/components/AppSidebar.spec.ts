@@ -15,19 +15,20 @@
  *     去追一个不存在的问题。这一条是文档里专门写过的区分，也是最容易在
  *     重构里被合并掉的一条。
  *
- * 为了拿到**真实**的 `navRoutes`，七个视图组件被替换成空壳：路由表是
+ * 为了拿到**真实**的 `navRoutes`，视图组件被替换成空壳：路由表是
  * **急加载**的，直接 import 会把 Monaco、ECharts 全拖进 jsdom。替身只影响
  * 视图本身，路由表与 `navRoutes` 的推导仍是真的。
  *
- * 钉住的八条：
+ * 钉住的九条：
  *   1. 列表就是路由表里的顶层页面，顺序一致（加页面只改路由表）；
- *   2. 每一项都有非空图标路径；
- *   3. 每一项都带 `title`（收起态下标签就靠它）；
- *   4. 点击 emit `navigate`；
- *   5. 四种 phase 各自的文案与色调；
- *   6. **只有 failed 才给重试按钮**；
- *   7. tooltip 在 failed 时补上原因，其它状态只报标签；
- *   8. `drawerOpen` 落在根元素 class 上。
+ *   2. **`meta.hidden` 的页面不进导航**——登录页有 `title`，但不该出现在侧栏；
+ *   3. 每一项都有非空图标路径；
+ *   4. 每一项都带 `title`（收起态下标签就靠它）；
+ *   5. 点击 emit `navigate`；
+ *   6. 四种 phase 各自的文案与色调；
+ *   7. **只有 failed 才给重试按钮**；
+ *   8. tooltip 在 failed 时补上原因，其它状态只报标签；
+ *   9. `drawerOpen` 落在根元素 class 上。
  */
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
@@ -36,7 +37,7 @@ import AppSidebar from './AppSidebar.vue'
 import { navRoutes } from '../router'
 import type { SidecarPhase } from '../composables/useSidecarStatus'
 
-// 七个视图都是急加载的；换掉它们，路由表本身仍是真的。
+// 视图都是急加载的；换掉它们，路由表本身仍是真的。
 //
 // 必须一条一条写：`vi.mock` 要靠静态提升到 import 之前，写在循环里不会被提升，
 // 于是 mock 注册晚于 `../router` 的 import，视图照样被真加载。
@@ -49,6 +50,18 @@ vi.mock('../views/MistakesView.vue', () => ({ default: { name: 'MistakesViewStub
 vi.mock('../views/ProfileView.vue', () => ({ default: { name: 'ProfileViewStub' } }))
 vi.mock('../views/PlanView.vue', () => ({ default: { name: 'PlanViewStub' } }))
 vi.mock('../views/TeacherView.vue', () => ({ default: { name: 'TeacherViewStub' } }))
+vi.mock('../views/TeacherClassesView.vue', () => ({
+  default: { name: 'TeacherClassesViewStub' }
+}))
+vi.mock('../views/AssignmentsView.vue', () => ({
+  default: { name: 'AssignmentsViewStub' }
+}))
+// 登录页不在导航里（`meta.hidden`），但路由表仍然急加载它，所以也要挡。
+vi.mock('../views/LoginView.vue', () => ({ default: { name: 'LoginViewStub' } }))
+// 注册页同理（2026-09-25 新增，`meta.hidden`）。它必须被挡掉，否则这个
+// 文件测的就不只是路由表了：真组件会去碰 `api/session`，而那个模块在
+// import 时就往 `http` 上挂拦截器。
+vi.mock('../views/RegisterView.vue', () => ({ default: { name: 'RegisterViewStub' } }))
 
 vi.mock('vue-router', async () => {
   const { defineComponent, h } = await import('vue')
@@ -116,7 +129,27 @@ describe('AppSidebar', () => {
     expect(labels).toEqual(navRoutes.map((r) => r.title))
     // 显式写死一份，才挡得住「路由表被改小了」这种回归——上面那条只保证
     // 两边一致，两边一起错它看不出来。
-    expect(labels).toEqual(['练习', '题库', '错题本', '画像', '复习', '学情看板'])
+    expect(labels).toEqual([
+      '练习',
+      '我的作业',
+      '题库',
+      '错题本',
+      '画像',
+      '复习',
+      '学情看板',
+      '班级管理'
+    ])
+  })
+
+  it('`meta.hidden` 的页面不进导航——登录页有 title，但不该出现在侧栏', () => {
+    // 登录页是「输入地址能到、但不在导航里」的页面。它的 `title` 是给
+    // 顶栏和文档标题用的，不是给侧栏用的；没有这条守卫，加一个 `title`
+    // 就会让登录入口出现在侧栏，而这是产品决定，不是副作用。
+    const labels = mountSidebar()
+      .findAll('.nav-label')
+      .map((n) => n.text())
+    expect(labels).not.toContain('登录')
+    expect(navRoutes.map((r) => r.name)).not.toContain('login')
   })
 
   it('每个导航项都有非空图标路径——空路径等于一个看不见的按钮', () => {
