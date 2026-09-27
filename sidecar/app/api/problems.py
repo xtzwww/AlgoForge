@@ -67,7 +67,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.api.auth import require_teacher
@@ -129,6 +129,31 @@ class ProblemCreate(BaseModel):
     difficulty: Optional[Literal["easy", "medium", "hard"]] = None
     source: Optional[str] = Field(default=None, max_length=255)
     test_cases: list[TestCaseIn] = Field(default_factory=list)
+
+
+class ProblemUpdate(ProblemCreate):
+    """Request body for PUT /api/v1/problems/{id}.
+
+    The same field set as :class:`ProblemCreate` plus an optional
+    ``is_active``: 停用/启用是高频的独立操作，不该被表单拖累，所以它
+    缺省（``None``）时表示「保持不变」，其余字段与 create 同语义
+    （整体替换：传什么用什么）。
+    """
+
+    is_active: Optional[bool] = None
+
+
+class ActivePatch(BaseModel):
+    """Request body for PATCH /api/v1/problems/{id}/active."""
+
+    is_active: bool
+
+
+class ActiveOut(BaseModel):
+    """Tiny response for the active toggle."""
+
+    id: int
+    is_active: bool
 
 
 # --- Response schemas --------------------------------------------------
@@ -471,6 +496,89 @@ def create_problem(
             # read it back out of the creation response.
             test_cases=[_case_to_out(c) for c in visible],
         )
+
+
+@router.put("/{problem_id}", response_model=ProblemDetailOut)
+def update_problem(
+    problem_id: int,
+    req: ProblemUpdate,
+    _teacher: User = Depends(require_teacher),
+) -> ProblemDetailOut:
+    """Update a problem and its cases in one transaction.
+
+    用例整体替换：删除旧用例、按请求顺序重建 ordinal，与 create 同事务。
+    ``submissions`` / ``mistake_book`` 不持有指向 ``test_cases`` 的外键
+    （判题结果是 JSON 快照），所以替换不会破坏判题历史。
+
+    ``is_active`` 缺省时保持不变：停用/启用是高频的独立操作，不该被
+    表单拖累。其余字段与 create 同语义——整体替换，传什么用什么。
+    """
+    with get_session() as session:
+        problem = _get_problem_or_404(session, problem_id)
+
+        problem.title = req.title
+        problem.knowledge_tags = list(req.knowledge_tags)
+        problem.description = req.description
+        problem.input_format = req.input_format
+        problem.output_format = req.output_format
+        problem.samples = [s.model_dump() for s in req.samples]
+        problem.time_limit = req.time_limit
+        problem.memory_limit = req.memory_limit
+        problem.difficulty = req.difficulty
+        problem.source = req.source
+        if req.is_active is not None:
+            problem.is_active = req.is_active
+
+        session.execute(delete(TestCase).where(TestCase.problem_id == problem_id))
+        for ordinal, case in enumerate(req.test_cases, start=1):
+            session.add(
+                TestCase(
+                    problem_id=problem_id,
+                    ordinal=ordinal,
+                    input=case.input,
+                    expected_output=case.expected_output,
+                    is_sample=case.is_sample,
+                )
+            )
+
+        session.commit()
+        session.refresh(problem)
+        visible = _ordered_cases(session, problem_id, samples_only=True)
+        return ProblemDetailOut(
+            id=problem.id,
+            title=problem.title,
+            knowledge_tags=list(problem.knowledge_tags or []),
+            description=problem.description,
+            input_format=problem.input_format,
+            output_format=problem.output_format,
+            samples=list(problem.samples or []),
+            time_limit=problem.time_limit,
+            memory_limit=problem.memory_limit,
+            difficulty=problem.difficulty,
+            source=problem.source,
+            is_active=problem.is_active,
+            # 与 create 的响应同构：同样只回可见用例，隐藏用例不回传。
+            test_cases=[_case_to_out(c) for c in visible],
+        )
+
+
+@router.patch("/{problem_id}/active", response_model=ActiveOut)
+def set_problem_active(
+    problem_id: int,
+    req: ActivePatch,
+    _teacher: User = Depends(require_teacher),
+) -> ActiveOut:
+    """Toggle a problem's active flag without touching its cases.
+
+    停用/启用是高频独立操作。如果它要走 PUT 整体替换，调用方必须先把
+    题目和**全部用例**（含隐藏）拉回来原样回写——漏一个字段或一条用例
+    就把题改坏了。这个端点只翻 ``is_active``，不碰其它列。
+    """
+    with get_session() as session:
+        problem = _get_problem_or_404(session, problem_id)
+        problem.is_active = req.is_active
+        session.commit()
+        return ActiveOut(id=problem.id, is_active=problem.is_active)
 
 
 @router.post("/{problem_id}/duplicate", status_code=201)

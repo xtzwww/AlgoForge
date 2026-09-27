@@ -95,6 +95,14 @@ export interface ProblemCreateRequest {
   >
 }
 
+export interface ProblemUpdateRequest extends ProblemCreateRequest {
+  /**
+   * 缺省（undefined）= 保持不变——停用/启用是高频独立操作，不该被
+   * 表单每次带上。其余字段与 create 同语义：整体替换，传什么用什么。
+   */
+  is_active?: boolean
+}
+
 export interface ListProblemsParams {
   page?: number
   /** Capped server-side at 100. */
@@ -177,5 +185,48 @@ export async function createProblem(req: ProblemCreateRequest): Promise<ProblemD
  */
 export async function duplicateProblem(problemId: number): Promise<ProblemDetail> {
   const res = await http.post<ProblemDetail>(`/api/v1/problems/${problemId}/duplicate`)
+  return res.data
+}
+
+/**
+ * Update a problem — statement, limits, tags, and cases — in one
+ * transaction. Cases are **replaced wholesale**: the request order becomes
+ * the new ordinal order, so a caller sends the full intended case set
+ * rather than a diff.
+ *
+ * `is_active` omitted means "leave it unchanged"; pass `false` to retire
+ * the problem (it disappears from the default listing but stays
+ * resolvable by id for old submissions).
+ */
+export async function updateProblem(
+  problemId: number,
+  req: ProblemUpdateRequest
+): Promise<ProblemDetail> {
+  const res = await http.put<ProblemDetail>(`/api/v1/problems/${problemId}`, req)
+  return res.data
+}
+
+/** Tiny response for the active toggle. */
+export interface ActiveOut {
+  id: number
+  is_active: boolean
+}
+
+/**
+ * Toggle a problem's active flag without touching its cases.
+ *
+ * Deliberately separate from `updateProblem`: retiring a problem through
+ * the full PUT would require the caller to round-trip every field *and*
+ * every hidden case back unchanged — one omission and the problem is
+ * silently altered. This endpoint flips one column.
+ */
+export async function setProblemActive(
+  problemId: number,
+  isActive: boolean
+): Promise<ActiveOut> {
+  const res = await http.patch<ActiveOut>(
+    `/api/v1/problems/${problemId}/active`,
+    { is_active: isActive }
+  )
   return res.data
 }

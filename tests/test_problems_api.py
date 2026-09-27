@@ -1037,6 +1037,165 @@ def test_duplicate_of_a_missing_problem_is_404(
     assert resp.status_code == 404
 
 
+# --- 更新题目（题目管理页）-----------------------------------------------
+
+
+def test_update_changes_fields_and_replaces_cases(
+    client: TestClient, db_session: Session, admin: dict[str, str]
+) -> None:
+    """编辑 = 字段整体替换 + 用例整体替换，两条在同一事务里。"""
+    _seed_problem(
+        db_session,
+        problem_id=1,
+        title="旧标题",
+        cases=[("1 2", "3", True), (HIDDEN_INPUT, HIDDEN_OUTPUT, False)],
+    )
+    db_session.commit()
+
+    resp = client.put(
+        "/api/v1/problems/1",
+        json={
+            "title": "新标题",
+            "knowledge_tags": ["贪心"],
+            "description": "新的题面",
+            "test_cases": [
+                {"input": "4 5", "expected_output": "9", "is_sample": True}
+            ],
+        },
+        headers=admin,
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["title"] == "新标题"
+    assert data["knowledge_tags"] == ["贪心"]
+    assert data["description"] == "新的题面"
+
+    # 旧用例被整体替换：只有新的一条，ordinal 重新从 1 开始。
+    cases = db_session.query(TestCase).filter(TestCase.problem_id == 1).all()
+    assert len(cases) == 1
+    assert cases[0].input == "4 5"
+    assert cases[0].expected_output == "9"
+    assert cases[0].is_sample is True
+    assert cases[0].ordinal == 1
+
+
+def test_update_response_does_not_leak_hidden_cases(
+    client: TestClient, db_session: Session, admin: dict[str, str]
+) -> None:
+    """更新接口的**响应**仍然只给可见用例，与 create/duplicate 同构。"""
+    _seed_problem(
+        db_session,
+        problem_id=1,
+        title="原题",
+        cases=[("1 2", "3", True), (HIDDEN_INPUT, HIDDEN_OUTPUT, False)],
+    )
+    db_session.commit()
+
+    resp = client.put(
+        "/api/v1/problems/1",
+        json={"title": "改后", "test_cases": []},
+        headers=admin,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert HIDDEN_OUTPUT not in resp.text
+    assert HIDDEN_INPUT not in resp.text
+
+
+def test_update_preserves_is_active_when_omitted(
+    client: TestClient, db_session: Session, admin: dict[str, str]
+) -> None:
+    """``is_active`` 缺省 = 保持不变：停用不该被表单每次带上。"""
+    _seed_problem(db_session, problem_id=1, title="停用中的题", is_active=False)
+    db_session.commit()
+
+    resp = client.put(
+        "/api/v1/problems/1", json={"title": "改了标题"}, headers=admin
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_active"] is False
+
+
+def test_update_can_toggle_is_active(
+    client: TestClient, db_session: Session, admin: dict[str, str]
+) -> None:
+    """显式传 ``is_active`` 时生效，停用后默认列表不再包含它。"""
+    _seed_problem(db_session, problem_id=1, title="待停用")
+    db_session.commit()
+
+    resp = client.put(
+        "/api/v1/problems/1",
+        json={"title": "待停用", "is_active": False},
+        headers=admin,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["is_active"] is False
+    listed = client.get("/api/v1/problems").json()
+    assert [p["title"] for p in listed["items"]] == []
+    # 停用不删除：显式 include_inactive 仍能看到。
+    all_listed = client.get(
+        "/api/v1/problems", params={"include_inactive": True}
+    ).json()
+    assert [p["title"] for p in all_listed["items"]] == ["待停用"]
+
+
+def test_update_of_a_missing_problem_is_404(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    resp = client.put(
+        "/api/v1/problems/999", json={"title": "x"}, headers=admin
+    )
+    assert resp.status_code == 404
+
+
+def test_active_toggle_only_changes_is_active(
+    client: TestClient, db_session: Session, admin: dict[str, str]
+) -> None:
+    """PATCH 只翻 ``is_active``，不碰题目字段和用例。
+
+    停用/启用如果走 PUT 整体替换，调用方必须把全部隐藏用例拉回来原样
+    回写——这条测试钉住「不碰其它列」的语义。
+    """
+    _seed_problem(
+        db_session,
+        problem_id=1,
+        title="原题",
+        cases=[("1 2", "3", True), (HIDDEN_INPUT, HIDDEN_OUTPUT, False)],
+    )
+    db_session.commit()
+
+    resp = client.patch(
+        "/api/v1/problems/1/active", json={"is_active": False}, headers=admin
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"id": 1, "is_active": False}
+
+    # 用例原样保留（含隐藏），标题字段也没被改动。
+    detail = client.get("/api/v1/problems/1").json()
+    assert detail["title"] == "原题"
+    cases = client.get("/api/v1/problems/1/test-cases").json()
+    assert cases["total"] == 2
+    assert HIDDEN_OUTPUT in json.dumps(cases)
+
+    # 再翻回来，默认列表重新可见。
+    client.patch("/api/v1/problems/1/active", json={"is_active": True}, headers=admin)
+    listed = client.get("/api/v1/problems").json()
+    assert [p["title"] for p in listed["items"]] == ["原题"]
+
+
+def test_active_toggle_404_on_missing_problem(
+    client: TestClient, admin: dict[str, str]
+) -> None:
+    resp = client.patch(
+        "/api/v1/problems/999/active", json={"is_active": True}, headers=admin
+    )
+    assert resp.status_code == 404
+
+
 # --- 写路由的守卫（2026-09-22 新增）--------------------------------------
 
 
@@ -1058,6 +1217,8 @@ def test_every_write_route_is_guarded(
     write_routes: list[tuple[str, str, dict[str, object]]] = [
         ("POST", "/api/v1/problems", {"json": {"title": "x"}}),
         ("POST", "/api/v1/problems/1/duplicate", {}),
+        ("PUT", "/api/v1/problems/1", {"json": {"title": "x"}}),
+        ("PATCH", "/api/v1/problems/1/active", {"json": {"is_active": True}}),
     ]
 
     for method, path, kwargs in write_routes:
@@ -1078,6 +1239,8 @@ def test_write_routes_reject_anonymous_callers(client: TestClient) -> None:
     write_routes: list[tuple[str, str, dict[str, object]]] = [
         ("POST", "/api/v1/problems", {"json": {"title": "x"}}),
         ("POST", "/api/v1/problems/1/duplicate", {}),
+        ("PUT", "/api/v1/problems/1", {"json": {"title": "x"}}),
+        ("PATCH", "/api/v1/problems/1/active", {"json": {"is_active": True}}),
     ]
 
     for method, path, kwargs in write_routes:

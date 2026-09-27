@@ -43,6 +43,7 @@ import TeacherAnalysisView from '../views/teacher/TeacherAnalysisView.vue'
 import TeacherWorkView from '../views/teacher/TeacherWorkView.vue'
 import TeacherReviewView from '../views/teacher/TeacherReviewView.vue'
 import TeacherRosterView from '../views/teacher/TeacherRosterView.vue'
+import TeacherProblemsView from '../views/teacher/TeacherProblemsView.vue'
 import AssignmentsView from '../views/AssignmentsView.vue'
 import LoginView from '../views/LoginView.vue'
 import RegisterView from '../views/RegisterView.vue'
@@ -226,6 +227,14 @@ export const routes: RouteRecordRaw[] = [
     name: 'teacher-roster',
     component: TeacherRosterView,
     meta: { title: '名册与班级', mode: 'teacher', group: 'teacher-people' }
+  },
+  {
+    // 题库管理（2026-09-27）。与作业同一分组：备课建题 → 布置作业是
+    // 一条链，老师不会在"建题"和"布置"之间切换分组。
+    path: '/teacher/problems',
+    name: 'teacher-problems',
+    component: TeacherProblemsView,
+    meta: { title: '题库', mode: 'teacher', group: 'teacher-teaching' }
   },
   {
     // `hidden` keeps this out of the sidebar while leaving the crumb
