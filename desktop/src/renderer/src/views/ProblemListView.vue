@@ -37,6 +37,8 @@
  * would mean restyling `.practice-btn` here, which is PU-9's territory.
  */
 import { computed, onMounted, ref } from 'vue'
+import { NButton, NInput, NSelect } from 'naive-ui'
+import type { SelectOption } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { listProblems, type ProblemSummary } from '../api/problems'
 import { fetchVerdictsByProblem, type ProblemVerdict } from '../api/submissions'
@@ -102,6 +104,16 @@ const STATUSES: { value: StatusFilter; label: string }[] = [
   { value: 'unsolved', label: '未通过' },
   { value: 'solved', label: '已通过' }
 ]
+
+/** 下拉选项：难度与状态的 facets（NSelect 的 SelectOption 形状）。 */
+const difficultyOptions: SelectOption[] = DIFFICULTIES.map((d) => ({
+  label: d.label,
+  value: d.value
+}))
+const statusOptions: SelectOption[] = STATUSES.map((s) => ({
+  label: s.label,
+  value: s.value
+}))
 
 /** Tags across the whole catalogue, sorted. */
 const allTags = computed<string[]>(() => {
@@ -252,25 +264,24 @@ onMounted(load)
         <span class="solved-summary">
           已通过 <strong>{{ solvedCount }}</strong> / {{ problems.length }}
         </span>
-        <button class="refresh-btn" :disabled="loading" @click="load">
-          {{ loading ? '加载中...' : '刷新' }}
-        </button>
+        <NButton size="small" :loading="loading" @click="load">刷新</NButton>
       </div>
     </header>
 
     <!-- Homework (阶段 4). Open endpoint: no login needed to see it. -->
     <nav v-if="assignments.length > 0" class="assignment-bar">
       <span class="assignment-bar-label">作业</span>
-      <button
+      <NButton
         v-for="a in assignments"
         :key="a.id"
-        class="assignment-chip"
-        :class="{ active: activeAssignmentId === a.id, overdue: a.overdue }"
+        size="small"
+        round
+        :type="activeAssignmentId === a.id ? 'primary' : a.overdue ? 'error' : 'default'"
         @click="toggleAssignment(a)"
       >
         {{ a.title }}
         <span v-if="a.due_at" class="assignment-due">{{ dueText(a.due_at) }}</span>
-      </button>
+      </NButton>
     </nav>
 
     <!-- Filter bar -->
@@ -278,34 +289,36 @@ onMounted(load)
       <div class="filter-row">
         <label class="filter-group">
           <span class="filter-label">难度</span>
-          <select v-model="difficultyFilter" class="filter-select">
-            <option v-for="d in DIFFICULTIES" :key="d.value" :value="d.value">
-              {{ d.label }}
-            </option>
-          </select>
+          <NSelect
+            v-model:value="difficultyFilter"
+            class="filter-select"
+            :options="difficultyOptions"
+            size="small"
+          />
         </label>
 
         <label class="filter-group">
           <span class="filter-label">状态</span>
-          <select v-model="statusFilter" class="filter-select">
-            <option v-for="s in STATUSES" :key="s.value" :value="s.value">
-              {{ s.label }}
-            </option>
-          </select>
+          <NSelect
+            v-model:value="statusFilter"
+            class="filter-select"
+            :options="statusOptions"
+            size="small"
+          />
         </label>
 
         <label class="filter-group filter-group-search">
           <span class="filter-label">搜索</span>
-          <input
-            v-model="searchQuery"
-            type="search"
+          <NInput
+            v-model:value="searchQuery"
+            type="text"
             class="filter-input"
             placeholder="按题目标题搜索"
             aria-label="按题目标题搜索"
           />
         </label>
 
-        <button
+        <NButton
           v-if="
             difficultyFilter !== 'all' ||
             statusFilter !== 'all' ||
@@ -313,30 +326,33 @@ onMounted(load)
             activeAssignmentId !== null ||
             searchQuery.trim() !== ''
           "
-          class="reset-btn"
+          size="tiny"
+          quaternary
           @click="resetFilters"
         >
           清除筛选
-        </button>
+        </NButton>
       </div>
 
       <nav v-if="allTags.length" class="tag-bar">
-        <button
-          class="tag-chip"
-          :class="{ active: selectedTag === null }"
+        <NButton
+          size="small"
+          round
+          :type="selectedTag === null ? 'primary' : 'default'"
           @click="selectedTag = null"
         >
           全部知识点
-        </button>
-        <button
+        </NButton>
+        <NButton
           v-for="tag in allTags"
           :key="tag"
-          class="tag-chip"
-          :class="{ active: selectedTag === tag }"
+          size="small"
+          round
+          :type="selectedTag === tag ? 'primary' : 'default'"
           @click="selectedTag = tag"
         >
           {{ tag }}
-        </button>
+        </NButton>
       </nav>
     </div>
 
@@ -392,7 +408,7 @@ onMounted(load)
         </div>
 
         <div class="card-actions">
-          <button class="practice-btn af-sheen" @click="practice(p.id)">开始练习</button>
+          <NButton size="small" type="primary" @click="practice(p.id)">开始练习</NButton>
         </div>
       </article>
     </div>
@@ -420,55 +436,9 @@ onMounted(load)
   color: var(--af-text-muted);
 }
 
-.assignment-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 3px 10px;
-  font-size: 12px;
-  font-family: inherit;
-  color: var(--af-text-secondary);
-  background: var(--af-canvas);
-  border: 1px solid var(--af-border-strong);
-  border-radius: 999px;
-  cursor: pointer;
-  transition:
-    border-color var(--af-duration-fast) var(--af-ease),
-    background var(--af-duration-fast) var(--af-ease),
-    color var(--af-duration-fast) var(--af-ease),
-    box-shadow var(--af-duration-fast) var(--af-ease);
-}
-
-.assignment-chip:hover {
-  border-color: var(--af-accent);
-}
-
-/* The one place on this page with text sitting ON the accent fill, and
- * therefore the one place that needs `--af-text-inverse`. See the note
- * in tokens.css: the repaint moved the accent from a dark blue to a
- * light one, so white text stopped being legible here and the correct
- * colour inverted. */
-.assignment-chip.active {
-  color: var(--af-text-inverse);
-  background: var(--af-accent);
-  border-color: var(--af-accent);
-  box-shadow: var(--af-glow-accent-soft);
-}
-
-.assignment-chip.overdue:not(.active) {
-  color: var(--af-danger);
-  border-color: var(--af-danger);
-}
-
 .assignment-due {
   font-size: 11px;
   color: var(--af-text-muted);
-}
-
-.assignment-chip.active .assignment-due {
-  /* Deliberately NOT full inverse: the due date is secondary and should
-   * recede into the fill instead of competing with the label. */
-  color: color-mix(in srgb, var(--af-text-inverse) 72%, transparent);
 }
 
 .problem-list-view {
@@ -523,41 +493,6 @@ onMounted(load)
   text-shadow: 0 0 14px color-mix(in srgb, var(--af-success) 45%, transparent);
 }
 
-.refresh-btn {
-  padding: 6px 16px;
-  font-size: 13px;
-  /* Buttons do not inherit font-family by default, and the original rule
-   * never set it — so this control has been rendering in the browser's
-   * default UI font, not the app's, since it was written. */
-  font-family: inherit;
-  color: var(--af-text-inverse);
-  background: var(--af-accent-gradient);
-  border: none;
-  border-radius: var(--af-radius-sm);
-  cursor: pointer;
-  transition:
-    filter var(--af-duration-fast) var(--af-ease),
-    box-shadow var(--af-duration-fast) var(--af-ease),
-    transform var(--af-duration-fast) var(--af-ease-pop);
-}
-
-.refresh-btn:hover:not(:disabled) {
-  filter: brightness(1.12);
-  box-shadow: var(--af-glow-accent);
-}
-
-.refresh-btn:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-/* Disabled is a surface, not a faded accent: a dimmed gradient still
- * reads as the primary action and invites a click that does nothing. */
-.refresh-btn:disabled {
-  color: var(--af-text-muted);
-  background: var(--af-elevated);
-  cursor: not-allowed;
-}
-
 .filter-bar {
   margin-bottom: 16px;
   padding-bottom: 12px;
@@ -609,100 +544,16 @@ onMounted(load)
   min-width: 180px;
 }
 
+/* 布局：搜索框吃满剩余宽度。控件外观由 NInput/NSelect 负责。 */
 .filter-input {
   flex: 1;
-  padding: 6px 10px;
-  font-size: 13px;
-  font-family: inherit;
-  color: var(--af-text-primary);
-  background: var(--af-surface);
-  border: 1px solid var(--af-border-strong);
-  border-radius: var(--af-radius-sm);
-  transition:
-    border-color var(--af-duration-fast) var(--af-ease),
-    box-shadow var(--af-duration-fast) var(--af-ease);
-}
-
-.filter-select:hover,
-.filter-input:hover {
-  border-color: var(--af-accent);
-}
-
-.filter-input::placeholder {
-  color: var(--af-text-muted);
-}
-
-/* `outline: none` is deliberate, not an oversight: the glow IS the focus
- * indicator here, matching `:focus-visible` in tokens.css. Note that a
- * text input matches `:focus-visible` even on a mouse click, so keeping
- * the outline would draw a ring on every click rather than only for
- * keyboard users — the glow is what tells the two apart. */
-.filter-input:focus,
-.filter-select:focus {
-  outline: none;
-  border-color: var(--af-accent);
-  box-shadow: var(--af-glow-focus);
-}
-
-.filter-input::-webkit-search-cancel-button {
-  cursor: pointer;
-}
-
-.reset-btn {
-  padding: 5px 12px;
-  font-size: 12px;
-  font-family: inherit;
-  color: var(--af-text-secondary);
-  background: transparent;
-  border: 1px solid var(--af-border-strong);
-  border-radius: var(--af-radius-sm);
-  cursor: pointer;
-  transition:
-    background var(--af-duration-fast) var(--af-ease),
-    color var(--af-duration-fast) var(--af-ease);
-}
-
-.reset-btn:hover {
-  color: var(--af-text-primary);
-  background: var(--af-elevated);
+  min-width: 0;
 }
 
 .tag-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.tag-chip {
-  padding: 4px 12px;
-  font-size: 13px;
-  font-family: inherit;
-  color: var(--af-text-secondary);
-  background: var(--af-elevated);
-  /* Transparent rather than `border: none`, so the active state can add
-   * an accent border without the chip changing size by 2px when it
-   * becomes active. */
-  border: 1px solid transparent;
-  border-radius: 999px;
-  cursor: pointer;
-  transition:
-    background var(--af-duration-fast) var(--af-ease),
-    color var(--af-duration-fast) var(--af-ease),
-    border-color var(--af-duration-fast) var(--af-ease),
-    box-shadow var(--af-duration-fast) var(--af-ease);
-}
-
-.tag-chip:hover {
-  color: var(--af-text-primary);
-  background: var(--af-overlay);
-  border-color: var(--af-border-strong);
-}
-
-.tag-chip.active {
-  color: var(--af-text-inverse);
-  background: var(--af-accent);
-  border-color: var(--af-accent);
-  box-shadow: var(--af-glow-accent-soft);
 }
 
 /* Message blocks.
@@ -878,38 +729,8 @@ onMounted(load)
   justify-content: flex-end;
 }
 
-/* The row's primary action. `af-sheen` in the template adds the diagonal
- * highlight on hover — the one unabashedly decorative flourish in the
- * repaint, kept to the primary action on each row so that it still reads
- * as *the* action rather than as a texture. */
-.practice-btn {
-  padding: 6px 20px;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  color: var(--af-text-inverse);
-  background: var(--af-accent-gradient);
-  border: none;
-  border-radius: var(--af-radius-sm);
-  cursor: pointer;
-  transition:
-    filter var(--af-duration-fast) var(--af-ease),
-    box-shadow var(--af-duration-fast) var(--af-ease),
-    transform var(--af-duration-fast) var(--af-ease-pop);
-}
-
-.practice-btn:hover {
-  filter: brightness(1.12);
-  box-shadow: var(--af-glow-accent);
-}
-
-.practice-btn:active {
-  transform: scale(0.97);
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .problem-card:hover,
-  .practice-btn:active {
+  .problem-card:hover {
     transform: none;
   }
 }

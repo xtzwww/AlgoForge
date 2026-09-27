@@ -70,6 +70,9 @@ vi.mock('../views/teacher/TeacherReviewView.vue', () => ({
 vi.mock('../views/teacher/TeacherRosterView.vue', () => ({
   default: { name: 'TeacherRosterViewStub' }
 }))
+vi.mock('../views/teacher/TeacherProblemsView.vue', () => ({
+  default: { name: 'TeacherProblemsViewStub' }
+}))
 vi.mock('../views/AssignmentsView.vue', () => ({
   default: { name: 'AssignmentsViewStub' }
 }))
@@ -153,12 +156,13 @@ describe('AppSidebar', () => {
     const teacherNames = visibleRoutes('teacher')
       .map((r) => r.name)
       .filter((n): n is string => typeof n === 'string')
-    // 拆分后的五个面板都在。
+    // 拆分后的五个面板 + 题库管理都在。
     expect(teacherNames).toContain('teacher')
     expect(teacherNames).toContain('teacher-analysis')
     expect(teacherNames).toContain('teacher-work')
     expect(teacherNames).toContain('teacher-review')
     expect(teacherNames).toContain('teacher-roster')
+    expect(teacherNames).toContain('teacher-problems')
     // 旧的合并页面名不该留下任何一条路由。
     expect(teacherNames).not.toContain('teacher-classes')
     expect(teacherNames).not.toContain('practice')
@@ -179,7 +183,7 @@ describe('AppSidebar', () => {
     expect(sections.map((s) => s.items.map((i) => i.name))).toEqual([
       ['teacher'],
       ['teacher-analysis'],
-      ['teacher-work', 'teacher-review'],
+      ['teacher-work', 'teacher-review', 'teacher-problems'],
       ['teacher-roster']
     ])
   })

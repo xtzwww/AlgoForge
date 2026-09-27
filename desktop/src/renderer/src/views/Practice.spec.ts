@@ -241,11 +241,8 @@ describe('Practice', () => {
     // 把缓冲区改成「脏」状态。
     ;(w.vm as unknown as { code: string }).code = '// dirty edit'
 
-    await (w.vm as unknown as { onLanguageChange: (e: unknown) => Promise<void> }).onLanguageChange(
-      {
-        target: { value: 'python' }
-      }
-    )
+    await (w.vm as unknown as { onLanguageChange: (v: string | number | null) => Promise<void> })
+      .onLanguageChange('python')
 
     // 弹的是 useDialog，不是 window.confirm（后者是宪法红线）。
     expect(dialogCalls).toHaveLength(1)
@@ -258,11 +255,8 @@ describe('Practice', () => {
     const w = await mountPractice({ problemId: null })
     ;(w.vm as unknown as { code: string }).code = '// dirty edit'
 
-    await (w.vm as unknown as { onLanguageChange: (e: unknown) => Promise<void> }).onLanguageChange(
-      {
-        target: { value: 'python' }
-      }
-    )
+    await (w.vm as unknown as { onLanguageChange: (v: string | number | null) => Promise<void> })
+      .onLanguageChange('python')
 
     expect((w.vm as unknown as { languageId: string }).languageId).toBe('python')
     expect((w.vm as unknown as { code: string }).code).toBe(pyOpt.default_template)
@@ -271,11 +265,8 @@ describe('Practice', () => {
   it('代码没动过时换语言不弹确认 —— 没东西可丢就别拦一道', async () => {
     const w = await mountPractice({ problemId: null })
 
-    await (w.vm as unknown as { onLanguageChange: (e: unknown) => Promise<void> }).onLanguageChange(
-      {
-        target: { value: 'python' }
-      }
-    )
+    await (w.vm as unknown as { onLanguageChange: (v: string | number | null) => Promise<void> })
+      .onLanguageChange('python')
 
     expect(dialogCalls).toHaveLength(0)
     expect((w.vm as unknown as { languageId: string }).languageId).toBe('python')

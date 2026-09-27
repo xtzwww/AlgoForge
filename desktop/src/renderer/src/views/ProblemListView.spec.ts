@@ -15,8 +15,9 @@
  * 和 router。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { mount, flushPromises, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
+import { nextTick, type ComponentPublicInstance } from 'vue'
+import { NInput, NSelect } from 'naive-ui'
 import ProblemListView from './ProblemListView.vue'
 import type { ProblemSummary } from '../api/problems'
 import type { ProblemVerdict } from '../api/submissions'
@@ -121,6 +122,24 @@ function titles(wrapper: VueWrapper): string[] {
   return wrapper.findAll('.problem-title').map((n) => n.text())
 }
 
+/** 触发 naive 组件的 update:value，等价于用户选了一项 / 输入了一段。 */
+type Emittable = ComponentPublicInstance & { $emit: (event: string, ...args: unknown[]) => void }
+
+function emitValue(
+  wrapper: VueWrapper,
+  comp: typeof NSelect | typeof NInput,
+  index: number,
+  value: string
+): void {
+  const vm = wrapper.findAllComponents(comp)[index].vm as unknown as Emittable
+  vm.$emit('update:value', value)
+}
+
+/** 按可见文本找一个按钮（NButton 渲染的 button 元素）。 */
+function buttonByText(wrapper: VueWrapper, text: string): DOMWrapper<HTMLButtonElement> {
+  return wrapper.findAll('button').find((b) => b.text() === text)!
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
@@ -146,21 +165,21 @@ describe('ProblemListView', () => {
 
   it('难度过滤只保留匹配项', async () => {
     const w = await mountList()
-    await w.findAll('.filter-select')[0].setValue('easy')
+    emitValue(w, NSelect, 0, 'easy')
     await nextTick()
     expect(titles(w)).toEqual(['两数之和'])
   })
 
   it('状态过滤：已通过只留 verdicts 里 passed 的', async () => {
     const w = await mountList()
-    await w.findAll('.filter-select')[1].setValue('solved')
+    emitValue(w, NSelect, 1, 'solved')
     await nextTick()
     expect(titles(w)).toEqual(['两数之和'])
   })
 
   it('状态过滤：未通过含「没提交记录」的题（passed 为假值也算）', async () => {
     const w = await mountList()
-    await w.findAll('.filter-select')[1].setValue('unsolved')
+    emitValue(w, NSelect, 1, 'unsolved')
     await nextTick()
     // id2（未通过）+ id3（无记录，passed 为 undefined）→ 两条。
     expect(titles(w)).toEqual(['最长回文子串', '快速排序'])
@@ -168,22 +187,21 @@ describe('ProblemListView', () => {
 
   it('知识点 chip 过滤只留带该标签的题', async () => {
     const w = await mountList()
-    const arrayChip = w.findAll('.tag-chip').find((c) => c.text() === '数组')!
-    await arrayChip.trigger('click')
+    await buttonByText(w, '数组').trigger('click')
     await nextTick()
     expect(titles(w)).toEqual(['两数之和', '快速排序'])
   })
 
   it('标题搜索按子串过滤（大小写不敏感由后端语义保证，这里只验客户端）', async () => {
     const w = await mountList()
-    await w.find('.filter-input').setValue('排序')
+    emitValue(w, NInput, 0, '排序')
     await nextTick()
     expect(titles(w)).toEqual(['快速排序'])
   })
 
   it('点「开始练习」把题目 id 推进路由参数', async () => {
     const w = await mountList()
-    await w.findAll('.practice-btn')[0].trigger('click')
+    await buttonByText(w, '开始练习').trigger('click')
     expect(push).toHaveBeenCalledWith({ name: 'problem', params: { id: 1 } })
   })
 
@@ -210,7 +228,7 @@ describe('ProblemListView', () => {
 
   it('点作业 chip 把题目收窄到该作业的 problem_ids，再点一次恢复', async () => {
     const w = await mountList()
-    const chip = w.find('.assignment-chip')
+    const chip = buttonByText(w, '第一次作业')
     expect(chip.exists()).toBe(true)
 
     await chip.trigger('click')
@@ -225,11 +243,11 @@ describe('ProblemListView', () => {
 
   it('清除筛选把所有过滤器复位', async () => {
     const w = await mountList()
-    await w.findAll('.filter-select')[0].setValue('easy')
+    emitValue(w, NSelect, 0, 'easy')
     await nextTick()
     expect(titles(w)).toEqual(['两数之和'])
 
-    const reset = w.find('.reset-btn')
+    const reset = buttonByText(w, '清除筛选')
     expect(reset.exists()).toBe(true)
     await reset.trigger('click')
     await nextTick()

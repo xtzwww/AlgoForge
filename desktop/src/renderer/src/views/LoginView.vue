@@ -41,6 +41,7 @@
 
 import { onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { NButton, NInput } from 'naive-ui'
 import { login, logout, sessionReady, sessionUser } from '../api/session'
 import {
   defaultIntent,
@@ -192,32 +193,26 @@ onMounted(() => {
           role="group"
           aria-label="以什么身份登录"
         >
-          <button
-            class="flex-1 rounded-[var(--af-radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors"
-            :class="
-              intent === 'student'
-                ? 'bg-af-accent text-af-inverse'
-                : 'text-af-secondary hover:text-af-primary'
-            "
-            type="button"
+          <NButton
+            class="flex-1"
+            size="small"
+            quaternary
+            :type="intent === 'student' ? 'primary' : 'default'"
             :aria-pressed="intent === 'student' ? 'true' : 'false'"
             @click="setIntent('student')"
           >
             学生
-          </button>
-          <button
-            class="flex-1 rounded-[var(--af-radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors"
-            :class="
-              intent === 'teacher'
-                ? 'bg-af-accent text-af-inverse'
-                : 'text-af-secondary hover:text-af-primary'
-            "
-            type="button"
+          </NButton>
+          <NButton
+            class="flex-1"
+            size="small"
+            quaternary
+            :type="intent === 'teacher' ? 'primary' : 'default'"
             :aria-pressed="intent === 'teacher' ? 'true' : 'false'"
             @click="setIntent('teacher')"
           >
             老师
-          </button>
+          </NButton>
         </div>
 
         <h1 class="text-lg font-semibold text-af-primary">登录</h1>
@@ -232,25 +227,25 @@ onMounted(() => {
         <form class="mt-5 flex flex-col gap-4" @submit.prevent="submit">
           <label class="flex flex-col gap-1.5">
             <span class="text-xs text-af-secondary">用户名</span>
-            <input
-              v-model="username"
-              class="w-full rounded-[var(--af-radius-sm)] border border-af-border bg-af-elevated px-3 py-2 text-sm text-af-primary transition-colors placeholder:text-af-muted focus:border-af-accent focus:outline-none disabled:opacity-60"
+            <NInput
+              v-model:value="username"
               type="text"
               name="username"
               autocomplete="username"
               :disabled="busy"
+              placeholder=""
             />
           </label>
 
           <label class="flex flex-col gap-1.5">
             <span class="text-xs text-af-secondary">密码</span>
-            <input
-              v-model="password"
-              class="w-full rounded-[var(--af-radius-sm)] border border-af-border bg-af-elevated px-3 py-2 text-sm text-af-primary transition-colors placeholder:text-af-muted focus:border-af-accent focus:outline-none disabled:opacity-60"
+            <NInput
+              v-model:value="password"
               type="password"
               name="password"
               autocomplete="current-password"
               :disabled="busy"
+              placeholder=""
             />
           </label>
 
@@ -262,13 +257,14 @@ onMounted(() => {
             {{ errorMsg }}
           </p>
 
-          <button
-            class="rounded-[var(--af-radius-sm)] bg-af-accent px-4 py-2 text-sm font-medium af-press text-af-inverse transition-colors hover:bg-af-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
-            type="submit"
-            :disabled="busy"
+          <NButton
+            attr-type="submit"
+            type="primary"
+            block
+            :loading="busy"
           >
             {{ busy ? '登录中…' : '登录' }}
-          </button>
+          </NButton>
         </form>
       </div>
 

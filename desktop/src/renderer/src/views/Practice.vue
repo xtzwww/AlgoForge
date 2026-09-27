@@ -58,7 +58,8 @@
  * for the topbar's breadcrumb instead, via `usePageCrumb`.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useDialog } from 'naive-ui'
+import { NButton, NSelect, useDialog } from 'naive-ui'
+import type { SelectOption } from 'naive-ui'
 import AssistPanel from '../components/AssistPanel.vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import DebugPanel from '../components/DebugPanel.vue'
@@ -418,6 +419,15 @@ const catalogueError = ref<string>('')
 
 const selectedLanguage = computed<LanguageOption | null>(
   () => languages.value.find((o) => o.id === languageId.value) ?? null
+)
+
+/** 语言下拉的选项；不可用的语言保留但禁用，与原生 <select> 语义一致。 */
+const languageOptions = computed<SelectOption[]>(() =>
+  languages.value.map((o) => ({
+    label: o.available ? o.display_name : `${o.display_name}（不可用）`,
+    value: o.id,
+    disabled: !o.available
+  }))
 )
 
 /**
@@ -945,14 +955,15 @@ function applyTemplate(option: LanguageOption): void {
 /**
  * Handle a picker change.
  *
- * Written as a `change` handler rather than `v-model` because the switch
- * can be declined: when the buffer holds user edits we ask first, and if
- * the answer is no the control has to snap back to the language the app
- * is actually still using.
+ * Written as an `update:value` handler rather than `v-model` because the
+ * switch can be declined: when the buffer holds user edits we ask first,
+ * and if the answer is no the control has to snap back to the language
+ * the app is actually still using. The NSelect is bound with `:value`
+ * (not `v-model`), so declining leaves `languageId` untouched and the
+ * picker shows the old selection again.
  */
-async function onLanguageChange(event: Event): Promise<void> {
-  const select = event.target as HTMLSelectElement
-  const option = languages.value.find((o) => o.id === select.value)
+async function onLanguageChange(value: string | number | null): Promise<void> {
+  const option = languages.value.find((o) => o.id === value)
   if (!option || option.id === languageId.value) return
 
   if (code.value !== pristineCode.value) {
@@ -969,12 +980,7 @@ async function onLanguageChange(event: Event): Promise<void> {
         onClose: () => resolve(false)
       })
     })
-    if (!confirmed) {
-      // `languageId` is unchanged, so Vue has no reason to re-render the
-      // <select>; snap the DOM back by hand.
-      select.value = languageId.value
-      return
-    }
+    if (!confirmed) return
   }
 
   languageId.value = option.id
@@ -1257,10 +1263,10 @@ function submit(): Promise<void> {
           已完成 {{ navInfo?.solvedCount ?? 0 }}/{{ navInfo?.total ?? 0 }}
         </span>
 
-        <button
+        <NButton
           v-if="isProblemMode && (props.assignmentId === null || navInfo !== null)"
           class="btn btn-secondary btn-sm"
-          type="button"
+          size="small"
           :disabled="nextProblemId === null || isRunning"
           :title="
             nextProblemId === null
@@ -1272,50 +1278,49 @@ function submit(): Promise<void> {
           @click="nextProblemId !== null && emit('go-next', nextProblemId)"
         >
           {{ nextButtonLabel }}
-        </button>
+        </NButton>
 
-        <button v-if="isProblemMode" class="btn btn-text" type="button" @click="emit('exit')">
+        <NButton
+          v-if="isProblemMode"
+          class="btn btn-text"
+          size="small"
+          quaternary
+          @click="emit('exit')"
+        >
           退出到自由运行
-        </button>
+        </NButton>
 
         <label class="lang-picker">
           <span class="lang-label">语言</span>
-          <select
+          <NSelect
             class="lang-select"
             :value="languageId"
+            :options="languageOptions"
             :disabled="isRunning || languages.length === 0"
-            @change="onLanguageChange"
-          >
-            <option
-              v-for="opt in languages"
-              :key="opt.id"
-              :value="opt.id"
-              :disabled="!opt.available"
-              :title="opt.detail ?? undefined"
-            >
-              {{ opt.display_name }}{{ opt.available ? '' : '（不可用）' }}
-            </option>
-          </select>
+            size="small"
+            @update:value="onLanguageChange"
+          />
         </label>
 
-        <button
+        <NButton
           class="btn btn-secondary"
-          type="button"
           :disabled="!canRun"
+          :loading="activeRun === 'run'"
           :title="runBlockedReason || '运行公开样例，不记录成绩（Ctrl/Cmd + Enter）'"
           @click="run"
         >
-          {{ activeRun === 'run' ? '运行中…' : '运行' }}
-        </button>
-        <button
+          运行
+        </NButton>
+        <NButton
           class="btn btn-primary"
-          type="button"
+          type="primary"
           :disabled="!canSubmit"
+          :loading="activeRun === 'submit'"
           title="运行全部用例并记录成绩（Ctrl/Cmd + Shift + Enter）"
           @click="submit"
         >
-          {{ activeRun === 'submit' ? '提交中…' : '提交' }}
-        </button>
+          提交
+        </NButton>
       </div>
     </header>
 
@@ -1348,17 +1353,20 @@ function submit(): Promise<void> {
         <!-- Collapsed, the column keeps only its toggle so the editor
              gains the width; the label stays legible as a vertical strip. -->
         <div class="panel-head">
-          <button
+          <NButton
             class="collapse-btn"
-            type="button"
+            size="tiny"
+            quaternary
             :aria-expanded="statementCollapsed ? 'false' : 'true'"
             :title="statementCollapsed ? '展开题面' : '折叠题面'"
             @click="statementCollapsed = !statementCollapsed"
           >
-            <span v-if="!statementCollapsed" class="collapse-icon" aria-hidden="true">‹</span>
-            <span v-else class="collapse-icon" aria-hidden="true">›</span>
+            <template #icon>
+              <span v-if="!statementCollapsed" class="collapse-icon" aria-hidden="true">‹</span>
+              <span v-else class="collapse-icon" aria-hidden="true">›</span>
+            </template>
             <span class="collapse-label">{{ statementCollapsed ? '题面' : '收起' }}</span>
-          </button>
+          </NButton>
         </div>
 
         <div v-if="!statementCollapsed" class="panel-body">
@@ -1374,17 +1382,17 @@ function submit(): Promise<void> {
             <p class="placeholder-title">找不到这道题</p>
             <p class="placeholder-text">{{ problemError }}</p>
             <p v-if="problemErrorHint" class="placeholder-text">{{ problemErrorHint }}</p>
-            <button class="btn btn-secondary btn-sm" type="button" @click="emit('exit')">
+            <NButton class="btn btn-secondary btn-sm" size="small" @click="emit('exit')">
               退出到自由运行
-            </button>
+            </NButton>
           </div>
           <div v-else-if="problemError" class="placeholder placeholder-error">
             <p class="placeholder-title">无法加载题目 #{{ problemId }}</p>
             <p class="placeholder-text">{{ problemError }}</p>
             <p v-if="problemErrorHint" class="placeholder-text">{{ problemErrorHint }}</p>
-            <button class="btn btn-secondary btn-sm" type="button" @click="loadProblem">
+            <NButton class="btn btn-secondary btn-sm" size="small" @click="loadProblem">
               重试
-            </button>
+            </NButton>
           </div>
 
           <template v-else>
@@ -1469,17 +1477,19 @@ function submit(): Promise<void> {
               then on the 调试 tab is the way in and two controls doing the
               same thing is one to get out of step.
             -->
-            <button
+            <NButton
               v-if="!hasDebugSession"
               class="debug-start"
+              size="small"
               :disabled="debugBusy || debugLoading || !debugAvailable || !code"
+              :loading="debugLoading"
               :title="
                 !debugAvailable ? debugUnavailableReason : '编译你的代码并逐步运行，可以打断点'
               "
               @click="onDebugStart"
             >
-              {{ debugLoading ? '正在编译…' : '开始调试' }}
-            </button>
+              开始调试
+            </NButton>
           </div>
 
           <!--
@@ -1668,90 +1678,10 @@ function submit(): Promise<void> {
   color: var(--af-text-secondary);
 }
 
-.lang-select {
-  padding: 5px 8px;
-  font-size: 13px;
-  color: var(--af-text-primary);
-  background: var(--af-elevated);
-  border: 1px solid var(--af-border-strong);
-  border-radius: var(--af-radius-sm);
-  cursor: pointer;
-}
+/* 语言选择器控件外观由 NSelect 接管（配色调自 naive-theme.ts）。 */
 
-.lang-select:disabled {
-  color: var(--af-text-muted);
-  cursor: not-allowed;
-}
-
-/* --- buttons --- */
-.btn {
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  border: 1px solid transparent;
-  border-radius: var(--af-radius-sm);
-  cursor: pointer;
-  transition:
-    background var(--af-duration-fast) var(--af-ease),
-    color var(--af-duration-fast) var(--af-ease);
-}
-
-.btn:disabled {
-  color: var(--af-text-muted);
-  background: var(--af-elevated);
-  border-color: var(--af-border);
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  /* This comment used to read "White rather than a token: no PU-0 token
-   * expresses that relationship." That was true when it was written, and
-   * stopped being true on 2026-09-25: `--af-text-inverse` now names
-   * exactly this relationship.
-   *
-   * It is also no longer merely a matter of taste. The old accent was a
-   * dark blue that white sat on comfortably; the new one is a light blue
-   * where white measures ~3:1 — below AA — and the inverse measures
-   * ~6.3:1. So this line is a contrast fix, not a cleanup. */
-  color: var(--af-text-inverse);
-  background: var(--af-accent);
-}
-
-/* The variant used inside the statement column's error panels: the
- * toolbar's 13px/16px button is a full-width control's size, too heavy
- * for a narrow side column. */
-.btn-sm {
-  padding: 5px 12px;
-  font-size: 12px;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--af-accent-hover);
-}
-
-/* Pushed down, not filled: 运行 is the reversible action, so it should
- * not compete with 提交 for attention. */
-.btn-secondary {
-  color: var(--af-text-primary);
-  background: var(--af-elevated);
-  border-color: var(--af-border-strong);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: var(--af-overlay);
-}
-
-.btn-text {
-  color: var(--af-text-secondary);
-  background: transparent;
-  border-color: var(--af-border);
-  font-weight: 400;
-}
-
-.btn-text:hover {
-  color: var(--af-text-primary);
-  background: var(--af-elevated);
-}
+/* --- buttons（2026-09-27）：全部改用 NButton，控件外观由组件库统一接管；
+ * 此处仅保留布局注释头，具体按钮样式不再手写。 */
 
 /* --- notices --- */
 .notice {
@@ -1810,25 +1740,13 @@ function submit(): Promise<void> {
   border-bottom: none;
 }
 
-.collapse-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  color: var(--af-text-muted);
-  background: transparent;
-  border: none;
-  border-radius: var(--af-radius-sm);
-  cursor: pointer;
+/* 折叠按钮本体是 NButton（size tiny quaternary，配色走 naive-theme.ts）。
+ * 下面只补组件库表达不了的两处布局：折叠态内容竖排、图标行内对齐。 */
+.collapse-icon {
+  line-height: 1;
 }
 
-.collapse-btn:hover {
-  color: var(--af-text-primary);
-  background: var(--af-elevated);
-}
-
-.problem-panel.collapsed .collapse-btn {
+.problem-panel.collapsed :deep(.n-button) {
   flex-direction: column;
   padding: 8px 2px;
 }
@@ -1892,9 +1810,8 @@ function submit(): Promise<void> {
   color: var(--af-text-secondary);
 }
 
-.placeholder .btn {
-  margin-top: 4px;
-}
+/* placeholder 内的按钮已是 NButton；原 .placeholder .btn 间距规则随控件
+ * 迁移删除。 */
 
 /* --- editor + output --- */
 .code-panel {
@@ -1986,26 +1903,8 @@ function submit(): Promise<void> {
   border-radius: 999px;
 }
 
-.debug-start {
-  padding: 4px 10px;
-  font-size: 12px;
-  color: var(--af-text-primary);
-  cursor: pointer;
-  background: var(--af-elevated);
-  border: 1px solid var(--af-border);
-  border-radius: var(--af-radius-sm);
-  transition: background var(--af-duration-fast) var(--af-ease);
-}
-
-.debug-start:hover:not(:disabled) {
-  background: var(--af-canvas);
-}
-
-.debug-start:disabled {
-  color: var(--af-text-muted);
-  cursor: not-allowed;
-  opacity: 0.6;
-}
+/* 调试入口按钮改用 NButton；原 .debug-start 的手写外观、hover 与
+ * disabled 态全部由组件库接管。 */
 
 /*
  * Notices about the debug entry point, above the panel rather than

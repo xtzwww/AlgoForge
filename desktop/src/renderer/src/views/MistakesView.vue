@@ -105,6 +105,7 @@
  */
 
 import { computed, onMounted, ref } from 'vue'
+import { NButton } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import EmptyState from '../components/EmptyState.vue'
 import LayeredFeedback from '../components/LayeredFeedback.vue'
@@ -422,26 +423,28 @@ onMounted(load)
       -->
       <div class="filter-bar">
         <nav v-if="allTags.length" class="tag-bar" aria-label="按知识点筛选">
-          <button
+          <NButton
             class="tag-chip"
-            :class="{ active: selectedTag === null }"
-            type="button"
+            size="small"
+            round
+            :type="selectedTag === null ? 'primary' : 'default'"
             :aria-pressed="selectedTag === null"
             @click="selectTag(null)"
           >
             全部 ({{ entries.length }})
-          </button>
-          <button
+          </NButton>
+          <NButton
             v-for="tag in allTags"
             :key="tag"
             class="tag-chip"
-            :class="{ active: selectedTag === tag }"
-            type="button"
+            size="small"
+            round
+            :type="selectedTag === tag ? 'primary' : 'default'"
             :aria-pressed="selectedTag === tag"
             @click="selectTag(tag)"
           >
             {{ tag }}
-          </button>
+          </NButton>
         </nav>
 
         <!--
@@ -502,14 +505,14 @@ onMounted(load)
           :class="{ reviewed: entry.reviewed, busy: pending.has(entry.id) }"
         >
           <div class="entry-header">
-            <button
+            <NButton
               class="entry-title"
-              type="button"
+              text
               :title="`练习题目 #${entry.problem_id}`"
               @click="practise(entry.problem_id)"
             >
               题目 #{{ entry.problem_id }}
-            </button>
+            </NButton>
             <span class="entry-date">{{ formatDate(entry.created_at) }}</span>
             <span
               class="review-badge"
@@ -557,14 +560,16 @@ onMounted(load)
 
             <div v-else class="analysis-failed">
               <p class="analysis-note analysis-note-failed">AI 分析失败</p>
-              <button
+              <NButton
                 class="btn btn-analyse"
-                type="button"
+                size="small"
+                secondary
+                :loading="reanalysing.has(entry.id)"
                 :disabled="reanalysing.has(entry.id)"
                 @click="reanalyse(entry)"
               >
-                {{ reanalysing.has(entry.id) ? '分析中…' : '重新分析' }}
-              </button>
+                重新分析
+              </NButton>
             </div>
 
             <!--
@@ -612,23 +617,26 @@ onMounted(load)
           </div>
 
           <div class="entry-actions">
-            <button
+            <NButton
               v-if="!entry.reviewed"
               class="btn btn-review"
-              type="button"
+              size="small"
+              type="primary"
               :disabled="pending.has(entry.id)"
               @click="markReviewed(entry)"
             >
               {{ pending.has(entry.id) ? '处理中…' : '标记已复习' }}
-            </button>
-            <button
+            </NButton>
+            <NButton
               class="btn btn-delete"
-              type="button"
+              size="small"
+              quaternary
+              type="error"
               :disabled="pending.has(entry.id)"
               @click="remove(entry)"
             >
               删除
-            </button>
+            </NButton>
           </div>
         </article>
       </div>
@@ -681,31 +689,8 @@ onMounted(load)
   min-width: 0;
 }
 
-.tag-chip {
-  padding: 3px 12px;
-  font-family: inherit;
-  font-size: 12px;
-  color: var(--af-text-secondary);
-  background: var(--af-elevated);
-  border: 1px solid var(--af-border);
-  border-radius: 999px;
-  cursor: pointer;
-  transition:
-    background var(--af-duration-fast) var(--af-ease),
-    color var(--af-duration-fast) var(--af-ease),
-    border-color var(--af-duration-fast) var(--af-ease);
-}
-
-.tag-chip:hover {
-  color: var(--af-text-primary);
-  background: var(--af-overlay);
-}
-
-.tag-chip.active {
-  color: var(--af-accent);
-  background: var(--af-accent-subtle);
-  border-color: var(--af-accent);
-}
+/* 知识点 chips 已改用 NButton（round + primary/default 态）；原 .tag-chip
+ * 的手写外观、hover 与 active 态全部由组件库接管。 */
 
 /* --- error-cause filter (P2-21) --- */
 .cause-filter {
@@ -901,11 +886,8 @@ onMounted(load)
   gap: 12px;
 }
 
-.btn-analyse {
-  color: var(--af-accent);
-  background: var(--af-accent-subtle);
-  border-color: var(--af-accent);
-}
+/* 分析重试按钮已改用 NButton（secondary）；原 .btn-analyse 的 accent 配色
+ * 由组件库主题统一接管。 */
 
 .entry-tags {
   display: flex;
@@ -936,53 +918,9 @@ onMounted(load)
   gap: 8px;
 }
 
-.btn {
-  padding: 4px 12px;
-  font-family: inherit;
-  font-size: 12px;
-  border: 1px solid transparent;
-  border-radius: var(--af-radius-sm);
-  cursor: pointer;
-  transition:
-    background var(--af-duration-fast) var(--af-ease),
-    opacity var(--af-duration-fast) var(--af-ease);
-}
-
-.btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-/*
- * 标记已复习 is the primary action on the card, so it is the filled one;
- * 删除 is destructive and irreversible, so it is a muted outline that
- * only goes red on hover. Both were filled red/green before, which made
- * deleting look as safe as reviewing.
- */
-.btn-review {
-  /* Was `#ffffff`, described below as "the one literal". It is now the
-   * `--af-text-inverse` token — the repaint made the accent light enough
-   * that white on it fails AA, so this stopped being a documented
-   * exception and became a bug. See tokens.css. */
-  color: var(--af-text-inverse);
-  background: var(--af-accent);
-}
-
-.btn-review:hover:not(:disabled) {
-  background: var(--af-accent-hover);
-}
-
-.btn-delete {
-  color: var(--af-text-secondary);
-  background: transparent;
-  border-color: var(--af-border-strong);
-}
-
-.btn-delete:hover:not(:disabled) {
-  color: var(--af-danger);
-  background: color-mix(in srgb, var(--af-danger) 14%, transparent);
-  border-color: var(--af-danger);
-}
+/* 卡片的 标记已复习 / 删除 / 重新分析 已全部改用 NButton（primary /
+ * quaternary error / secondary）。原 .btn 体系、hover 与 disabled 态由
+ * 组件库接管；删除的"危险"语义通过 type="error" 表达。 */
 
 /* Narrow: the filter bar stacks, and the cause slot moves under the tags
  * rather than being squeezed off the right edge. */

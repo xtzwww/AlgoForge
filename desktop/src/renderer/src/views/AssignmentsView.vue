@@ -29,6 +29,7 @@
 
 import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
+import { NButton, NInput } from 'naive-ui'
 import { getMyAssignments, type MyAssignmentOut } from '../api/assignments'
 import { joinClassroom, myClassrooms, type ClassroomOut } from '../api/classroom'
 import { listProblems } from '../api/problems'
@@ -202,21 +203,21 @@ watch(
           </p>
 
           <form class="mt-3 flex flex-wrap items-center gap-2" @submit.prevent="submitJoin">
-            <input
-              v-model="inviteCode"
-              class="w-40 rounded-[var(--af-radius-sm)] border border-af-border bg-af-elevated px-3 py-1.5 text-sm uppercase tracking-wider text-af-primary placeholder:normal-case placeholder:tracking-normal placeholder:text-af-muted focus:border-af-accent focus:outline-none disabled:opacity-60"
+            <NInput
+              v-model:value="inviteCode"
+              class="!w-40"
               type="text"
               placeholder="输入邀请码"
               maxlength="16"
               :disabled="joinBusy"
             />
-            <button
-              class="rounded-[var(--af-radius-sm)] border border-af-border-strong bg-af-elevated px-3 py-1.5 text-xs text-af-primary transition-colors hover:bg-af-overlay disabled:cursor-not-allowed disabled:opacity-60"
-              type="submit"
-              :disabled="joinBusy"
+            <NButton
+              attr-type="submit"
+              size="small"
+              :loading="joinBusy"
             >
               {{ joinBusy ? '加入中…' : '加入班级' }}
-            </button>
+            </NButton>
           </form>
 
           <p v-if="joinMsg" class="mt-2 text-xs text-af-success">{{ joinMsg }}</p>
@@ -299,22 +300,24 @@ watch(
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <RouterLink
                   v-if="nextProblem(row) !== null"
-                  class="rounded-[var(--af-radius-sm)] bg-af-accent px-3 py-1.5 text-xs font-medium af-press text-af-inverse transition-colors hover:bg-af-accent-hover"
+                  custom
                   :to="{
                     name: 'problem',
                     params: { id: nextProblem(row) },
                     query: { assignment: row.id }
                   }"
+                  v-slot="{ navigate, href }"
                 >
-                  {{ row.progress === null ? '开始做题' : '继续做题' }}
+                  <NButton size="small" type="primary" tag="a" :href="href" @click="navigate">
+                    {{ row.progress === null ? '开始做题' : '继续做题' }}
+                  </NButton>
                 </RouterLink>
-                <button
-                  class="rounded-[var(--af-radius-sm)] border border-af-border-strong bg-af-elevated px-3 py-1.5 text-xs text-af-primary transition-colors hover:bg-af-overlay"
-                  type="button"
+                <NButton
+                  size="small"
                   @click="expandedId = expandedId === row.id ? null : row.id"
                 >
                   {{ expandedId === row.id ? '收起题目' : `查看题目（${row.problem_count}）` }}
-                </button>
+                </NButton>
               </div>
 
               <ul v-if="expandedId === row.id" class="mt-3 flex flex-col gap-1">

@@ -155,8 +155,17 @@ async function fillAndSubmit(
   }
   const merged = { ...defaults, ...fields }
 
+  // 四个 NInput 的顺序即模板顺序（username → display-name → password →
+  // confirm-password）。组件化后 `name` 落在 NInput 根元素上而不是内部
+  // <input>，所以按索引取 input 元素。
+  const INPUT_INDEX: Record<string, number> = {
+    username: 0,
+    'display-name': 1,
+    password: 2,
+    'confirm-password': 3
+  }
   for (const [name, value] of Object.entries(merged)) {
-    await w.find(`input[name="${name}"]`).setValue(value)
+    await w.findAll('input')[INPUT_INDEX[name]].setValue(value)
   }
   await w.find('form').trigger('submit')
   await flushPromises()
@@ -211,10 +220,13 @@ describe('RegisterView', () => {
 
   it('页面只提供四个输入框：用户名、姓名、密码、确认密码', () => {
     const w = mountView()
-    const names = w
+    // 组件化后 name 落在 NInput 根元素而非内部 <input>，这里钉数量与
+    // 占位文案（语义锚点），不依赖 name 的落点。
+    expect(w.findAll('input')).toHaveLength(4)
+    const placeholders = w
       .findAll('input')
-      .map((node) => (node.element as HTMLInputElement).getAttribute('name'))
-    expect(names).toEqual(['username', 'display-name', 'password', 'confirm-password'])
+      .map((node) => (node.element as HTMLInputElement).getAttribute('placeholder'))
+    expect(placeholders.filter((p) => p !== null && p !== '')).toHaveLength(4)
   })
 
   // --- 1b. 学生/老师切换（2026-09-25 第二轮） ------------------------
