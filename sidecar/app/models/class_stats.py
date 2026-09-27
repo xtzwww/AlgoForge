@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.mistake_book import MistakeBookEntry
@@ -66,7 +66,10 @@ def _open_flag():
     NULL as a comparable value, which is what "not dismissed" means here.
     """
     return and_(
-        Submission.process_flagged.is_(True),
+        or_(
+            Submission.process_flagged.is_(True),
+            Submission.style_flagged.is_(True),
+        ),
         Submission.process_review.is_distinct_from(REVIEW_DISMISSED),
     )
 
@@ -428,7 +431,12 @@ def list_flagged_submissions(
     """
     stmt = select(Submission).order_by(Submission.id.desc()).limit(limit)
     stmt = (
-        stmt.where(Submission.process_flagged.is_(True))
+        stmt.where(
+            or_(
+                Submission.process_flagged.is_(True),
+                Submission.style_flagged.is_(True),
+            )
+        )
         if include_reviewed
         else stmt.where(_open_flag())
     )
@@ -439,6 +447,7 @@ def list_flagged_submissions(
         owner = session.get(User, row.user_id) if row.user_id is not None else None
         data = row.to_dict(include_source=False)
         data["process"] = row.process_view()
+        data["style"] = row.style_view()
         data["student"] = owner.display_name if owner is not None else None
         out.append(data)
     return out

@@ -60,6 +60,7 @@ from datetime import UTC, datetime
 from typing import Optional
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Float,
@@ -196,6 +197,25 @@ class Submission(Base):
         Boolean, nullable=False, default=False, server_default=false()
     )
 
+    # --- Style consistency (C2): what the code itself looks like ---
+    #
+    # The second, independent reading of AI-use detection (see
+    # :mod:`app.style_trace`): does this submission's own statistics
+    # match the student's history in the same language? Unlike the
+    # ``process_*`` columns this is stored as one boolean plus one JSON
+    # evidence blob, because nothing here is queried except the boolean
+    # and the evidence is rendered verbatim.
+    #
+    # ``style_evidence`` is ``None`` when the reading could not be made
+    # (no history, unknown language edge, or the computation was skipped)
+    # — which is a statement of absence, not a clean verdict, and the
+    # review panel words the two differently. ``style_flagged`` defaults
+    # to false like ``process_flagged``.
+    style_flagged: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    style_evidence: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
     # --- The teacher's answer to the flag (阶段 5) ---
     #
     # ``None`` means nobody has judged it yet. The other two are the
@@ -249,6 +269,29 @@ class Submission(Base):
         self.process_rewrite_ratio = features.rewrite_ratio
         self.process_runs_before = features.runs_before_submit
         self.process_flagged = flagged
+
+    def apply_style(self, evidence: dict) -> None:
+        """Attach the style-consistency reading (C2).
+
+        Unlike :meth:`apply_process` there are no per-feature columns:
+        the evidence is one JSON blob (features + words) plus the
+        queryable boolean, both written here. ``evidence`` is the dict
+        form of :class:`app.style_trace.StyleSignal.to_dict`; the
+        ``flagged`` inside it is what ``style_flagged`` mirrors.
+        """
+        self.style_evidence = evidence
+        self.style_flagged = bool(evidence and evidence.get("flagged", False))
+
+    def style_view(self) -> Optional[dict]:
+        """The stored C2 evidence, or ``None`` when there is none.
+
+        Unlike :func:`process_view` there is nothing to recompute: the
+        numbers and the words were persisted together. ``None`` means
+        the reading was not made, which the review panel words as
+        "未对比" rather than "一致".
+        """
+        return self.style_evidence
+
 
     def apply_review(self, verdict: str, reviewer_id: Optional[int] = None) -> None:
         """Record a teacher's judgement about this row's process flag.

@@ -247,11 +247,13 @@ def flagged_submissions(
     include_reviewed: bool = Query(default=False),
     _teacher: User = Depends(require_teacher),
 ) -> dict:
-    """Submissions carrying a process flag (C1).
+    """Submissions carrying a process (C1) or style (C2) flag.
 
     Returns the evidence, not just the flag: a mark a teacher cannot
     check is a mark they will either rubber-stamp or ignore, and the
-    README promises it is reviewable.
+    README promises it is reviewable. Each item carries whichever
+    readings fired — ``process`` (edit behaviour) and/or ``style``
+    (code-style consistency against the student’s own history).
 
     Reviewed rows are left out unless asked for — see
     :func:`app.models.class_stats.list_flagged_submissions`.

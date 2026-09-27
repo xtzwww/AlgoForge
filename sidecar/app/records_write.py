@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import records_session
@@ -27,6 +28,7 @@ from app.models.mistake_book import MistakeBookEntry
 from app.models.problem import Problem
 from app.models.submission import Submission
 from app.process_trace import describe, from_trace
+from app.style_trace import HISTORY_WINDOW, MIN_HISTORY_SAMPLES, compare_against_history, from_code
 from app.records_analyse import _analyse_and_annotate
 from app.records_support import (
     SubmissionContext,
@@ -189,6 +191,48 @@ def _apply_trace(submission: Submission, context: SubmissionContext) -> None:
     submission.apply_process(features, describe(features).flagged)
 
 
+def _apply_style(session: Session, submission: Submission) -> None:
+    """Attach the style-consistency reading (C2), if it can be made.
+
+    Compares this submission's own statistics against the same student's
+    most recent submissions in the same language (:mod:`app.style_trace`).
+    The verdict is deliberately conservative: with fewer than
+    ``MIN_HISTORY_SAMPLES`` rows, or for an unowned / empty submission,
+    the reading is skipped and the row simply keeps its false flag with
+    no evidence — "not compared" is a statement of absence, not of a
+    clean bill of health.
+
+    Called between building the row and flushing it, so the evidence is
+    part of the same insert as the verdict. It is cheap: one indexed
+    query over at most ``HISTORY_WINDOW`` rows and a few regex passes.
+    Any failure is swallowed by :func:`record_submission`'s outer guard
+    — the style reading must never cost the student their verdict.
+    """
+    if submission.user_id is None:
+        return
+    if not submission.code.strip():
+        return
+
+    rows = session.execute(
+        select(Submission)
+        .where(Submission.user_id == submission.user_id)
+        .where(Submission.language == submission.language)
+        .where(Submission.id != submission.id)
+        .order_by(Submission.id.desc())
+        .limit(HISTORY_WINDOW)
+    ).scalars().all()
+
+    if len(rows) < MIN_HISTORY_SAMPLES:
+        # 历史不足：不做对比，也不写证据。"未对比"在界面上与"一致"
+        # 是两种状态，前者保持 style_evidence=None 表达。
+        return
+
+    current = from_code(submission.code, submission.language)
+    history = [from_code(row.code, row.language) for row in rows]
+    signal = compare_against_history(current, history)
+    submission.apply_style(signal.to_dict(current))
+
+
 def _write(
     session: Session,
     result: JudgeResult,
@@ -213,6 +257,7 @@ def _write(
         memory_used=memory_used,
     )
     _apply_trace(submission, context)
+    _apply_style(session, submission)
     session.add(submission)
     # Assign the id before the mistake-book insert needs it as a FK.
     # flush() rather than commit() so the two rows land in one

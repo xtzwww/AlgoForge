@@ -48,7 +48,8 @@ const openItem: FlaggedSubmission = {
     reasons: ['粘贴速度远快于打字速度', '无中间编译错误'],
     features: { paste_ratio: 0.9, edit_gap_sec: 30 }
   },
-  review: { verdict: null, reviewed_by: null, reviewed_at: null }
+  review: { verdict: null, reviewed_by: null, reviewed_at: null },
+  style: null
 }
 
 const reviewedItem: FlaggedSubmission = {
@@ -56,6 +57,21 @@ const reviewedItem: FlaggedSubmission = {
   id: 22,
   student: '李四',
   review: { verdict: 'confirmed', reviewed_by: 1, reviewed_at: '2026-09-26T09:00:00Z' }
+}
+
+const styleItem: FlaggedSubmission = {
+  ...openItem,
+  id: 23,
+  student: '王五',
+  style: {
+    flagged: true,
+    summary: '这次提交的代码风格和你以前的写法差别较大',
+    reasons: [
+      '平均标识符长度为 9.00，你最近 6 次提交平均 4.00（2.2 倍）。',
+      '空行占比为 0.42，你最近 6 次提交平均 0.25（1.7 倍）。'
+    ],
+    features: { identifier_avg_len: 9.0, blank_ratio: 0.42, long_line_ratio: 0.0 }
+  }
 }
 
 async function mountView(items: FlaggedSubmission[] = [openItem]): Promise<VueWrapper> {
@@ -129,5 +145,21 @@ describe('TeacherReviewView', () => {
     await flushPromises()
 
     expect(api.getFlaggedSubmissions).toHaveBeenCalledWith(50, true)
+  })
+
+  it('渲染 C2 风格依据：摘要与可展开的理由', async () => {
+    const wrapper = await mountView([styleItem])
+
+    expect(wrapper.text()).toContain('王五')
+    expect(wrapper.text()).toContain('代码风格和你以前的写法差别较大')
+    expect(wrapper.text()).toContain('查看风格依据')
+    expect(wrapper.text()).toContain('平均标识符长度为 9.00')
+  })
+
+  it('没有 style 阅读时只显示过程依据', async () => {
+    const wrapper = await mountView([openItem])
+
+    expect(wrapper.text()).toContain('查看依据')
+    expect(wrapper.text()).not.toContain('查看风格依据')
   })
 })

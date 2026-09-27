@@ -150,6 +150,21 @@ async function submitReview(
                   <li v-for="reason in item.process.reasons" :key="reason">{{ reason }}</li>
                 </ul>
               </details>
+              <!-- C2：风格一致性是独立的第二次阅读，可能与过程特征同时
+                   存在，也可能单独触发。两种证据并排，而不是合并成一句
+                   —— 合并会让其中一种变得无法查证。 -->
+              <template v-if="item.style">
+                <p class="flagged-summary style-summary">{{ item.style.summary }}</p>
+                <details
+                  v-if="item.style.reasons?.length"
+                  class="flagged-evidence"
+                >
+                  <summary>查看风格依据</summary>
+                  <ul>
+                    <li v-for="reason in item.style.reasons" :key="reason">{{ reason }}</li>
+                  </ul>
+                </details>
+              </template>
               <!-- 复核动作：这才是让标记成为一个提示而不是一纸判决的东西。
                    一个谁都不能反驳的标记，老师只能照单全收。 -->
               <div class="review-actions">
@@ -245,6 +260,12 @@ export default { name: 'TeacherReviewView' }
   font-size: 13px;
   line-height: 1.6;
   color: var(--af-text-secondary);
+}
+
+.style-summary {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--af-border);
 }
 
 .flagged-evidence {

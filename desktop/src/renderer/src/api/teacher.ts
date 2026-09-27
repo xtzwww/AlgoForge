@@ -151,6 +151,13 @@ export interface FlaggedSubmission {
   /** Display name of the owner, or `''` for an unowned row. */
   student: string
   process: StoredProcessView
+  /**
+   * The style-consistency reading (C2), or `null` when it was not made
+   * (no history, unowned row). Same shape as {@link StoredProcessView}:
+   * numbers plus the words that explain them. A submission can carry
+   * both `process` and `style` flags — they are independent readings.
+   */
+  style: StoredProcessView | null
   review: FlagReview
 }
 
