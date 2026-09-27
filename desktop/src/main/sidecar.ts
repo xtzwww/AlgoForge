@@ -402,6 +402,38 @@ async function spawnSidecar(): Promise<SidecarInfo> {
   const token = crypto.randomBytes(32).toString('hex')
   const { program, args, cwd } = resolveSidecarLaunch()
 
+  // Dev only: bring the schema in step with the models before the engine
+  // answers. ``create_all`` creates missing *tables* but never adds a
+  // column to an existing one (see ``app/db.py``), so a new model field
+  // without this step makes every teacher query 500 with
+  // UndefinedColumn — which the renderer then reports as "Network Error".
+  // The packaged sidecar is expected to ship with migrations applied, so
+  // this is guarded by ``app.isPackaged``.
+  if (!app.isPackaged) {
+    const envFileForMigrate = resolveEnvFile()
+    const migrated = spawnSync(
+      program,
+      ['-m', 'alembic', 'upgrade', 'head'],
+      {
+        cwd,
+        env: {
+          ...process.env,
+          ...(envFileForMigrate ? { ALGOFORGE_ENV_FILE: envFileForMigrate } : {})
+        },
+        windowsHide: true,
+        timeout: 120000
+      }
+    )
+    if (migrated.status !== 0) {
+      console.warn(
+        `[sidecar] alembic upgrade head failed (status=${migrated.status}); ` +
+          'teacher views may 500 on missing columns'
+      )
+    } else {
+      console.log('[sidecar] database schema is up to date')
+    }
+  }
+
   const envFile = resolveEnvFile()
   console.log(`[sidecar] starting on port ${port}`)
   console.log(`[sidecar] program: ${program}`)

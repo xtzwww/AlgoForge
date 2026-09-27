@@ -203,6 +203,20 @@ if "!API_UP!"=="0" (
 )
 echo         就绪
 
+REM --- 2.5 schema migrations --------------------------------------
+REM  create_all 只建缺失的"表"，不会给已有表加列（sidecar\app\db.py）。
+REM  模型加了新列之后不跑这一步，教师端学情查询会对 PostgreSQL 报
+REM  "column submissions.style_flagged does not exist" 之类 500 ——
+REM  浏览器侧 CORS 拿不到响应头，显示成 "Network Error"。
+REM  Alembic 是 schema 变更的唯一入口（AGENTS.md 二、工程红线）。
+echo   [2.5/4] 同步数据库结构 (alembic upgrade head)
+pushd "%SIDECAR_DIR%"
+".venv\Scripts\python.exe" -m alembic upgrade head
+if errorlevel 1 (
+  echo   [WARN] 数据库迁移失败，教师端学情可能报错（见上方 alembic 输出）
+)
+popd
+
 :api_checked
 
 REM --- 3. build web assets -------------------------------------
