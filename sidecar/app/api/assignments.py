@@ -400,7 +400,15 @@ def student_report(
                     func.count(Submission.id),
                     func.sum(case((Submission.status == "AC", 1), else_=0)),
                 )
-                .where(Submission.user_id == user_id)
+                .where(
+                    Submission.user_id == user_id,
+                    # A free run (no problem selected) has a NULL
+                    # problem_id and belongs to no assignment — see the
+                    # model docstring. Counting it here would skew the
+                    # per-assignment stats with submissions no assignment
+                    # references.
+                    Submission.problem_id.is_not(None),
+                )
                 .group_by(Submission.problem_id)
             ).all()
         }
@@ -554,6 +562,10 @@ def my_assignments(user: User = Depends(require_user)) -> list[MyAssignmentOut]:
         # One grouped query for every problem the student has touched,
         # rather than one per assignment. `max` over a 1/0 case answers
         # "passed at least once" — `sum` would count repeat AC runs.
+        # Free runs (submissions with a NULL problem_id) are excluded:
+        # they belong to no assignment and grouping them in would hand
+        # `int(None)` to the dict key and crash the whole list — see the
+        # Submission model docstring.
         per_problem: dict[int, tuple[int, int, Optional[datetime]]] = {
             int(pid): (int(total or 0), int(ok or 0), latest)
             for pid, total, ok, latest in session.execute(
@@ -563,7 +575,10 @@ def my_assignments(user: User = Depends(require_user)) -> list[MyAssignmentOut]:
                     func.max(case((Submission.status == "AC", 1), else_=0)),
                     func.max(Submission.created_at),
                 )
-                .where(Submission.user_id == user.id)
+                .where(
+                    Submission.user_id == user.id,
+                    Submission.problem_id.is_not(None),
+                )
                 .group_by(Submission.problem_id)
             ).all()
         }

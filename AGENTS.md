@@ -13,8 +13,9 @@
 | 桌面壳 | Electron 33+ | 不用 Tauri |
 | 前端框架 | Vue 3 `<script setup>` + Composition API | 不用 React |
 | 语言 | TypeScript | 不用 JS |
-| UI 组件 | shadcn-vue | 模板复制模式，不用 npm 组件库依赖 |
-| CSS | Tailwind CSS | 不用 Sass / 手写 CSS |
+| **UI 组件库** | **Naive UI 2.45+** | **全量组件库依赖。不用 Element Plus / Ant Design Vue / shadcn-vue** |
+| 主题桥接 | `components/naive-theme.ts` | 组件库配色**只从这里来**，见下节 |
+| CSS | Tailwind CSS | 不用 Sass / 手写 CSS。布局用 Tailwind，**控件外观不再手写** |
 | 编辑器 | Monaco Editor | 不用 CodeMirror |
 | 终端面板 | 普通 `<div>` + WebSocket | **不用 xterm.js** |
 | 可视化 | ECharts + vue-echarts | 不用 Chart.js / D3 |
@@ -51,6 +52,42 @@
 | 打包（前端） | electron-builder |
 | 打包（后端） | PyInstaller (onedir) |
 
+### UI 组件库：为什么是 Naive UI（2026-09-26 修订）
+
+原选型是 shadcn-vue「模板复制模式，不用 npm 组件库依赖」。这条在本次修订中**被推翻**，
+理由是它和项目里更早的一个决定冲突，而且冲突的代价落在每一屏上。
+
+冲突点：本项目有**三套手工雕的主题**（`neon` 默认玻璃暗色 / `terminal` 近黑琥珀 /
+`paper` 浅暖纸），全部以 CSS 自定义属性 `--af-*` 存在 `assets/themes.css`，且有
+`assets/tokens.css`（CSS 用）与 `assets/tokens.ts`（ECharts / Monaco 用）两份镜像。
+shadcn-vue 是复制进仓库的源码，本身**不认识** `--af-*`；要让它吃上三套主题，得把每个
+被复制的组件逐个改写成读 `--af-*`——等于自己维护一个组件库，正是"模板复制模式"号称
+要避免的事。而当时仓库里其实**一个 shadcn 组件都没装**（`components/ui/` 不存在），
+所以这条约束的真实状态是「写在纸上、没在执行」，同时页面控件确实是手写的
+（`.af-t-primary` / `.af-t-ghost` / `.refresh-btn` / `.filter-chip` 等各写各的），
+视觉不统一就是这么来的。
+
+选 Naive UI 的理由：它的配色是**配置出来的**——一份 JS 对象 `themeOverrides`，
+逐项指名颜色 / 圆角 / 字号。于是可以写一层桥（`components/naive-theme.ts`），
+把三套 `--af-*` 值喂进去，组件库与页面其余部分**共用同一批颜色**。这是
+CSS 变量驱动的组件库做不到的（它们要么不吃外部变量，要么得逐个打补丁）。
+
+代价，写在明面上：
+1. **配色现在有三处副本**：`themes.css`、`tokens.ts`、`naive-theme.ts`。
+   改主题色必须同时改这三处，漏改的那一处会静默不一致（不报错）。
+   三个文件头都写了提示。
+2. **`themeOverrides` 里必须用字面色值**（`#eef2ff`），不能写 `var(--af-text)`。
+   Naive 内部对颜色做运算（算 hover 态、派生色、透明度），喂字符串会算成透明或黑色。
+3. Naive UI 自带 `darkTheme` 只负责**是非明暗**那半边；具体色值全由 `themeOverrides`
+   覆盖，所以 `terminal` 和 `neon` 同用 `darkTheme`，靠覆盖值区分。
+
+边界（不因此松动的部分）：
+- 布局仍用 Tailwind；组件库只接管**控件外观**，不接管排版。
+- 页面级皮肤（`assets/teacher.css` 等）保留，但**只允许留布局与容器**；
+  按钮、输入框、弹窗、下拉、表格一律用 Naive 组件，不新写控件级 CSS。
+  已在用但属于控件的那几条（见上）随改造逐个删掉。
+- 改造顺序：**教师端先行**（5 个面板），学生端随后。未改造的旧页面允许暂时共存。
+
 ## 二、工程红线
 
 ### 不可做的事
@@ -63,6 +100,8 @@
 6. **Agent 编排用 LangGraph 状态图或 LangChain 1.x create_agent**：两者同生态可混用，不用 Autogen / CrewAI。
 7. **不在沙箱里执行未受信任的代码而不设超时**：每次执行必须有超时 + 内存上限。
 8. **不在 prompt 里硬编码业务逻辑**：所有 prompt 走 `sidecar/app/prompts/` 模板文件，版本化管理。
+9. **不手写控件级 CSS**：按钮 / 输入框 / 弹窗 / 下拉 / 表格用 Naive UI 组件。要换皮肤改 `naive-theme.ts`，不写 `.my-btn { ... }`。
+10. **不在 `themeOverrides` 里写 `var(--af-*)`**：Naive 对颜色做运算，`var()` 会静默算成透明/黑色。
 
 ### 必须做的事
 
@@ -72,6 +111,7 @@
 4. **Sidecar 监听随机端口 + Token 鉴权**：不硬编码端口。
 5. **S2 是 go/no-go 节点**：20 道真题验证错因分析准确率不达标则调整方案（换模型 / 加 RAG / 调 prompt），不硬推后续阶段。
 6. **前端代码逐文件 TS 严格模式**：不用 `any` 逃避类型。
+7. **弹窗类交互用 `NModal` / `NPopconfirm`**：不用 `window.confirm` / `window.alert`（阻塞、样式不受控、不可测）。
 
 ## 三、阶段约束
 

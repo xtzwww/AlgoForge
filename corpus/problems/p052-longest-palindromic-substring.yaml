@@ -1,0 +1,124 @@
+id: p052-longest-palindromic-substring
+title: 最长回文子串
+knowledge_tags:
+  - 字符串
+  - 动态规划
+  - 边界处理
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个字符串 $s$，求它的**最长回文子串**的长度。
+
+  回文串是指正着读和倒着读相同的字符串。子串是指原字符串中
+  **连续**的一段。单个字符本身就是回文串，所以答案至少为 1
+  （$s$ 非空）。
+
+  **输入格式**
+
+  一行，一个非空字符串 $s$，由小写英文字母组成。
+
+  **输出格式**
+
+  一行，一个整数，表示最长回文子串的长度。
+
+  **数据范围**
+
+  字符串长度不超过 $1000$
+input_format: 一行一个非空字符串。
+output_format: 一行一个整数，最长回文子串长度。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "babad\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "cbbd\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "a\n"
+    expected_output: "1\n"
+  - input: "ac\n"
+    expected_output: "1\n"
+  - input: "aaaa\n"
+    expected_output: "4\n"
+  - input: "abccba\n"
+    expected_output: "6\n"
+  - input: "abacaba\n"
+    expected_output: "7\n"
+  - input: "abcde\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      string s;
+      cin >> s;
+      int n = s.size();
+      if (n == 0) {
+          cout << 0 << endl;
+          return 0;
+      }
+
+      int best = 1;
+      // Center expansion. Both odd and even centres must be tried: an
+      // even-length palindrome has no single middle character.
+      for (int c = 0; c < n; ++c) {
+          // odd length: centre is s[c]
+          int l = c, r = c;
+          while (l >= 0 && r < n && s[l] == s[r]) {
+              best = max(best, r - l + 1);
+              --l;
+              ++r;
+          }
+          // even length: centre lies between s[c] and s[c + 1]
+          l = c;
+          r = c + 1;
+          while (l >= 0 && r < n && s[l] == s[r]) {
+              best = max(best, r - l + 1);
+              --l;
+              ++r;
+          }
+      }
+      cout << best << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的核心是**两种中心的处理**，而漏掉其中一种的错误
+  在奇数长度的样例上完全不可见。
+
+  第一类错误是**只处理了奇数长度的中心**（只做 $l = r = c$）。
+  这样长度为偶数的回文永远找不到：`cbbd` 会输出 1
+  而不是 2。所有奇数长度回文的用例（`babad`、`abacaba`、
+  `abcde`）在这种情况下都给出正确答案，只有 `cbbd`、
+  `aaaa`、`abccba` 才暴露。错因标签：missing_case。
+
+  第二类错误是**只处理偶数中心**，对称地漏掉奇数回文，
+  `a`、`abcde` 仍然正确。错因标签：missing_case。
+
+  第三类错误是**边界判断写成了 `l > 0 && r < n`**（少一个等号），
+  这样下标 0 和 $n-1$ 处的字符永远不会被纳入比较，
+  以字符串端点结尾的回文会被截短 1 位。错因标签：
+  off_by_one / boundary_condition。
+
+  第四类错误是**把"回文子串"理解成"回文子序列"**，
+  于是 `cbbd` 会输出 2（恰好正确），而 `abcde` 会输出 1，
+  只有在能靠删除字符拼出更长回文的输入上才暴露，
+  例如 `abcba` 会输出 5 而正确答案是 3。
+  错因标签：misread_problem。
+
+  第五类错误是**初始 `best` 设成 0**：当 $n \ge 1$ 时不会出问题
+  （循环内一定会把 1 纳入），但如果所有字符都不相同且
+  实现里"只在扩展成功时才更新 best"，`abcde` 会输出 0。
+  错因标签：uninitialized_state。
+
+  第六类错误是**用 DP（`dp[i][j]` 表示 $s[i..j]$ 是否回文）
+  但转移顺序写错**：必须按子串长度递增来填，按 $i$ 递增填
+  会读到尚未计算的状态。错因标签：wrong_traversal。
+
+  第七类错误是**暴力枚举所有子串再逐一判断回文**。
+  字符串长度 $n = 1000$ 时是 $O(n^3) = 10^9$，会超时。
+  错因标签：wrong_complexity。

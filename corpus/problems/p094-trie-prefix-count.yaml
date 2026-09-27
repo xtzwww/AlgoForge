@@ -1,0 +1,151 @@
+id: p094-trie-prefix-count
+title: 字典树前缀统计（Trie）
+knowledge_tags:
+  - Trie
+  - 字符串
+  - 数据结构
+  - 哈希表
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一组**由小写英文字母组成的单词**，请依次处理若干次查询：
+  对每个查询的前缀 $p$，统计**有多少个单词以 $p$ 为前缀**。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $q$。
+  接下来 $n$ 行，每行一个单词。
+  接下来 $q$ 行，每行一个查询前缀。
+
+  **输出格式**
+
+  对每个查询，输出一行一个整数，表示以该前缀开头的单词个数。
+
+  **数据范围**
+
+  $1 \le n, q \le 10^5$，所有单词与前缀都只含小写字母 `a`~`z`，
+  单个字符串长度 $\le 10$，**单词互不相同**
+
+  **提示**
+
+  单词互不相同，但不同查询之间前缀可以重复。
+input_format: 第一行 n q，接下来 n 个单词，再接下来 q 个查询前缀。
+output_format: 每个查询输出一行一个整数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 3\napple\napp\napplication\nbanana\nband\napp\nba\napple\n"
+    expected_output: "3\n2\n1\n"
+    is_sample: true
+  - input: "3 2\na\nab\nabc\na\nx\n"
+    expected_output: "3\n0\n"
+    is_sample: true
+  - input: "1 1\nhello\nh\n"
+    expected_output: "1\n"
+  - input: "3 3\ncat\ncar\ncard\nca\ncard\ncar\n"
+    expected_output: "3\n1\n2\n"
+  - input: "2 2\nzzz\nzy\nz\nzz\n"
+    expected_output: "2\n1\n"
+  - input: "4 2\nabc\nabd\nabe\nabf\nab\nabc\n"
+    expected_output: "4\n1\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  // children[c] == -1 means "absent". pass counts how many inserted words
+  // pass through this node, which is exactly the number of words having
+  // this node's string as a prefix.
+  struct Node {
+      int children[26];
+      int pass;
+      Node() : pass(0) { fill(children, children + 26, -1); }
+  };
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, q;
+      cin >> n >> q;
+
+      vector<Node> trie(1);  // node 0 is the root
+      for (int i = 0; i < n; ++i) {
+          string s;
+          cin >> s;
+          int cur = 0;
+          for (char ch : s) {
+              // Incrementing on the node we descend into (rather than the
+              // root) means the count answers "words with this prefix".
+              int c = ch - 'a';
+              if (trie[cur].children[c] == -1) {
+                  trie[cur].children[c] = (int)trie.size();
+                  trie.emplace_back();
+              }
+              cur = trie[cur].children[c];
+              ++trie[cur].pass;
+          }
+      }
+
+      for (int i = 0; i < q; ++i) {
+          string p;
+          cin >> p;
+          int cur = 0;
+          bool ok = true;
+          for (char ch : p) {
+              int c = ch - 'a';
+              if (trie[cur].children[c] == -1) {
+                  ok = false;
+                  break;
+              }
+              cur = trie[cur].children[c];
+          }
+          cout << (ok ? trie[cur].pass : 0) << '\n';
+      }
+      return 0;
+  }
+eval_notes: |
+  Trie 的错误几乎都在"计数加在哪个节点上"和"查询走不通时怎么办"。
+
+  第一类错误是**把 `pass` 加在父节点上而不是进入的子节点上**。
+  这样根节点的 `pass` 会等于单词数，而中间节点的计数偏移一层，
+  所有"前缀长度 $\ge 1$"的查询都错。样例 3（单词 `hello`，
+  查 `h`）会输出 0 而不是 1。错因标签：off_by_one。
+
+  第二类错误是**只在单词末尾节点加 1**（统计"以该字符串结尾
+  的单词数"），而不是在路径上每个节点加 1。这统计的是
+  "完全等于前缀的单词数"而不是"以前缀开头的单词数"。
+  样例 2（单词 `a`/`ab`/`abc`，查 `a`）会输出 1 而不是 3。
+  样例 2 专门覆盖这个。错因标签：misread_problem。
+
+  第三类错误是**查询走到不存在的分支时没有停止，而是继续用
+  `-1` 当节点下标**。`trie[-1]` 是越界访问，表现为 RE 或者
+  读到垃圾值。样例 2 的第二个查询 `x`（不存在）专门覆盖这个，
+  正确输出是 0。错因标签：boundary_condition。
+
+  第四类错误是**没有把根节点算进"路径"**，于是查询空串时
+  没有定义。本题前缀长度 $\ge 1$（输入保证非空行），
+  所以**不会发生**——这是约束有意封住的坑。错因标签：
+  missing_case（认知层面）。
+
+  第五类错误是**用 `unordered_map<string,int>` 统计所有前缀**，
+  对每个单词枚举它的全部前缀并累加。这**完全正确**，
+  复杂度 $O(\sum |s|)$，与 Trie 同级，输出一致。
+  属等价解法，本题无法区分。错因标签：
+  wrong_complexity（认知层面，不构成判错）。
+
+  第六类错误是**对每个查询遍历全部单词用 `find`/`rfind`
+  判断前缀**。答案正确，但复杂度 $O(nq)$，
+  $10^5 \times 10^5 = 10^{10}$，必然 TLE。
+  这是本题主要的超时来源。错因标签：wrong_complexity。
+
+  第七类错误是**单词重复插入时重复计数**。本题保证单词互不
+  相同，所以**不会暴露**；但若输入含重复单词，"有多少个单词
+  以 $p$ 为前缀"的语义会变得含糊（按词条还是按出现次数）。
+  错因标签：missing_case（认知层面）。
+
+  第八类错误是**`children` 数组大小写成 52 或 128 以兼容
+  大小写**，但下标计算仍用 `ch - 'a'`。大小本身不影响正确性，
+  只是浪费内存；若下标计算写成 `ch - 'A'` 才会真错。
+  本题只含小写字母，两者都不会暴露。错因标签：
+  wrong_data_type（认知层面）。

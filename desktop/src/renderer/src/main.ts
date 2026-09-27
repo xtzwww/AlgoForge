@@ -1,10 +1,16 @@
 import './assets/main.css'
+// 教师端五个面板共用的皮肤（2026-09-26 拆分时抽出）。刻意不并进
+// `main.css`：这些类只在教师端用，学生端不必背这份重量。见该文件的文档。
+import './assets/teacher.css'
 
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import App from './App.vue'
 import { router } from './router'
+import { installEntryGuard } from './router/entryGuard'
 import { bootstrapSidecarStatus, checkSidecar } from './composables/useSidecarStatus'
-import { restoreSession } from './api/session'
+import { logout, restoreSession, sessionReady, sessionUser } from './api/session'
+import { entryMismatch } from './router/landing'
+import { appMode } from './runtime/mode'
 import { runtime } from './runtime'
 
 // PU-2: entrance animation, driven by the shell rather than by load.
@@ -41,5 +47,25 @@ void (async () => {
   await checkSidecar()
   await restoreSession()
 })()
+
+// B2: entry is identity (2026-09-25, third round). Two layers do the
+// same redirect: the router guard (`router/entryGuard.ts`) catches every
+// *later* navigation, and this watcher catches the restored session
+// itself — the page's first navigation happens before
+// `restoreSession()` answers, so the guard would see `sessionReady`
+// false and let it through. Together no path lands a teacher account on
+// the student entry or vice versa; Electron (`both`) is exempt.
+installEntryGuard(router)
+
+watch(
+  () => [sessionReady.value, sessionUser.value] as const,
+  async ([ready, user]) => {
+    if (!ready || !user) return
+    const mismatch = entryMismatch(appMode, user.role)
+    if (!mismatch) return
+    await logout()
+    await router.replace({ name: 'login', query: { entryErr: mismatch } })
+  }
+)
 
 createApp(App).use(router).mount('#app')

@@ -41,6 +41,7 @@
 import { computed, ref } from 'vue'
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { runtime } from '../runtime'
+import { appMode } from '../runtime/mode'
 import { usePageCrumb } from '../composables/usePageCrumb'
 import { isLoggedIn, isTeacher, logout, sessionReady, sessionUser } from '../api/session'
 import ThemeSwitcher from './ThemeSwitcher.vue'
@@ -100,12 +101,23 @@ const limitations = computed<string[]>(() => {
   return notes
 })
 
-/** Tooltip for the badge: identity, plus the limitations if any. */
-const badgeTitle = computed<string>(() =>
-  limitations.value.length === 0
-    ? `${runtime.displayName}：功能完整`
-    : `${runtime.displayName}，以下功能不可用：\n· ${limitations.value.join('\n· ')}`
+/**
+ * Which side of the split this entry is (2026-09-25). Web entries are
+ * one side each; Electron runs both and reports nothing here.
+ */
+const sideLabel = computed<string>(() =>
+  appMode === 'teacher' ? '教师端' : appMode === 'student' ? '学生端' : ''
 )
+
+/** Tooltip for the badge: identity, plus the limitations if any. */
+const badgeTitle = computed<string>(() => {
+  const identity = sideLabel.value
+    ? `${runtime.displayName} · ${sideLabel.value}`
+    : runtime.displayName
+  return limitations.value.length === 0
+    ? `${identity}：功能完整`
+    : `${identity}，以下功能不可用：\n· ${limitations.value.join('\n· ')}`
+})
 
 /**
  * The account corner (PU-13).
@@ -151,11 +163,19 @@ async function signOut(): Promise<void> {
     `af-glass` class because that class sets a 1px border on all four
     sides and this bar only has a bottom one (see motion.css).
 
+    `z-50` on the bar itself, not just on the theme menu inside it: the
+    blur here creates a stacking context, and a bar with an implicit
+    z-index sorts *after* the drawer (z-40) and its scrim (z-30) purely
+    by DOM order — so an open theme menu underneath them read as an
+    overlap at <1024px. Lifting the bar lifts the whole context above
+    both; the drawer and scrim start below the bar, so nothing is
+    covered by it.
+
     The beam overlays the bottom border rather than replacing it: a
     separator that fades to transparent at both ends stops separating.
   -->
   <header
-    class="relative flex h-[var(--spacing-topbar)] shrink-0 items-center gap-3 border-b border-af-border bg-af-surface/75 px-3 backdrop-blur-xl backdrop-saturate-150"
+    class="relative z-50 flex h-[var(--spacing-topbar)] shrink-0 items-center gap-3 border-b border-af-border bg-af-surface/75 px-3 backdrop-blur-xl backdrop-saturate-150"
   >
     <span class="af-beam pointer-events-none absolute inset-x-0 -bottom-px h-px" aria-hidden="true" />
 
@@ -260,7 +280,7 @@ async function signOut(): Promise<void> {
         class="shrink-0 cursor-help rounded-full border border-af-border bg-af-elevated px-2.5 py-0.5 text-[11px] text-af-secondary"
         :title="badgeTitle"
       >
-        {{ runtime.displayName }}
+        {{ runtime.displayName }}{{ sideLabel ? ` · ${sideLabel}` : '' }}
       </span>
     </div>
   </header>

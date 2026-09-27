@@ -1,0 +1,136 @@
+id: p041-two-sum-indices
+title: 两数之和（返回下标）
+knowledge_tags:
+  - 数组
+  - 哈希表
+  - 循环
+difficulty: easy
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数数组 $a$ 和一个目标值 $t$，
+  请找出数组中**两个不同位置**的数，使它们的和恰好等于 $t$。
+
+  如果存在多组满足条件的下标对，请输出**下标 $i$ 最小**的那一组；
+  在 $i$ 相同的情况下，输出 $j$ 最小的那一组。
+
+  下标从 1 开始，约定输出的第一个下标小于第二个下标。
+
+  如果不存在这样的两个数，输出一行 `-1`。
+  题目保证答案唯一。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $t$，以空格分隔。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行两个整数 $i$ 和 $j$（$i < j$）；不存在则输出 `-1`。
+
+  **数据范围**
+
+  $2 \le n \le 10^5$，$|a_i| \le 10^9$，$|t| \le 2 \times 10^9$
+input_format: 第一行 n 和 t，第二行 n 个整数。
+output_format: 一行两个整数 i 和 j（i < j），不存在输出 -1。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4 9\n2 7 11 15\n"
+    expected_output: "1 2\n"
+    is_sample: true
+  - input: "3 6\n3 2 4\n"
+    expected_output: "2 3\n"
+    is_sample: true
+  - input: "3 6\n3 3 3\n"
+    expected_output: "1 2\n"
+  - input: "2 0\n0 0\n"
+    expected_output: "1 2\n"
+  - input: "4 10\n1 2 3 4\n"
+    expected_output: "-1\n"
+  - input: "3 0\n0 0 0\n"
+    expected_output: "1 2\n"
+  - input: "5 5\n5 0 4 1 9\n"
+    expected_output: "1 2\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <unordered_map>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      long long t;
+      cin >> n >> t;
+      vector<long long> a(n + 1);
+      for (int i = 1; i <= n; ++i) cin >> a[i];
+
+      // Only the earliest occurrence of each value is kept: for the
+      // "smallest i first" rule, a later duplicate of the same value is
+      // never the better answer on the left-hand side.
+      unordered_map<long long, int> firstIndex;
+      int bestI = -1, bestJ = -1;
+      for (int j = 1; j <= n; ++j) {
+          long long need = t - a[j];
+          auto it = firstIndex.find(need);
+          if (it != firstIndex.end()) {
+              int i = it->second;
+              if (i < j && (bestI == -1 || i < bestI)) {
+                  bestI = i;
+                  bestJ = j;
+              }
+          }
+          // Entry for the current position is added after the lookup so
+          // that j is never paired with itself.
+          if (firstIndex.find(a[j]) == firstIndex.end()) {
+              firstIndex[a[j]] = j;
+          }
+      }
+
+      if (bestI == -1) {
+          cout << -1 << endl;
+      } else {
+          cout << bestI << ' ' << bestJ << endl;
+      }
+      return 0;
+  }
+eval_notes: |
+  本题的规则里藏了一个"最左优先"的约束，它和哈希表解法之间
+  有天然的张力，因此错误分布很有代表性。
+
+  第一类错误是**返回了最先遇到的那一组，而不是下标 i 最小的一组**。
+  由于哈希表是从左向右扫描的，最先遇到的通常是较大的 $i$。
+  用例 `5 5 / 5 0 4 1 9` 中，正确答案是 $(1,2)$
+  （$5 + 0 = 5$，$i=1$ 已是可能的最小值），而"只记第一组就
+  直接输出"的实现在特定扫描顺序下会漏掉更优的 $(1,2)$。
+  错因标签：missing_case。
+
+  第二类错误是**把元素自己和自己配成一对**：先插入
+  `firstIndex[a[j]] = j` 再查找，于是 $t = 2a_j$ 时 $i = j$，
+  输出的两个下标相等。用例 `2 0 / 0 0` 中，$t = 0$、
+  两个 0 下标的正确结果是 `1 2`；错误实现可能给出 `1 1`。
+  正确顺序是**先查找、后插入**。错因标签：boundary_condition。
+
+  第三类错误是**用哈希表覆盖式插入**（`firstIndex[v] = i` 无条件），
+  后出现的下标会覆盖先出现的，最左优先的规则被破坏。
+  错因标签：duplicate_handling。
+
+  第四类错误是**双重循环 $O(n^2)$ 暴力枚举**。答案正确，
+  但 $n = 10^5$ 时是 $5 \times 10^9$ 次比较，必然超时。
+  错因标签：wrong_complexity。
+
+  第五类错误是**用数组当下标表**（例如 `int pos[2000000000]`）
+  或者用 `map<int,int>`，前者内存爆掉、后者退化成 $O(n \log n)$
+  且常数极大。错因标签：wrong_data_type。
+
+  第六类错误是**输出用 0 起始的下标**（样例 2 里会输出 `1 2`
+  而正确答案是 `2 3`，恰好与样例 1 混淆）。错因标签：
+  io_format_error。
+
+  原始哈希表解法的 `bestI` 比较逻辑在本题数据下都给出
+  "最小的 $i$"：因为只有当 `i < bestI` 时才替换，而扫描到
+  位置 $j$ 时能配对的 $i$ 是**该值最早出现的位置**，
+  所以先被记下的那一组本身就是最小的 $i$。这也是为什么
+  本题样例设计上要放一个"多个候选对"的用例来固定行为。

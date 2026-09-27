@@ -1,0 +1,120 @@
+id: p078-merge-two-sorted-arrays
+title: 合并两个有序数组
+knowledge_tags:
+  - 数组
+  - 双指针
+  - 排序
+difficulty: easy
+source: 经典算法题
+description: |
+  给定两个**已经按升序排列**的整数数组，请把它们合并成一个升序数组
+  并输出。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$，分别表示两个数组的长度。
+  第二行 $n$ 个整数，已按升序排列。
+  第三行 $m$ 个整数，已按升序排列。
+
+  **输出格式**
+
+  一行，$n + m$ 个整数，合并后的升序序列，以空格分隔。
+
+  **数据范围**
+
+  $1 \le n, m \le 10^5$，$-10^9 \le a_i, b_i \le 10^9$
+
+  **提示**
+
+  两个数组各自有序，但**彼此之间没有大小关系**（可能出现第一个数组的
+  所有元素都大于第二个数组的所有元素）。
+input_format: 第一行 n m，接下来两行各一个升序数组。
+output_format: 一行 n+m 个整数，合并后的升序序列。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 3\n1 3 5\n2 4 6\n"
+    expected_output: "1 2 3 4 5 6\n"
+    is_sample: true
+  - input: "1 1\n1\n2\n"
+    expected_output: "1 2\n"
+    is_sample: true
+  - input: "1 4\n10\n1 2 3 4\n"
+    expected_output: "1 2 3 4 10\n"
+  - input: "4 1\n1 2 3 4\n0\n"
+    expected_output: "0 1 2 3 4\n"
+  - input: "3 3\n1 1 1\n1 1 1\n"
+    expected_output: "1 1 1 1 1 1\n"
+  - input: "2 3\n-5 0\n-3 3 100\n"
+    expected_output: "-5 -3 0 3 100\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, m;
+      cin >> n >> m;
+      vector<long long> a(n), b(m);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      for (int i = 0; i < m; ++i) cin >> b[i];
+
+      // Two-finger merge: whichever side has the smaller head goes next.
+      // The two while (…) tails are what make it O(n+m) — after one input
+      // is exhausted the rest of the other is already sorted, so it can be
+      // copied wholesale instead of compared one at a time.
+      vector<long long> out;
+      out.reserve(n + m);
+      int i = 0, j = 0;
+      while (i < n && j < m) {
+          if (a[i] <= b[j]) out.push_back(a[i++]);
+          else out.push_back(b[j++]);
+      }
+      while (i < n) out.push_back(a[i++]);
+      while (j < m) out.push_back(b[j++]);
+
+      for (int k = 0; k < (int)out.size(); ++k) {
+          if (k) cout << ' ';
+          cout << out[k];
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  归并是最基础的双指针，错误集中在"收尾"和"相等时取哪边"。
+
+  第一类错误是**主循环结束后忘记把剩余元素接上**（只写了主循环，
+  没有两个 `while` 收尾）。当两个数组长度不同时，长的那个数组的
+  剩余部分被整个丢掉。样例 3（`10` 与 `1 2 3 4`）输出
+  `1 2 3 4` 而漏掉 `10`。错因标签：missing_case。
+
+  第二类错误是**收尾只写一个数组**（例如只补 `a` 不补 `b`）。
+  于是哪个数组先耗尽取决于数据，表现为"有些输入对、有些少一截"。
+  样例 4（`1 2 3 4` 与 `0`）中 `b` 先耗尽，只补 `a` 恰好正确，
+  而反过来就错——这种"一半数据能过"的错最难自查。错因标签：
+  missing_case。
+
+  第三类错误是**相等时的比较写成严格 `<`**，即 `if (a[i] < b[j])`
+  取 `a`，否则取 `b`。输出序列仍然正确（相等元素谁先都一样），
+  所以**不构成错误**，属等价写法。注意这与"稳定归并"的稳定性要求
+  是两回事——本题输出的是值序列，稳定性不可观测。
+
+  第四类错误是**输出格式：每个数后面都加空格**，行末多一个空格。
+  多数评测忽略行末空格，但严格比对下会 WA。应当用"前导空格"形式。
+  错因标签：io_format_error。
+
+  第五类错误是**把两个数组拼起来再整体 `sort`**。答案**完全正确**，
+  只是复杂度 $O((n+m)\log(n+m))$ 而不是 $O(n+m)$；本题
+  $n+m \le 2\times10^5$ 完全不会超时。这是等价解法而非错误，
+  但它丢掉了"两个数组各自有序"这个前提的利用。错因标签：
+  wrong_complexity（认知层面，不构成判错）。
+
+  第六类错误是**下标推进写成 `i++` 却取 `b[j]`**（取完不推进对应
+  的指针）。会造成某个元素被重复输出、另一个被跳过，序列长度对但
+  内容乱。样例 1 会输出 `1 2 2 4 5 6` 之类。错因标签：wrong_traversal。
+
+  第七类错误是**读入时把 $n$ 和 $m$ 看反**。若 $n \ne m$ 会读错
+  行数，样例 3（`1 4`）下第二行只读 1 个数却按 4 个读，后续全乱。
+  错因标签：misread_problem。

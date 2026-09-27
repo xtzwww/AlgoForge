@@ -1,0 +1,105 @@
+id: p027-reverse-k-group
+title: 每 K 个一组反转
+knowledge_tags:
+  - 数组
+  - 循环
+  - 边界处理
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数数组和一个整数 $k$，
+  请把数组按照**每 $k$ 个元素为一组**进行反转：
+
+  - 从数组开头开始，每连续 $k$ 个元素分为一组，组内元素顺序反转；
+  - 如果最后剩下不足 $k$ 个元素，则这一段的顺序**保持不变**。
+
+  反转完成后，按顺序输出整个数组。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $k$，以空格分隔。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，$n$ 个整数，以空格分隔，表示处理后的数组。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$1 \le k \le n$，$|a_i| \le 10^9$
+input_format: 第一行 n 和 k，第二行 n 个整数。
+output_format: 一行 n 个整数，以空格分隔。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 2\n1 2 3 4 5\n"
+    expected_output: "2 1 4 3 5\n"
+    is_sample: true
+  - input: "4 2\n1 2 3 4\n"
+    expected_output: "2 1 4 3\n"
+    is_sample: true
+  - input: "3 3\n1 2 3\n"
+    expected_output: "3 2 1\n"
+  - input: "1 1\n42\n"
+    expected_output: "42\n"
+  - input: "7 3\n1 2 3 4 5 6 7\n"
+    expected_output: "3 2 1 6 5 4 7\n"
+  - input: "5 5\n-1 0 1 2 3\n"
+    expected_output: "3 2 1 0 -1\n"
+  - input: "6 4\n1 2 3 4 5 6\n"
+    expected_output: "4 3 2 1 5 6\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, k;
+      cin >> n >> k;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+
+      // Only full groups are reversed; the guard below is what keeps a
+      // short tail untouched.
+      for (int start = 0; start + k <= n; start += k) {
+          reverse(a.begin() + start, a.begin() + start + k);
+      }
+
+      for (int i = 0; i < n; ++i) {
+          if (i) cout << ' ';
+          cout << a[i];
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  本题唯一真正的考点是**末尾不足一组的那一段必须原样保留**，
+  而这恰好是最容易漏掉的一处。
+
+  第一类错误是内层循环写成 `for (int j = 0; j < k; ++j)` 直接反转
+  `[i, i + k)`，不检查 `i + k` 是否越界。当 $n$ 不是 $k$ 的整数倍时，
+  最后一段会把数组末尾之外的区域也反转进来——具体表现取决于实现：
+  容器越界是未定义行为，可能读到垃圾数据、可能崩溃、也可能因为
+  `std::reverse` 在原地交换时"看起来"只是把剩余元素翻转了。
+  本题用 `7 3` 和 `6 4` 两组隐藏用例专门覆盖这种尾巴。
+  错因标签：boundary_condition / off_by_one。
+
+  第二类错误是把循环上界写成 `start < n` 而不是 `start + k <= n`，
+  于是尾巴被当成一组处理。与第一类的区别在于它不一定越界读取，
+  而是**明确地把不足 k 个的尾巴也翻转了**，输出看起来"格式正确、
+  只是顺序不对"。错因标签：boundary_condition。
+
+  第三类错误是判等写成 `start + k < n`，这会把**最后一个完整的组**
+  也排除在外：$n$ 为 $k$ 的整数倍时最后一组没有反转。样例 1
+  （$n = 5, k = 2$）能暴露这种写法。错因标签：off_by_one。
+
+  第四类错误是输出时多打一个前导空格或漏掉分隔符，导致判题时
+  字符串比较失败。错因标签：io_format_error。
+
+  第五类是把 `reverse` 写成手动交换但循环条件写错（例如
+  `j <= k / 2`），多交换一次把中间两个元素又换回来，造成"看起来
+  反转了、实际有一对在原地"。错因标签：off_by_one。

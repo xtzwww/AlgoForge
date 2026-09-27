@@ -44,12 +44,19 @@ const harness = vi.hoisted(() => ({
     ready: { value: boolean }
     user: { value: null | { id: number; username: string; display_name: string; role: string } }
   },
-  registerCalls: [] as { username: string; password: string; displayName: string }[],
+  registerCalls: [] as {
+    username: string
+    password: string
+    displayName: string
+    role: string
+  }[],
   replaceCalls: [] as unknown[],
   /** 让 `register` 抛指定错误。 */
   failWith: null as unknown,
   /** 让 `register` 永远不返回，用来观察「提交中」的状态。 */
-  pending: false
+  pending: false,
+  /** 跨端指路调用（见下方 mock 的 navigation 模块）。 */
+  goToCalls: [] as string[]
 }))
 
 vi.mock('../api/session', async () => {
@@ -63,8 +70,13 @@ vi.mock('../api/session', async () => {
   return {
     sessionReady: computed(() => ready.value),
     sessionUser: computed(() => user.value),
-    register: async (username: string, password: string, displayName: string) => {
-      harness.registerCalls.push({ username, password, displayName })
+    register: async (
+      username: string,
+      password: string,
+      displayName: string,
+      role = 'student'
+    ) => {
+      harness.registerCalls.push({ username, password, displayName, role })
       // 一个永不 resolve 的 promise，而不是「抛一个 promise」：在 async 函数里
       // `throw somePromise` 是把那个 promise 当作**拒绝原因**，函数会立刻
       // reject —— 只有 `return` 一个 thenable 才会被采纳。所以挂住必须靠
@@ -80,6 +92,12 @@ vi.mock('../api/session', async () => {
     }
   }
 })
+
+vi.mock('../runtime/navigation', () => ({
+  goTo: (url: string) => {
+    harness.goToCalls.push(url)
+  }
+}))
 
 vi.mock('vue-router', async () => {
   const { defineComponent, h } = await import('vue')
@@ -149,6 +167,12 @@ function httpError(status: number, detail?: string): unknown {
   return { response: { status, data: detail === undefined ? {} : { detail } } }
 }
 
+/**
+ * 第三轮（入口即身份）起，跨端切换（学生入口点「老师」）调用
+ * `goTo` 整页去那端的注册页。jsdom 的 `location.assign` 不可重定义，
+ * 所以导航被 mock 成 `harness.goToCalls`；跳转 URL 的正确性由
+ * `landing.spec.ts` 的 `entryUrlForIntent` 纯函数测试钉死。
+ */
 beforeEach(() => {
   harness.state.ready.value = true
   harness.state.user.value = null
@@ -156,6 +180,7 @@ beforeEach(() => {
   harness.replaceCalls = []
   harness.failWith = null
   harness.pending = false
+  harness.goToCalls = []
 })
 
 describe('RegisterView', () => {
@@ -190,6 +215,43 @@ describe('RegisterView', () => {
       .findAll('input')
       .map((node) => (node.element as HTMLInputElement).getAttribute('name'))
     expect(names).toEqual(['username', 'display-name', 'password', 'confirm-password'])
+  })
+
+  // --- 1b. 学生/老师切换（2026-09-25 第二轮） ------------------------
+
+  it('页面顶部提供学生/老师两个切换按钮，默认选中学生', async () => {
+    const w = mountView()
+    const buttons = w.findAll('button').filter((b) => b.text() === '学生' || b.text() === '老师')
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0].attributes('aria-pressed')).toBe('true')
+    expect(buttons[1].attributes('aria-pressed')).toBe('false')
+  })
+
+  it('学生入口点「老师」= 去教师端注册页（指路，不在本页注册教师号）', async () => {
+    const w = mountView()
+    await w.findAll('button').find((b) => b.text() === '老师')!.trigger('click')
+    await flushPromises()
+
+    // 入口即身份：跨端切换是整页指路，不改变本页要注册的角色。
+    expect(harness.goToCalls).toEqual(['teacher.web.html#/register'])
+    expect(harness.registerCalls).toHaveLength(0)
+    // 意图跟随了点击（文案变教师版），但表单提交仍只认当前入口的学生。
+    expect(w.text()).toContain('自己创建一个教师账号')
+  })
+
+  it('同端切换（学生↔学生）不跳转，文案与请求角色跟随意图', async () => {
+    const w = mountView()
+    // 点「老师」被 stub 拦下（不真导航），意图仍变 teacher；再点回学生。
+    await w.findAll('button').find((b) => b.text() === '老师')!.trigger('click')
+    await flushPromises()
+    await w.findAll('button').find((b) => b.text() === '学生')!.trigger('click')
+    await flushPromises()
+
+    expect(harness.goToCalls).toEqual(['teacher.web.html#/register'])
+    expect(w.text()).toContain('自己创建一个学生账号')
+
+    await fillAndSubmit(w, { username: 'again_student' })
+    expect(harness.registerCalls[0].role).toBe('student')
   })
 
   // --- 2. 本地校验：能不发请求就不发 ---------------------------------
@@ -241,6 +303,16 @@ describe('RegisterView', () => {
 
     expect(harness.registerCalls).toHaveLength(1)
     expect(harness.replaceCalls).toEqual([{ name: 'assignments' }])
+  })
+
+  it('学生端入口发出的注册请求带 role=student', async () => {
+    // 测试环境是学生端入口（`runtime/mode.ts` 按地址判定，vitest 里是
+    // jsdom 默认地址），所以页面按端请求的就是学生角色 —— 服务端白名单
+    // 只认字面 "teacher"，这里发的值必须恰好匹配其一。
+    const w = mountView()
+    await fillAndSubmit(w)
+
+    expect(harness.registerCalls[0].role).toBe('student')
   })
 
   it('提交前把用户名和姓名的首尾空格去掉', async () => {
@@ -342,9 +414,15 @@ describe('RegisterView', () => {
     expect(harness.replaceCalls).toHaveLength(0)
   })
 
-  it('角色就绪后从教师变成学生也跟着走对地方', async () => {
+  it('角色就绪后落点跟随当前端——学生入口下任何角色都落学生首页', async () => {
     // 注册页只会产出学生，但这个 watch 是复用 LoginView 的那段，所以它必须
     // 对任何角色都成立 —— 否则哪天服务端真的返回了教师，页面会跳错。
+    //
+    // 2026-09-25 第三轮（入口即身份）起，真实系统里教师账号在**学生端网址**
+    // 的已登录会话会被 `router/index.ts` 的全局守卫与 `main.ts` 的会话
+    // watch 拦下（登出 + 送回登录页 + entryErr 提示），不会停留在学生界面；
+    // 本用例钉的只是组件 watch 自身的落点逻辑不回退（它不知道守卫存在）。
+    // 测试环境是学生端入口，`landingName` 因此让任何角色都落「我的作业」。
     harness.state.user.value = {
       id: 1,
       username: 'teacher1',
@@ -354,7 +432,7 @@ describe('RegisterView', () => {
     mountView()
     await flushPromises()
 
-    expect(harness.replaceCalls).toEqual([{ name: 'teacher' }])
+    expect(harness.replaceCalls).toEqual([{ name: 'assignments' }])
   })
 
   // --- 6. 失败之后还能再试 -------------------------------------------

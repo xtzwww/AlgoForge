@@ -106,6 +106,20 @@ class Assignment(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
+    #: Which problem set this assignment was drawn from, when it was
+    #: published from one (阶段: 题单改造). The homework is still a
+    #: *snapshot* — ``problem_ids`` is what the students actually see and
+    #: the set can change afterwards without touching this row. This
+    #: column only records provenance, so a teacher can later answer
+    #: "which assignments came from 二分专题" and stats can be traced back
+    #: to a set. ``ondelete="SET NULL"`` because deleting a set must not
+    #: take the assignments that cite it down with it.
+    source_set_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("problem_sets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     #: See the class attribute docstring: nullable so pre-class rows stay
     #: valid and so "set for everyone" is expressible without a fake class.
     class_id: Mapped[Optional[int]] = mapped_column(
@@ -135,6 +149,7 @@ class Assignment(Base):
             "assistance_level": self.assistance_level,
             "assistance": policy_to_dict(policy_for(self.assistance_level)),
             "created_by": self.created_by,
+            "source_set_id": self.source_set_id,
             "class_id": self.class_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

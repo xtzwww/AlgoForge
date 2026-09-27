@@ -130,12 +130,49 @@ if "!PG_UP!"=="1" (
 REM --- 2. sidecar backend --------------------------------------
 REM  /health is a shallow probe that does not touch the DB, so a
 REM  200 means the process is really serving.
+REM
+REM  Serving is not the same as CURRENT, though, and this probe cannot
+REM  tell the difference. It answered happily for a backend started
+REM  hours earlier, so edits under sidecar\app had no visible effect
+REM  until somebody killed the process by hand -- and the symptom was a
+REM  live server returning 404 for a route that plainly exists on disk,
+REM  which reads as a routing or frontend bug. It cost an afternoon.
+REM
+REM  So when something answers, ask it which revision it loaded. The
+REM  sidecar publishes a fingerprint of its own sources on /health
+REM  (sidecar\app\code_stamp.py); tools\sidecar-stale.mjs hashes the
+REM  files on disk and compares. Different -> restart it here.
+REM
+REM  The helper prints 0 fresh / 1 stale / 2 cannot tell and ALWAYS exits
+REM  0, for the reason spelled out at step 3 below: through `for /f` a
+REM  non-zero exit is indistinguishable from "node is not installed". Only
+REM  the literal 0 means reuse. Empty (node missing, script threw) and 2
+REM  both restart, because reusing a process whose revision is unknown is
+REM  exactly the bug this check exists to catch.
+REM
+REM  NOTE: `for /f` and the label below stay at the TOP LEVEL, never
+REM  inside a parenthesised block -- see the header note about cmd's
+REM  block parser. The one block here contains only `echo` and `goto`.
+set "API_RUNNING=0"
 curl -s --noproxy "*" -m 3 "http://127.0.0.1:%SIDECAR_PORT%/health" >nul 2>&1
-if not errorlevel 1 (
+if not errorlevel 1 set "API_RUNNING=1"
+if "%API_RUNNING%"=="0" goto api_start
+
+set "SIDECAR_STATE="
+for /f "delims=" %%S in ('node "%PROJECT_ROOT%tools\sidecar-stale.mjs" "%SIDECAR_DIR%" %SIDECAR_PORT%') do set "SIDECAR_STATE=%%S"
+if "%SIDECAR_STATE%"=="0" (
   echo   [2/4] 后端已在运行 %SIDECAR_PORT%
   goto api_checked
 )
 
+echo   [2/4] 后端在跑但代码已更新，重启 %SIDECAR_PORT%
+call :kill_port %SIDECAR_PORT% "后端 sidecar"
+REM  Give the socket a moment to be released. Binding a port that a
+REM  just-killed process still holds fails, and the failure surfaces 40
+REM  seconds later as "后端未启动" -- a wrong diagnosis of a wrong action.
+ping -n 3 127.0.0.1 >nul
+
+:api_start
 echo   [2/4] 启动后端 %SIDECAR_PORT%
 pushd "%SIDECAR_DIR%"
 REM  Clear PYTHONPATH: the outer environment often points it at
@@ -183,6 +220,7 @@ REM  invisible: nothing errors, the old page just keeps working.
 REM  NOTE: the Vite entry is index.web.html, NOT index.html.
 set "NEED_BUILD=0"
 if not exist "%DESKTOP_DIR%\dist-web\index.web.html" set "NEED_BUILD=1"
+if not exist "%DESKTOP_DIR%\dist-web\teacher.web.html" set "NEED_BUILD=1"
 if not exist "%DESKTOP_DIR%\dist-web\assets" set "NEED_BUILD=1"
 findstr /m /c:"127.0.0.1:%SIDECAR_PORT%" "%DESKTOP_DIR%\dist-web\assets\*.js" >nul 2>&1
 if errorlevel 1 set "NEED_BUILD=1"
@@ -251,8 +289,8 @@ REM  people to a file list they then have to click through.
 start "" "http://127.0.0.1:%WEB_PORT%/index.web.html"
 
 echo.
-echo   已打开   http://127.0.0.1:%WEB_PORT%/index.web.html
-echo   教师端   http://127.0.0.1:%WEB_PORT%/index.web.html#/teacher   账号 teacher 密码 123456
+echo   已打开   http://127.0.0.1:%WEB_PORT%/index.web.html   （学生端）
+echo   教师端   http://127.0.0.1:%WEB_PORT%/teacher.web.html   账号 teacher 密码 123456
 echo.
 echo   停服务请双击 stop-web.bat ，关掉本窗口不会停服务
 echo.

@@ -1,0 +1,135 @@
+id: p047-top-k-frequent
+title: 出现次数最多的 K 个元素
+knowledge_tags:
+  - 哈希表
+  - 排序
+  - 计数
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数序列和一个整数 $k$，
+  请找出其中出现次数最多的 $k$ 个不同的数。
+
+  输出规则：
+
+  1. 按出现次数**从大到小**排列；
+  2. 出现次数相同时，**数值小的排在前面**。
+
+  保证不同的数至少有 $k$ 个。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $k$，以空格分隔。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，共 $k$ 个整数，以空格分隔，表示出现次数最多的 $k$ 个元素。
+
+  **数据范围**
+
+  $1 \le k \le n \le 10^5$，$|a_i| \le 10^9$，
+  保证不同的数至少有 $k$ 个。
+  （在该保证下，$k$ 名之内不会出现次数相同的情况：
+  若前 $k$ 与第 $k+1$ 名次数相同，元素总数会小于 $n$。）
+input_format: 第一行 n 和 k，第二行 n 个整数。
+output_format: 一行 k 个整数，以空格分隔。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "6 2\n1 1 1 2 2 3\n"
+    expected_output: "1 2\n"
+    is_sample: true
+  - input: "4 2\n4 4 5 5\n"
+    expected_output: "4 5\n"
+    is_sample: true
+  - input: "1 1\n7\n"
+    expected_output: "7\n"
+  - input: "5 3\n3 3 2 2 1\n"
+    expected_output: "2 3 1\n"
+  - input: "6 3\n-1 -1 -1 -2 -2 -3\n"
+    expected_output: "-1 -2 -3\n"
+  - input: "5 2\n3 3 3 1 1\n"
+    expected_output: "3 1\n"
+  - input: "6 2\n7 7 7 8 8 9\n"
+    expected_output: "7 8\n"
+  - input: "8 4\n7 7 8 8 9 9 1 1\n"
+    expected_output: "1 7 8 9\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <unordered_map>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, k;
+      cin >> n >> k;
+      unordered_map<long long, int> cnt;
+      cnt.reserve(n * 2);
+      for (int i = 0; i < n; ++i) {
+          long long x;
+          cin >> x;
+          ++cnt[x];
+      }
+
+      vector<pair<int, long long>> items;  // (count, value)
+      for (auto &kv : cnt) items.push_back({kv.second, kv.first});
+
+      // Frequency first, then value ascending — the tie rule is part of
+      // the specification, and the comparator has to encode both keys.
+      sort(items.begin(), items.end(), [](const auto &a, const auto &b) {
+          if (a.first != b.first) return a.first > b.first;
+          return a.second < b.second;
+      });
+
+      for (int i = 0; i < k; ++i) {
+          if (i) cout << ' ';
+          cout << items[i].second;
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  **注意：本题数据范围内不存在次数平局。**
+  $n \le 10^5$ 且 $k \le n$，而"至少 $k$ 个不同的数"意味着
+  次数之和为 $n$、项数为 $m \ge k$。若前 $k$ 名与第 $k+1$ 名
+  次数相同，则该次数最多为 $\lfloor n/m \rfloor \le \lfloor n/k \rfloor$，
+  于是总元素数被卡到小于 $n$，自相矛盾。所以"次数相同时数值小的
+  在前"这条规则在本数据范围内**永远不会被触发**，它是规范的完整性
+  要求（同时也是对哈希表遍历顺序的防御），而不是可观测行为。
+  构造不出能暴露它的用例——曾尝试
+  `6 4 / 7 7 8 8 9 9 1 1`，该输入本身违反"至少有 4 个不同的数"
+  （实际只有 4 个值但 $n$ 为 6，`k` 不可达导致越界 RE）。
+
+  第一类错误是**只按次数排序，不写数值平局规则**。在本题数据下
+  结果依然正确（见上），但排序一旦不稳定，输出的顺序就取决于
+  `unordered_map` 的遍历顺序，是"看起来能过、换编译器就变"的写法。
+  错因标签：missing_case。
+
+  第二类错误是**把 `map` 换成 `unordered_map` 后仍依赖其
+  遍历顺序**（认为它是按插入顺序），于是同样的输入在
+  不同运行中结果可能不同。错因标签：wrong_data_type。
+
+  第三类错误是**排序比较函数写成了非严格弱序**：
+  `return a.first >= b.first;` 在 `std::sort` 下是未定义行为，
+  可能崩溃或产生乱序。错因标签：wrong_algorithm。
+
+  第四类错误是**用"桶排序 + 从高到低扫桶"但桶内没有对数值
+  排序**：桶内顺序取决于插入顺序。错因标签：missing_case。
+
+  第五类错误是**没有检查不同元素是否够 $k$ 个**：题面保证
+  至少有 $k$ 个不同的数，但若实现里没依赖这一保证（例如把
+  "不同元素"理解成"所有位置"），`items.size() < k` 时会越界
+  读——这正是上面那条违规用例触发的 RE。错因标签：
+  boundary_condition。
+
+  第六类错误是**输出时只输出次数最多的那一个元素重复 $k$ 次**，
+  或输出了元素**和它的次数**两个值。错因标签：io_format_error。
+
+  第七类错误是**用数组下标做计数**（`int cnt[1000000001]`）
+  或按值域开哈希，$|a_i| \le 10^9$ 时内存爆掉。
+  错因标签：wrong_data_type。

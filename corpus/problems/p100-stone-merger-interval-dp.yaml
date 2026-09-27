@@ -1,0 +1,136 @@
+id: p100-stone-merger-interval-dp
+title: 石子合并（区间动态规划）
+knowledge_tags:
+  - 动态规划
+  - 区间
+  - 前缀和
+  - 复杂度分析
+difficulty: hard
+source: 经典算法题
+description: |
+  有 $n$ 堆石子排成一排，第 $i$ 堆有 $a_i$ 颗。每次可以把
+  **相邻的两堆**合并成一堆，代价为这两堆石子总数。
+
+  请找出把所有石子合并成一堆的**最小总代价**。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最小总代价。
+
+  **数据范围**
+
+  $1 \le n \le 300$，$1 \le a_i \le 10^4$
+
+  **提示**
+
+  只能合并**相邻**的两堆。答案可能很大，请用 64 位整数。
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，最小合并代价。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4\n4 5 9 4\n"
+    expected_output: "44\n"
+    is_sample: true
+  - input: "3\n1 2 3\n"
+    expected_output: "9\n"
+    is_sample: true
+  - input: "1\n7\n"
+    expected_output: "0\n"
+  - input: "2\n3 4\n"
+    expected_output: "7\n"
+  - input: "5\n3 4 5 6 7\n"
+    expected_output: "57\n"
+  - input: "4\n1 1 1 1\n"
+    expected_output: "8\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<long long> a(n + 1);
+      for (int i = 1; i <= n; ++i) cin >> a[i];
+
+      // prefix[i] = sum of a[1..i]; the cost of merging [l, r] into one
+      // pile is always prefix[r] - prefix[l-1], independent of the order
+      // the sub-merges happened in.
+      vector<long long> prefix(n + 1, 0);
+      for (int i = 1; i <= n; ++i) prefix[i] = prefix[i - 1] + a[i];
+
+      const long long INF = (1LL << 60);
+      // dp[l][r] = minimum cost to merge piles l..r into one pile.
+      vector<vector<long long>> dp(n + 2, vector<long long>(n + 2, 0));
+
+      // Iterate by length: every state depends only on strictly shorter
+      // intervals, so increasing length is a valid order.
+      for (int len = 2; len <= n; ++len) {
+          for (int l = 1; l + len - 1 <= n; ++l) {
+              int r = l + len - 1;
+              dp[l][r] = INF;
+              long long total = prefix[r] - prefix[l - 1];
+              for (int k = l; k < r; ++k) {
+                  dp[l][r] = min(dp[l][r], dp[l][k] + dp[k + 1][r] + total);
+              }
+          }
+      }
+      cout << dp[1][n] << endl;
+      return 0;
+  }
+eval_notes: |
+  区间 DP 的错误几乎全在**枚举顺序**上——状态依赖比它短的区间，
+  所以必须按长度从小到大算。
+
+  第一类错误是**按左端点从 1 到 n、右端点从 1 到 n 双重循环
+  （不按长度）**。这样计算 `dp[l][r]` 时 `dp[l][k]` 或
+  `dp[k+1][r]` 可能还没被算过（仍是 0 或 INF），
+  于是取 min 时把未初始化的值当成候选。若初值是 0，
+  会得到**偏小**的答案；样例 1（正确 44）会输出 22 之类。
+  这是本题最核心的一处。错因标签：wrong_traversal。
+
+  第二类错误是**`dp` 数组初始化为 0 而不是 INF，且没有
+  `len == 1` 的边界**。长度 1 的区间代价是 0（不用合并），
+  这是对的；但长度 $\ge 2$ 的区间必须先设为 INF 再取 min，
+  否则 min 永远选到 0。样例 3（$n=1$，正确 0）侥幸正确，
+  样例 2（$n=3$，正确 9）会输出 6。错因标签：initialization。
+
+  第三类错误是**合并代价写成 `a[k] + a[k+1]`**（只算两堆的
+  和）而不是**整个区间的和** `prefix[r] - prefix[l-1]`。
+  每次合并的代价应当是**被合并的那两堆当前的石子总数**，
+  它等于该区间的总和。写成相邻两堆的原始值会严重低估。
+  样例 1（正确 44）会输出 22。错因标签：wrong_algorithm。
+
+  第四类错误是**循环里 `k` 的范围写成 `k <= r`**。
+  `dp[k+1][r]` 在 $k = r$ 时变成 `dp[r+1][r]`，
+  是空区间，值为 0（若未初始化）或越界；同时
+  `dp[l][k]` 变成整个区间本身，形成自引用。
+  表现为答案偏小或不变。错因标签：off_by_one。
+
+  第五类错误是**用 `int` 存代价**。$n=300$、$a_i=10^4$ 时
+  总代价可达约 $300 \times 3\times10^6 \approx 10^9$ 量级，
+  已经接近 `int` 上限；用 `long long` 才安全。
+  错因标签：overflow。
+
+  第六类错误是**没有处理 $n = 1$**。此时不需要合并，
+  正确答案是 0；若 `dp` 未正确初始化会输出 INF 或垃圾值。
+  样例 3 专门覆盖这个。错因标签：boundary_condition。
+
+  第七类错误是**前缀和下标写成 `prefix[r] - prefix[l]`
+  （漏掉 -1）**。区间 $[l,r]$ 的和应该是
+  `prefix[r] - prefix[l-1]`；写成 `prefix[l]` 会少算
+  $a_l$。样例 2（`1 2 3`，正确 9）会输出偏小的值。
+  错因标签：off_by_one。
+
+  第八类错误是**用记忆化搜索（递归 + 备忘录）代替递推**。
+  这**完全正确**，输出一致，且不必操心枚举顺序（递归天然
+  保证了依赖先算）。属等价解法，本题无法区分。
+  错因标签：无（不构成错误）。

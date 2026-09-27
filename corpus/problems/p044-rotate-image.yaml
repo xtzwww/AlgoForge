@@ -1,0 +1,129 @@
+id: p044-rotate-image
+title: 矩阵顺时针旋转 90 度
+knowledge_tags:
+  - 二维数组
+  - 矩阵
+  - 模拟
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个 $n \times n$ 的整数矩阵，请把它**顺时针旋转 90 度**后输出。
+
+  例如 $3 \times 3$ 的矩阵
+
+  ```
+  1 2 3
+  4 5 6
+  7 8 9
+  ```
+
+  顺时针旋转 90 度后是
+
+  ```
+  7 4 1
+  8 5 2
+  9 6 3
+  ```
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  接下来 $n$ 行，每行 $n$ 个整数，以空格分隔。
+
+  **输出格式**
+
+  共 $n$ 行，每行 $n$ 个整数，以空格分隔，表示旋转后的矩阵。
+
+  **数据范围**
+
+  $1 \le n \le 1000$，$|a_{ij}| \le 10^9$
+input_format: 第一行 n，接下来 n 行每行 n 个整数。
+output_format: 共 n 行，每行 n 个整数，以空格分隔。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\n1 2 3\n4 5 6\n7 8 9\n"
+    expected_output: "7 4 1\n8 5 2\n9 6 3\n"
+    is_sample: true
+  - input: "1\n5\n"
+    expected_output: "5\n"
+    is_sample: true
+  - input: "2\n1 2\n3 4\n"
+    expected_output: "3 1\n4 2\n"
+  - input: "4\n1 2 3 4\n5 6 7 8\n9 10 11 12\n13 14 15 16\n"
+    expected_output: "13 9 5 1\n14 10 6 2\n15 11 7 3\n16 12 8 4\n"
+  - input: "2\n-1 -2\n-3 -4\n"
+    expected_output: "-3 -1\n-4 -2\n"
+  - input: "3\n0 1 0\n1 0 1\n0 1 0\n"
+    expected_output: "0 1 0\n1 0 1\n0 1 0\n"
+  - input: "2\n1 1\n1 1\n"
+    expected_output: "1 1\n1 1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<vector<long long>> a(n, vector<long long>(n));
+      for (int i = 0; i < n; ++i)
+          for (int j = 0; j < n; ++j) cin >> a[i][j];
+
+      // Write into a fresh matrix rather than rotating in place: the
+      // in-place version needs a 4-way cycle, and a 2-swap version
+      // silently overwrites values it still needs.
+      vector<vector<long long>> b(n, vector<long long>(n));
+      for (int i = 0; i < n; ++i) {
+          for (int j = 0; j < n; ++j) {
+              b[j][n - 1 - i] = a[i][j];
+          }
+      }
+
+      for (int i = 0; i < n; ++i) {
+          for (int j = 0; j < n; ++j) {
+              if (j) cout << ' ';
+              cout << b[i][j];
+          }
+          cout << '\n';
+      }
+      return 0;
+  }
+eval_notes: |
+  本题的坐标映射是 $b[j][n-1-i] = a[i][j]$，写错任何一个
+  下标都会得到"某一个方向的旋转"，而错的那些方向都同样
+  是合法输出，因此只看输出很难判断是映射错了。
+
+  第一类错误是**把映射写成 $b[i][j] = a[j][n-1-i]$**（旋转方向
+  相反，即逆时针 90 度）。$3 \times 3$ 的样例会立刻暴露：
+  得到 `3 6 9 / 2 5 8 / 1 4 7`。错因标签：inverted_condition。
+
+  第二类错误是**只做了转置 `b[j][i] = a[i][j]`** 而没做列翻转，
+  得到的是转置而不是旋转。注意 $3 \times 3$ 的样例里
+  转置结果是 `1 4 7 / 2 5 8 / 3 6 9`，与正确答案
+  `7 4 1 / 8 5 2 / 9 6 3` 差别明显，但单独看每一行都像是
+  原矩阵的某一列，容易被误认为"格式对、顺序小问题"。
+  错因标签：misread_problem。
+
+  第三类错误是**改成先水平翻转再转置**，顺序反了就变成了
+  逆时针旋转。错因标签：wrong_traversal。
+
+  第四类错误是**原地旋转时用两次交换**（先沿副对角线交换、
+  再沿水平中线交换，顺序写错），会覆盖掉还没读到的元素，
+  输出里出现重复值。$3 \times 3$ 的样例能暴露。错因标签：
+  uninitialized_state / wrong_traversal。
+
+  第五类错误是**旋转了 90 度的幂次但数错了次数**（相当于
+  旋转 180 度）。用例 `2 / 1 2 / 3 4` 中，180 度结果是
+  `4 3 / 2 1`，与正确答案 `3 1 / 4 2` 不同，但同样是
+  "看起来合理的矩阵"。错因标签：off_by_one。
+
+  第六类错误是**输出时行列颠倒**（按列优先打印），
+  但 $3 \times 3$ 样例恰好是对称的会把这类错误掩盖，
+  必须靠 `2` 和 `4` 的用例暴露。错因标签：io_format_error。
+
+  第七类错误是**用 `int` 存储 $10^9$ 的元素**本身安全，
+  但若在旋转中做了任何加法就会溢出。错因标签：overflow。

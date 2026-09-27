@@ -1,0 +1,113 @@
+id: p046-word-reverse
+title: 翻转字符串里的单词
+knowledge_tags:
+  - 字符串
+  - 双指针
+  - 模拟
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个字符串 $s$，请把其中的**单词顺序反转**，
+  单词内部字符顺序保持不变。
+
+  规则：
+
+  1. 单词是由非空格字符组成的连续序列；
+  2. 单词之间可能有多余空格，也可能有前导或尾随空格；
+  3. 若字符串中存在单词，输出时单词之间**只用一个空格分隔**，
+     且没有前导、尾随空格；
+  4. 如果字符串中没有任何单词，则**原样输出该字符串**
+     （例如输入一个空格就输出一个空格）。
+
+  **输入格式**
+
+  一行，一个字符串 $s$（可能包含空格，可能为空行）。
+
+  **输出格式**
+
+  一行。
+  — 有单词时：反转后的字符串，单词间单个空格分隔；
+  — 没有单词时：原字符串不变。
+
+  **数据范围**
+
+  字符串长度不超过 $10^5$，字符为可打印 ASCII 字符
+input_format: 一行一个字符串（可能含空格）。
+output_format: 一行反转单词后的字符串（可能为空行）。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "the sky is blue\n"
+    expected_output: "blue is sky the\n"
+    is_sample: true
+  - input: "  hello world  \n"
+    expected_output: "world hello\n"
+    is_sample: true
+  - input: "a good   example\n"
+    expected_output: "example good a\n"
+    is_sample: true
+  - input: "single\n"
+    expected_output: "single\n"
+  - input: "one  two\n"
+    expected_output: "two one\n"
+  - input: " \n"
+    expected_output: " \n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  #include <vector>
+  #include <sstream>
+  using namespace std;
+  int main() {
+      string s;
+      getline(cin, s);
+
+      // stringstream >> skips runs of whitespace, so repeated spaces and
+      // leading/trailing spaces need no special handling here.
+      vector<string> words;
+      string w;
+      istringstream iss(s);
+      while (iss >> w) words.push_back(w);
+
+      for (int i = (int)words.size() - 1; i >= 0; --i) {
+          if (i != (int)words.size() - 1) cout << ' ';
+          cout << words[i];
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  本题规则有 4 条，其中"空格规范化"这一条最容易在手工实现时
+  漏掉，而它的症状（多一个空格）在很多平台上是不可见的。
+
+  第一类错误是**手工切分单词时按位置取子串而没有合并连续空格**。
+  例如按 `s.find(' ')` 切分，`a good   example` 会产生一个
+  空单词，输出里出现双空格 `example good  a`。用例 3 专门覆盖它。
+  这类错误在多数本地测试里"看起来对"，但输出与标准答案字节
+  不一致。错因标签：missing_case。
+
+  第二类错误是**漏掉前导或尾随空格的处理**：切分后直接拼接，
+  结果保留了开头的空单词或结尾的多余空格。用例 2
+  （`  hello world  `）专门覆盖。错因标签：boundary_condition。
+
+  第三类错误是**用 `cin >> s` 读入**：只会读到第一个单词，
+  输出 `the` 而不是 `blue is sky the`。样例 1 立刻暴露。
+  错因标签：io_format_error。
+
+  第四类错误是**反转了整个字符串再逐词反转**，但第二次反转
+  时把词边界写错（例如用 `<=` 而不是 `<`），导致单词内部也
+  反了。错因标签：off_by_one。
+
+  第五类错误是**把"单词顺序反转"理解成"每个单词内部反转"**，
+  输出 `eht yks si eulb`。错因标签：misread_problem。
+
+  第六类错误是**输出分词结果时在末尾多打一个空格**：
+  循环写成 `cout << words[i] << ' ';`。用例 `single` 会输出
+  `single `（带尾随空格）。错因标签：io_format_error。
+
+  第七类错误是**没有处理"没有任何单词"**：输入只有空格时，
+  空 vector 反转后输出空行，而正确行为是**原样输出空格**。
+  用例 ` `（一个空格）专门覆盖它。这类"退化输入"的约定
+  必须从题面里读到，不能靠猜。错因标签：missing_case。

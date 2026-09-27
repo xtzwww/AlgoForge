@@ -1,0 +1,116 @@
+id: p067-count-primes-bitset
+title: 统计质数（埃氏筛）
+knowledge_tags:
+  - 数论
+  - 素数筛
+  - 枚举
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个整数 $n$，请统计 **$1$ 到 $n$** 之间（含两端）有多少个质数。
+
+  质数是大于 1 且只能被 1 和自身整除的整数。
+
+  **输入格式**
+
+  一行，一个整数 $n$。
+
+  **输出格式**
+
+  一行，一个整数，表示 $1$ 到 $n$ 之间的质数个数。
+
+  **数据范围**
+
+  $1 \le n \le 5 \times 10^6$
+input_format: 一行一个整数 n。
+output_format: 一行一个整数，质数个数。
+time_limit: 3.0
+memory_limit: 256
+
+test_cases:
+  - input: "10\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "1\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "2\n"
+    expected_output: "1\n"
+  - input: "3\n"
+    expected_output: "2\n"
+  - input: "4\n"
+    expected_output: "2\n"
+  - input: "100\n"
+    expected_output: "25\n"
+  - input: "1000\n"
+    expected_output: "168\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      if (n < 2) {
+          // 1 is not prime, and the sieve below would mark index 1 as
+          // composite anyway — but the loop bounds make n < 2 a special
+          // case worth stating outright.
+          cout << 0 << endl;
+          return 0;
+      }
+
+      // Sieve of Eratosthenes. The outer bound is i * i <= n: once
+      // i exceeds sqrt(n), every composite <= n has already been
+      // marked by a smaller factor.
+      vector<bool> isComposite(n + 1, false);
+      for (long long i = 2; i * i <= n; ++i) {
+          if (isComposite[i]) continue;
+          for (long long j = i * i; j <= n; j += i) {
+              isComposite[j] = true;
+          }
+      }
+
+      int count = 0;
+      for (int i = 2; i <= n; ++i) {
+          if (!isComposite[i]) ++count;
+      }
+      cout << count << endl;
+      return 0;
+  }
+eval_notes: |
+  埃氏筛的三处边界（起点、外循环上界、1 的处理）各自都能写错，
+  而且错法不同。
+
+  第一类错误是**内层从 `2 * i` 而非 `i * i` 开始标记**。
+  答案仍然正确（`2i` 到 `i*i` 之间的倍数早已被更小的因子标记过），
+  但白做了 $\sum i$ 级别的冗余工作，$n = 5 \times 10^6$ 时
+  会明显变慢甚至超时。这类"答案对、只是白干"的写法是筛法里
+  最常见的低效来源。错因标签：wrong_complexity。
+
+  第二类错误是**外循环上界写成 `i <= n`**。此时内层
+  `j = i * i` 会很快越过 $n$，循环空转；虽然不至于给出错误答案，
+  但 `i * i` 在 `int` 下当 $i$ 接近 $5 \times 10^4$ 时
+  尚在范围内、接近 $10^5$ 时**溢出成负数**，导致内层循环
+  从负数开始疯狂标记，行为完全失控。正确写法是把 `i` 声明为
+  `long long` 或用 `i <= n / i`。错因标签：overflow。
+
+  第三类错误是**忘记处理 $n < 2$**：数组 `isComposite` 只到
+  `n + 1`，$n = 1$ 时下标 2 越界；即使不越界，计数循环
+  `for (i = 2; i <= n; ++i)` 也不执行。用例 2 专门覆盖。
+  错因标签：boundary_condition。
+
+  第四类错误是**把 1 算作质数**（计数从 `i = 1` 开始）。
+  这会让所有答案都多 1。错因标签：misread_problem。
+
+  第五类错误是**用试除法逐个判断每个数**：$n = 5 \times 10^6$ 时
+  每个数试除到 $\sqrt{n}$，总操作数约 $10^{10}$，必然超时。
+  错因标签：wrong_complexity。
+
+  第六类错误是**用 `vector<int> isComposite(n + 1)`**：
+  $n = 5 \times 10^6$ 时占 20 MB，还算能过；但若上界放大到
+  $10^8$ 就会超过 256 MB。`vector<bool>` 是位压缩的（本题
+  约 0.6 MB），这道题的数据规模正是为了体现这个差别。
+  错因标签：wrong_data_type。

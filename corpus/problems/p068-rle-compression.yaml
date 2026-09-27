@@ -1,0 +1,141 @@
+id: p068-rle-compression
+title: 行程编码压缩与解压
+knowledge_tags:
+  - 字符串
+  - 模拟
+  - 数字拆分
+difficulty: medium
+source: 经典练习题
+description: |
+  行程编码（RLE）把连续重复的字符压缩成"字符 + 次数"的形式。
+  例如 `aaabbc` 压缩为 `a3b2c1`。
+
+  本题要求你先**压缩**，再**解压**，用解压结果验证压缩是否可逆：
+
+  - 第一步：把输入字符串压缩成 RLE 形式；
+  - 第二步：把第一步的结果**解压**回原串；
+  - 输出：**解压后的字符串**。
+
+  （换句话说，输出应当与输入完全相同；这道题考的是
+  压缩与解压这一对操作必须互为逆运算。）
+
+  **输入格式**
+
+  一行，一个非空字符串 $s$，由小写英文字母组成。
+
+  **输出格式**
+
+  一行，解压后的字符串，应当与输入完全相同。
+
+  **数据范围**
+
+  字符串长度不超过 $10^5$
+
+  **提示**
+
+  压缩结果中，次数是**连续的十进制数字**，可能有多位
+  （例如 12 个 `a` 写作 `a12`，而不是 `a1a2`）。
+  如果某个字符只出现 1 次，压缩结果仍然要写出 `1`。
+input_format: 一行一个非空字符串。
+output_format: 一行解压后的字符串（应当与输入相同）。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "aaabbc\n"
+    expected_output: "aaabbc\n"
+    is_sample: true
+  - input: "abc\n"
+    expected_output: "abc\n"
+    is_sample: true
+  - input: "a\n"
+    expected_output: "a\n"
+  - input: "aaaaa\n"
+    expected_output: "aaaaa\n"
+  - input: "aabbaa\n"
+    expected_output: "aabbaa\n"
+  - input: "abcdefghijklmnopqrstuvwxyz\n"
+    expected_output: "abcdefghijklmnopqrstuvwxyz\n"
+  - input: "aaabbbaaabbb\n"
+    expected_output: "aaabbbaaabbb\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  #include <vector>
+  using namespace std;
+
+  string compress(const string &s) {
+      string out;
+      int n = s.size();
+      for (int i = 0; i < n;) {
+          int j = i;
+          while (j < n && s[j] == s[i]) ++j;
+          out += s[i];                 // the character, once
+          out += to_string(j - i);     // then its count as digits
+          i = j;
+      }
+      return out;
+  }
+
+  string decompress(const string &t) {
+      string out;
+      int n = t.size();
+      for (int i = 0; i < n;) {
+          char c = t[i++];
+          int count = 0;
+          // Counts may have several digits, so keep consuming digits
+          // until a letter appears.
+          while (i < n && t[i] >= '0' && t[i] <= '9') {
+              count = count * 10 + (t[i] - '0');
+              ++i;
+          }
+          out.append(count, c);
+      }
+      return out;
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      string s;
+      cin >> s;
+      string packed = compress(s);
+      cout << decompress(packed) << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的输入只有小写字母，所以压缩结果里**不会出现字母与数字
+  混淆**的问题；真正的坑在"次数可能有多位"这一处，
+  而它在所有长度小于 10 的连续重复上完全不可见。
+
+  第一类错误是**解压时只读一位数字**（`int count = t[i] - '0';`
+  然后 `++i` 一次）。连续重复 10 次以上的字符会被解成
+  "1" 次 + 剩下的数字当字符处理，输出与输入不同。
+  用例 6（26 个不同字母，每个只出现 1 次）**不能暴露**它，
+  因为它全是单次；能暴露的必须是"同一字符连续出现 ≥ 10 次"
+  的输入。错因标签：off_by_one / wrong_data_type。
+
+  第二类错误是**压缩时把次数写成单个字符**（
+  `out += char('0' + (j - i))`），次数超过 9 时字符编码越界
+  （`'0' + 12` 已经跑到 `'<'` 附近）。错因标签：wrong_data_type。
+
+  第三类错误是**压缩时次数为 1 就省略数字**（写 `abc` 而不是
+  `a1b1c1`），解压时找不到数字，把后面的字母当成次数。
+  题面明确要求写出 `1`，这是为了让压缩格式**自描述**。
+  错因标签：misread_problem。
+
+  第四类错误是**解压时循环边界写成 `i <= n`**，最后一位会越界
+  访问 `t[n]`（`std::string` 的 `operator[]` 在 `n` 处返回
+  `'\0'`，恰好不是数字，所以常常"看起来没事"）。
+  改用 `i < n` 才正确。错因标签：off_by_one / boundary_condition。
+
+  第五类错误是**把压缩与解压的字符/数字顺序写反**
+  （压缩成 `3a2b`）。因为本题的输出是"解压回来"，
+  只要两个函数对同一约定保持一致，答案仍然正确——
+  这说明**成对互逆的操作无法用结果校验中间的约定**，
+  是本题在测试设计上无法覆盖的一处。错因标签：wrong_traversal。
+
+  第六类错误是**用 `out += string(count, c)` 但 `count` 很大时
+  重复分配内存**，字符量达到 $10^5$ 时性能仍然可以接受，
+  但若把 `count` 累加到整型上界附近会溢出。错因标签：overflow。

@@ -108,6 +108,68 @@ export async function listLevels(): Promise<AssistancePolicy[]> {
   return res.data.levels
 }
 
+// --- 当前生效档位与学生自己的意愿 ------------------------------------
+
+/**
+ * 当前真正生效的档位，以及它是怎么合成的。
+ *
+ * 三个数字都要：{@link level} 是结论，{@link ceiling} 和
+ * {@link preference} 是解释。没有后两个，界面只能说"你现在三档"，
+ * 说不出"老师给到五档，是你自己选了三档"——而后者才是学生能据以行动的
+ * 那句话（他想恢复，就得知道该去哪恢复）。
+ */
+export interface LevelState {
+  /** 真正生效的那一档。 */
+  level: number
+  /** 整套规则，直接渲染，不必自己推断档位含义。 */
+  policy: AssistancePolicy
+  /** 老师设的上限。 */
+  ceiling: number
+  /** 学生自己选的；null 表示没选过，正在用老师给的上限。 */
+  preference: number | null
+  /** 这份作业是否由老师设定过。 */
+  has_assignment: boolean
+}
+
+/**
+ * 读当前生效档位。
+ *
+ * 学生端渲染的**唯一**来源。在此之前前端只能拿"默认档"来画界面，于是
+ * 老师设了五档、学生仍然看到三档的样子。这条按 `assignment_id` 查，
+ * 返回的就是裁决时真正会用的那个数。
+ */
+export async function getLevelState(assignmentId?: number | null): Promise<LevelState> {
+  const res = await http.get<LevelState>('/api/v1/assistance/level', {
+    params: assignmentId == null ? {} : { assignment_id: assignmentId }
+  })
+  return res.data
+}
+
+/**
+ * 把辅助强度往**更严格**的方向调，或清除自己的选择。
+ *
+ * `level` 传 `null` 表示"恢复成老师给的上限"，不是"设成某一档"。这是
+ * 必要的第三种状态：学生试过一档之后想恢复，如果只能选数字，他就必须
+ * 记得老师设的是几档，而那个数可能已经被改过。
+ *
+ * **只能调低。** 服务端会把传入的值夹进 `[1, 老师的上限]`，所以传一个
+ * 高于上限的数不会生效——这不是界面藏起来的功能，是在这条路径上表达
+ * 不出来。界面把高于上限的选项渲染成不可选，是体验，不是规则。
+ *
+ * 需要登录（否则 401）：意愿要挂在某个人身上。与四个动作接口不同——
+ * 那些未登录也能用，因为"做题时的辅助"不该被登录卡住。
+ */
+export async function setLevelPreference(
+  level: number | null,
+  assignmentId?: number | null
+): Promise<LevelState> {
+  const res = await http.put<LevelState>('/api/v1/assistance/level', {
+    assignment_id: assignmentId ?? null,
+    level
+  })
+  return res.data
+}
+
 // --- 模型目录与切换（PU-13）------------------------------------------
 
 /** 一个可选的模型。服务端 `model_catalog.ModelOption` 的镜像。 */
@@ -156,6 +218,61 @@ export async function setModel(modelId: string | null): Promise<ModelSnapshot> {
   const res = await http.put<ModelSnapshot>('/api/v1/assistance/models', {
     model_id: modelId
   })
+  return res.data
+}
+
+// --- 自定义 OpenAI 兼容端点（运行时配置，2026-09-27）---------------------
+
+/** 当前 OpenAI 兼容端点的生效配置。密钥只回传脱敏值。 */
+export interface AssistanceConfig {
+  provider: string
+  base_url: string
+  api_key_masked: string
+  model: string
+  /** 配置写入的 .env 文件路径，窗口里展示给学生看。 */
+  env_path: string
+  /** true = 刚保存过，需要重启后端才生效。 */
+  needs_restart: boolean
+}
+
+export interface TestConfigRequest {
+  base_url: string
+  api_key: string
+  model: string
+}
+
+export interface TestConfigResult {
+  ok: boolean
+  message: string
+  latency_ms: number | null
+}
+
+export interface SaveConfigRequest {
+  base_url?: string
+  api_key?: string
+  model?: string
+}
+
+/**
+ * 读当前生效配置，用于预填配置窗口。
+ *
+ * 密钥只回传脱敏值（`api_key_masked`）：窗口里显示占位，留空提交表示
+ * 「保持原值」。真实密钥不会离开这台机器。
+ */
+export async function getAssistanceConfig(): Promise<AssistanceConfig> {
+  const res = await http.get<AssistanceConfig>('/api/v1/assistance/config')
+  return res.data
+}
+
+/** 不落盘地试连一次：填完表单先验证，再保存。 */
+export async function testAssistanceConfig(req: TestConfigRequest): Promise<TestConfigResult> {
+  const res = await http.post<TestConfigResult>('/api/v1/assistance/config/test', req)
+  return res.data
+}
+
+/** 把配置写进 sidecar/.env（返回 needs_restart=true，提示重启后端）。 */
+export async function saveAssistanceConfig(req: SaveConfigRequest): Promise<AssistanceConfig> {
+  const res = await http.post<AssistanceConfig>('/api/v1/assistance/config', req)
   return res.data
 }
 

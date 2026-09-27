@@ -1,0 +1,163 @@
+id: p093-kruskal-mst
+title: 最小生成树（Kruskal）
+knowledge_tags:
+  - 并查集
+  - 最小生成树
+  - 图论
+  - 贪心
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个**无向带权连通图**，请找出它的一棵**最小生成树**，
+  输出最小生成树所有边的权值之和。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$，表示顶点数和边数。
+  接下来 $m$ 行，每行三个整数 $u$、$v$、$w$，表示一条连接
+  $u$ 和 $v$、权值为 $w$ 的无向边。
+
+  **输出格式**
+
+  一行，一个整数，表示最小生成树的权值和。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$1 \le m \le 2 \times 10^5$，
+  $1 \le u, v \le n$，$1 \le w \le 10^6$，**保证图连通**
+
+  **提示**
+
+  顶点编号从 1 开始。图可能有重边和自环。
+input_format: 第一行 n m，接下来 m 行 u v w。
+output_format: 一行一个整数，最小生成树权值和。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4 5\n1 2 1\n1 3 4\n2 3 2\n2 4 5\n3 4 3\n"
+    expected_output: "6\n"
+    is_sample: true
+  - input: "3 3\n1 2 10\n2 3 10\n1 3 10\n"
+    expected_output: "20\n"
+    is_sample: true
+  - input: "1 0\n"
+    expected_output: "0\n"
+  - input: "2 1\n1 2 7\n"
+    expected_output: "7\n"
+  - input: "4 4\n1 2 1\n2 3 1\n3 4 1\n4 1 1\n"
+    expected_output: "3\n"
+  - input: "5 7\n1 2 3\n1 3 8\n2 3 4\n2 4 1\n3 4 7\n3 5 2\n4 5 9\n"
+    expected_output: "10\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  struct Edge {
+      int u, v;
+      long long w;
+  };
+
+  struct DSU {
+      vector<int> p, rnk;
+      explicit DSU(int n) : p(n + 1), rnk(n + 1, 0) {
+          iota(p.begin(), p.end(), 0);
+      }
+      int find(int x) {
+          // Path halving: repeatedly point x at its grandparent.
+          while (p[x] != x) {
+              p[x] = p[p[x]];
+              x = p[x];
+          }
+          return x;
+      }
+      bool unite(int a, int b) {
+          a = find(a);
+          b = find(b);
+          if (a == b) return false;  // already connected: this edge would
+          if (rnk[a] < rnk[b]) swap(a, b);  // close a cycle
+          p[b] = a;
+          if (rnk[a] == rnk[b]) ++rnk[a];
+          return true;
+      }
+  };
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, m;
+      cin >> n >> m;
+      vector<Edge> edges;
+      edges.reserve(m);
+      for (int i = 0; i < m; ++i) {
+          int u, v;
+          long long w;
+          cin >> u >> v >> w;
+          edges.push_back({u, v, w});
+      }
+      // The greedy choice: consider the cheapest edge first. Correctness
+      // of Kruskal rests entirely on this ordering.
+      sort(edges.begin(), edges.end(),
+           [](const Edge &a, const Edge &b) { return a.w < b.w; });
+
+      DSU dsu(n);
+      long long total = 0;
+      int taken = 0;
+      for (const auto &e : edges) {
+          if (dsu.unite(e.u, e.v)) {
+              total += e.w;
+              if (++taken == n - 1) break;
+          }
+      }
+      cout << total << endl;
+      return 0;
+  }
+eval_notes: |
+  Kruskal 的正确性完全依赖"按权值升序考虑"，实现上则依赖并查集
+  正确地判断连通性。两类错误都可能**不产生错误的数字**，只产生
+  错误的树。
+
+  第一类错误是**忘记按权值排序**（按输入顺序加边）。得到的仍是
+  一棵生成树，但不是最小的。样例 1 若按输入顺序取
+  `(1,2,1) (1,3,4) (2,4,5)` 得到 10，而正确答案是 6。
+  这类错误在样例 2（所有边权相等）**完全看不出来**——
+  这是题目设计上刻意留的一处不可观测性，排序的正确性只能靠
+  权值不同的样例暴露。错因标签：wrong_algorithm。
+
+  第二类错误是**并查集的 `find` 没有路径压缩**，但仍用
+  `if (find(u) == find(v))` 判断。逻辑正确，只是复杂度退化到
+  近 $O(m \log n)$ 或更差；本题规模下通常还能过。真正的错误是
+  **按秩合并时把 `rnk` 写成了节点数却仍按秩比较**，或者
+  **忘了初始化 `p[i] = i`**——后者会让所有点的父亲都是 0，
+  `unite` 永远返回 false（除了与 0 相关时），最终
+  `taken` 达不到 $n-1$，输出的权值和**偏小**。错因标签：
+  initialization。
+
+  第三类错误是**没处理自环（$u = v$）**。自环在并查集里
+  `find(u) == find(v)` 恒成立，会被自动跳过，所以**不需要
+  特殊处理也不会错**——这是有意留的一个"看起来要处理其实
+  不用"的点。错因标签：missing_case（认知层面）。
+
+  第四类错误是**没处理重边**。Kruskal 对重边的处理是自然的：
+  先遇到便宜的那条，贵的那条之后会因为已连通被跳过。
+  **不需要特殊处理**。错因标签：missing_case（认知层面）。
+
+  第五类错误是**答案用 `int` 累加**。$n = 10^5$、$w = 10^6$ 时
+  总和可达 $10^{11}$，`int` 必然溢出，结果变成看似随机的负数。
+  这是本题最实际的一处溢出。错因标签：overflow。
+
+  第六类错误是**循环终止写成 `taken == n`**。生成树只有 $n-1$
+  条边，`taken` 永远达不到 $n$，于是会一直加边直到遍历完
+  所有边；但并查集已保证不会成环，所以**输出仍然正确**，
+  只是多做了无用功。属等价写法（不影响输出）。
+  错因标签：off_by_one（认知层面，不影响输出）。
+
+  第七类错误是**用 Prim 算法**。这**完全正确**，输出一致，
+  本题无法区分。属等价解法。错因标签：无（不构成错误）。
+
+  第八类错误是**没处理 $n = 1, m = 0$**。此时生成树权值为 0；
+  若实现里写了"若 `taken < n-1` 则输出 -1 表示不连通"，
+  而 `n-1 = 0` 且 `taken = 0`，条件 `0 < 0` 为假，输出 0，
+  **恰好正确**。样例 3 专门覆盖这个。错因标签：
+  boundary_condition。

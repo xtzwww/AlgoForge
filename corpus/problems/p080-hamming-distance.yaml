@@ -1,0 +1,113 @@
+id: p080-hamming-distance
+title: 汉明距离（二进制位不同的个数）
+knowledge_tags:
+  - 位运算
+  - 计数
+difficulty: easy
+source: 经典算法题
+description: |
+  给定两个非负整数 $x$ 和 $y$，请计算它们的**汉明距离**：即二者
+  二进制表示中**对应位不同**的位数。
+
+  **输入格式**
+
+  一行两个整数 $x$ 和 $y$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示汉明距离。
+
+  **数据范围**
+
+  $0 \le x, y < 2^{31}$
+
+  **提示**
+
+  两个数都先写成二进制（不足的高位补 0），再逐位比较。例如
+  $x = 1$（`001`）、$y = 4$（`100`），第 0 位和第 2 位不同，
+  汉明距离为 $2$。
+input_format: 一行两个非负整数 x y。
+output_format: 一行一个整数，二进制位不同的个数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "1 4\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "3 1\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "0 0\n"
+    expected_output: "0\n"
+  - input: "2147483647 0\n"
+    expected_output: "31\n"
+  - input: "7 0\n"
+    expected_output: "3\n"
+  - input: "5 5\n"
+    expected_output: "0\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      // Values may reach 2^31 - 1, which is exactly INT_MAX. Reading into
+      // long long keeps the arithmetic clear of signed-overflow concerns
+      // even though the final answer never exceeds 31.
+      long long x, y;
+      cin >> x >> y;
+
+      // XOR marks exactly the bits that differ; the answer is its
+      // population count.
+      long long d = x ^ y;
+      int ans = 0;
+      while (d) {
+          // Clear the lowest set bit. Using d & (d - 1) rather than
+          // shifting d right by 1 also handles the case where the high
+          // bits are zero without a fixed loop count.
+          d &= (d - 1);
+          ++ans;
+      }
+      cout << ans << endl;
+      return 0;
+  }
+eval_notes: |
+  这一题的正确解只有"异或后数 1 的个数"三步，错误全部在第二步
+  （怎么数 1）和输入类型的边界上。
+
+  第一类错误是**不异或，直接分别数 $x$ 和 $y$ 的 1 再相加**。
+  这算的是"两个数的置位数之和"而不是"不同的位数"：两个数**同为 1**
+  的位被算了两次。样例 1（`1 4`）侥幸正确（没有共同的 1 位），
+  但 `5 5` 会输出 $2+2=4$ 而正确答案是 0。样例 6 专门覆盖这个。
+  错因标签：wrong_algorithm。
+
+  第二类错误是**循环固定 32 次但用有符号右移**（`d >> 1`）。
+  当 `d` 为负（最高位为 1）时，算术右移会在高位补 1，
+  于是负数永远移不完，死循环；若用 `int` 且值为 $2^{31}-1$ 尚可，
+  但一旦涉及符号位就崩。用 `d &= (d - 1)` 或 `unsigned` 都能避开。
+  错因标签：wrong_traversal。
+
+  第三类错误是**循环写成 `while (d > 0)` 且 `d` 是 `int`，
+  输入恰好为 $2^{31}-1$**。此时 `d` 仍是正数（`INT_MAX`），
+  循环能正常结束，所以本题**不会出错**——这是有意留的一个
+  "看起来会错其实不会"的点（真正的风险在 $d$ 为负时）。
+  错因标签：overflow（认知层面）。
+
+  第四类错误是**用 `d % 2` 取最低位但忘记 `d /= 2`**，死循环；
+  或者写反成 `d /= 2` 却仍判断 `d % 2 == 1` 但计数条件漏了，
+  导致少数一位。样例 `7 0` 会输出 2 而不是 3。错因标签：
+  off_by_one。
+
+  第五类错误是**把 `x ^ y` 写成 `x & y`**。这数的是"同为 1 的位"，
+  与题意恰好互补。样例 1（`1 4`）会输出 0 而正确答案是 2。
+  错因标签：wrong_algorithm。
+
+  第六类错误是**用 `__builtin_popcount`** ——这**完全正确**，
+  与手写循环输出一致，只是依赖编译器内建函数。属等价解法，
+  不作判错。错因标签：无（不构成错误）。
+
+  第七类错误是**把两个输入读成一个**（只读了 `x` 就输出）。
+  样例 3（`0 0`）侥幸输出 0 正确，其余全错。错因标签：
+  io_format_error。

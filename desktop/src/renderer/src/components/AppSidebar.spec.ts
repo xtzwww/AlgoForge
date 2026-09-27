@@ -15,9 +15,13 @@
  *     去追一个不存在的问题。这一条是文档里专门写过的区分，也是最容易在
  *     重构里被合并掉的一条。
  *
- * 为了拿到**真实**的 `navRoutes`，视图组件被替换成空壳：路由表是
+ * 为了拿到**真实**的导航推导，视图组件被替换成空壳：路由表是
  * **急加载**的，直接 import 会把 Monaco、ECharts 全拖进 jsdom。替身只影响
- * 视图本身，路由表与 `navRoutes` 的推导仍是真的。
+ * 视图本身，路由表与 `navRoutesFor` 的推导仍是真的。
+ *
+ * 2026-09-25 起路由表按端过滤（`visibleRoutes`）：本文件在 vitest 里
+ * 用 `student` 端断言（学生入口看到的导航），并单独钉一条「教师入口
+ * 不出现学生页面」的不变量。
  *
  * 钉住的九条：
  *   1. 列表就是路由表里的顶层页面，顺序一致（加页面只改路由表）；
@@ -34,7 +38,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import type { Ref } from 'vue'
 import AppSidebar from './AppSidebar.vue'
-import { navRoutes } from '../router'
+import { navRoutesFor, navSectionsFor, visibleRoutes } from '../router'
 import type { SidecarPhase } from '../composables/useSidecarStatus'
 
 // 视图都是急加载的；换掉它们，路由表本身仍是真的。
@@ -49,9 +53,22 @@ vi.mock('../views/ProblemListView.vue', () => ({ default: { name: 'ProblemListVi
 vi.mock('../views/MistakesView.vue', () => ({ default: { name: 'MistakesViewStub' } }))
 vi.mock('../views/ProfileView.vue', () => ({ default: { name: 'ProfileViewStub' } }))
 vi.mock('../views/PlanView.vue', () => ({ default: { name: 'PlanViewStub' } }))
-vi.mock('../views/TeacherView.vue', () => ({ default: { name: 'TeacherViewStub' } }))
-vi.mock('../views/TeacherClassesView.vue', () => ({
-  default: { name: 'TeacherClassesViewStub' }
+// 教师端 2026-09-26 拆成五个面板，逐条挡掉（`vi.mock` 必须静态提升，
+// 写进循环里就不会提升，视图照样被真加载）。
+vi.mock('../views/teacher/TeacherOverviewView.vue', () => ({
+  default: { name: 'TeacherOverviewViewStub' }
+}))
+vi.mock('../views/teacher/TeacherAnalysisView.vue', () => ({
+  default: { name: 'TeacherAnalysisViewStub' }
+}))
+vi.mock('../views/teacher/TeacherWorkView.vue', () => ({
+  default: { name: 'TeacherWorkViewStub' }
+}))
+vi.mock('../views/teacher/TeacherReviewView.vue', () => ({
+  default: { name: 'TeacherReviewViewStub' }
+}))
+vi.mock('../views/teacher/TeacherRosterView.vue', () => ({
+  default: { name: 'TeacherRosterViewStub' }
 }))
 vi.mock('../views/AssignmentsView.vue', () => ({
   default: { name: 'AssignmentsViewStub' }
@@ -122,23 +139,61 @@ function mountSidebar(props: { drawerOpen?: boolean } = {}): VueWrapper {
 }
 
 describe('AppSidebar', () => {
-  it('导航列表就是路由表里的顶层页面，顺序一致', () => {
+  it('导航列表就是路由表里的顶层页面，顺序一致（学生端）', () => {
     const labels = mountSidebar()
       .findAll('.nav-label')
       .map((n) => n.text())
-    expect(labels).toEqual(navRoutes.map((r) => r.title))
+    expect(labels).toEqual(navRoutesFor('student').map((r) => r.title))
     // 显式写死一份，才挡得住「路由表被改小了」这种回归——上面那条只保证
     // 两边一致，两边一起错它看不出来。
-    expect(labels).toEqual([
-      '练习',
-      '我的作业',
-      '题库',
-      '错题本',
-      '画像',
-      '复习',
-      '学情看板',
-      '班级管理'
+    expect(labels).toEqual(['练习', '我的作业', '题库', '错题本', '画像', '复习'])
+  })
+
+  it('教师入口只解析教师页面——学生页面不出现在教师端的路由表里', () => {
+    const teacherNames = visibleRoutes('teacher')
+      .map((r) => r.name)
+      .filter((n): n is string => typeof n === 'string')
+    // 拆分后的五个面板都在。
+    expect(teacherNames).toContain('teacher')
+    expect(teacherNames).toContain('teacher-analysis')
+    expect(teacherNames).toContain('teacher-work')
+    expect(teacherNames).toContain('teacher-review')
+    expect(teacherNames).toContain('teacher-roster')
+    // 旧的合并页面名不该留下任何一条路由。
+    expect(teacherNames).not.toContain('teacher-classes')
+    expect(teacherNames).not.toContain('practice')
+    expect(teacherNames).not.toContain('assignments')
+    expect(teacherNames).not.toContain('mistakes')
+    // 两端共享的登录/注册页仍在。
+    expect(teacherNames).toContain('login')
+    expect(teacherNames).toContain('register')
+  })
+
+  it('教师端导航分成四组，顺序固定——分组是这次重构的产出，不能悄悄退回平铺', () => {
+    // 这条是 2026-09-26 新增的守卫。分组的价值全在"老师按使用场景找得到
+    // 东西"，而它会以两种方式静默失效：`meta.group` 写错（页面掉进
+    // "未分组"，看起来只是位置变了），或 `NAV_GROUPS` 被改序（每组的
+    // 含义就变了）。两种都不报错，所以在这里钉死。
+    const sections = navSectionsFor('teacher')
+    expect(sections.map((s) => s.label)).toEqual(['概览', '学情', '教学', '人员'])
+    expect(sections.map((s) => s.items.map((i) => i.name))).toEqual([
+      ['teacher'],
+      ['teacher-analysis'],
+      ['teacher-work', 'teacher-review'],
+      ['teacher-roster']
     ])
+  })
+
+  it('教师端侧边栏渲染出组标题，且标题就是分组的标签', () => {
+    // 上面那条只测了推导函数；这条测**渲染**，因为"推导对了但模板没画
+    // 标题"是完全可能的，而它的表现是分组功能整个不存在。
+    //
+    // 组件读的是模块级 `appMode`（vitest 里是 student），所以要直接断言
+    // 学生端那条：它必须**没有**组标题。
+    const w = mountSidebar()
+    expect(w.findAll('.nav-section-title')).toHaveLength(0)
+    expect(navSectionsFor('student')).toHaveLength(1)
+    expect(navSectionsFor('student')[0].label).toBe('')
   })
 
   it('`meta.hidden` 的页面不进导航——登录页有 title，但不该出现在侧栏', () => {
@@ -149,12 +204,12 @@ describe('AppSidebar', () => {
       .findAll('.nav-label')
       .map((n) => n.text())
     expect(labels).not.toContain('登录')
-    expect(navRoutes.map((r) => r.name)).not.toContain('login')
+    expect(navRoutesFor('student').map((r) => r.name)).not.toContain('login')
   })
 
   it('每个导航项都有非空图标路径——空路径等于一个看不见的按钮', () => {
     const paths = mountSidebar().findAll('.nav-icon path')
-    expect(paths).toHaveLength(navRoutes.length)
+    expect(paths).toHaveLength(navRoutesFor('student').length)
     for (const p of paths) {
       expect(p.attributes('d')).toBeTruthy()
     }
@@ -163,7 +218,7 @@ describe('AppSidebar', () => {
   it('每一项都带 title，收起态下标签就靠它', () => {
     const w = mountSidebar()
     const titles = w.findAll('.nav-item').map((n) => n.attributes('title'))
-    expect(titles).toEqual(navRoutes.map((r) => r.title))
+    expect(titles).toEqual(navRoutesFor('student').map((r) => r.title))
   })
 
   it('点击导航项 emit navigate', async () => {

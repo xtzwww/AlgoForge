@@ -1,0 +1,108 @@
+id: p043-fast-power-mod
+title: 快速幂取模
+knowledge_tags:
+  - 数论
+  - 分治
+  - 递归
+difficulty: medium
+source: 经典算法题
+description: |
+  给定三个整数 $a$、$b$、$m$，求 $a^b \bmod m$。
+
+  其中 $a$ 可能为负数，但保证 $b \ge 0$，$m \ge 1$。
+
+  **输入格式**
+
+  一行，三个整数 $a$、$b$、$m$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示 $a^b \bmod m$，结果保证在 $[0, m-1]$ 内。
+
+  **数据范围**
+
+  $|a| \le 10^9$，$0 \le b \le 10^{18}$，$1 \le m \le 10^9$
+input_format: 一行三个整数 a、b、m。
+output_format: 一行一个整数，a^b mod m。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 13 7\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "2 10 1000\n"
+    expected_output: "24\n"
+    is_sample: true
+  - input: "5 0 13\n"
+    expected_output: "1\n"
+  - input: "2 0 1\n"
+    expected_output: "0\n"
+  - input: "-2 3 1000000007\n"
+    expected_output: "999999999\n"
+  - input: "2 60 1000000007\n"
+    expected_output: "536396504\n"
+  - input: "1 1000000000000000000 97\n"
+    expected_output: "1\n"
+  - input: "10 18 7\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  long long modPow(long long base, long long exp, long long mod) {
+      // Fold a negative base in first: the identity
+      // (-x) mod m == (m - x % m) % m only holds once base is reduced.
+      base %= mod;
+      if (base < 0) base += mod;
+      long long result = 1 % mod;
+      while (exp > 0) {
+          if (exp & 1) result = result * base % mod;
+          base = base * base % mod;
+          exp >>= 1;
+      }
+      return result;
+  }
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      long long a, b, m;
+      cin >> a >> b >> m;
+      cout << modPow(a, b, m) << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的算法（快速幂）本身很短，真正的坑集中在**取模的时机、
+  负底数的处理，以及 $b = 0$ 的约定**这三处。
+
+  第一类错误是**最后才取模**：写 `result = result * base;`
+  而不在每步取模。`long long` 在 $10^{18}$ 附近就溢出，
+  $b$ 稍大就会得到随机值。必须**每一步乘法后立即取模**。
+  错因标签：overflow。
+
+  第二类错误是**把负底数直接平方**：`a = -2` 时
+  `a * a % m` 得到 4，看似没问题，但第一步的
+  `result = result * a % m` 在 C++ 中会得到**负数**
+  （$-2 \equiv 1000000005 \pmod{1000000007}$，
+  而 C++ 的 `%` 对被除数取符号方向）。用例
+  `-2 3 1000000007` 的正确结果是 `999999999`
+  （$-8 \bmod 10^9+7$），不处理负数的实现会输出 `-8`。
+  错因标签：wrong_data_type / boundary_condition。
+
+  第三类错误是**$b = 0$ 时返回 0**：任何数的 0 次方都是 1
+  （包括 $0^0$ 在本题约定为 1），返回值应是 `1 % m`。
+  注意 $m = 1$ 时答案必须是 0，所以不能直接写 `1`。
+  用例 `2 0 1` 专门覆盖它。错因标签：boundary_condition。
+
+  第四类错误是**用 $O(b)$ 的循环连乘**。$b$ 可达 $10^{18}$，
+  循环不会给出错误答案，而是**永远跑不完**。错因标签：
+  wrong_complexity。
+
+  第五类错误是**二进制分解时用除法而不是位运算**，但把
+  `exp` 声明成了 `int`：$b = 10^{18}$ 读入即溢出，
+  循环次数随机。错因标签：wrong_data_type。
+
+  第六类错误是**快速幂写成递归但没带记忆化**，深度 $O(\log b)$
+  本身没问题；真正的风险是写成 `pow(a, b/2) * pow(a, b/2)`
+  而没有把结果存下来，一次递归变成两次，复杂度从 $O(\log b)$
+  退化为 $O(b)$。错因标签：wrong_complexity。

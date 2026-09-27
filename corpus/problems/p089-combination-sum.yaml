@@ -1,0 +1,129 @@
+id: p089-combination-sum
+title: 组合总和（可重复选取，和为 target）
+knowledge_tags:
+  - 回溯
+  - 递归
+  - 枚举
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一组**互不相同的正整数**和一个目标值 $t$，请找出所有
+  和为 $t$ 的组合。
+
+  每个数**可以被重复选取**任意次。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $t$。
+  第二行 $n$ 个正整数，以空格分隔（保证互不相同）。
+
+  **输出格式**
+
+  输出所有满足条件的组合，**每行一个**，同一行内的数按
+  **非递减**顺序用空格分隔。组合之间按**字典序**排列。
+
+  **数据范围**
+
+  $1 \le n \le 20$，$1 \le t \le 100$，$1 \le c_i \le 100$
+
+  **提示**
+
+  "可重复选取"意味着递归进入下一层时**仍从当前这个数开始**
+  （而不是从下一个开始），这是与"不可重复"唯一的区别。
+input_format: 第一行 n t，第二行 n 个互不相同的正整数。
+output_format: 每行一个组合，行内非递减，组合间按字典序。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4 7\n2 3 6 7\n"
+    expected_output: "2 2 3\n7\n"
+    is_sample: true
+  - input: "3 8\n2 3 5\n"
+    expected_output: "2 2 2 2\n2 3 3\n3 5\n"
+    is_sample: true
+  - input: "1 6\n3\n"
+    expected_output: "3 3\n"
+  - input: "3 5\n2 3 5\n"
+    expected_output: "2 3\n5\n"
+  - input: "4 3\n2 3 6 7\n"
+    expected_output: "3\n"
+  - input: "2 10\n4 5\n"
+    expected_output: "5 5\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  int n;
+  long long target;
+  vector<long long> c;
+  vector<long long> cur;
+
+  void dfs(int start, long long rest) {
+      if (rest == 0) {
+          for (int i = 0; i < (int)cur.size(); ++i) {
+              if (i) cout << ' ';
+              cout << cur[i];
+          }
+          cout << '\n';
+          return;
+      }
+      // Passing `i` (not i + 1) as the next start is what allows a
+      // candidate to be reused; pruning with `c[i] <= rest` relies on the
+      // candidates being sorted ascending.
+      for (int i = start; i < n && c[i] <= rest; ++i) {
+          cur.push_back(c[i]);
+          dfs(i, rest - c[i]);
+          cur.pop_back();
+      }
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      cin >> n >> target;
+      c.resize(n);
+      for (int i = 0; i < n; ++i) cin >> c[i];
+      sort(c.begin(), c.end());
+      dfs(0, target);
+      return 0;
+  }
+eval_notes: |
+  这题与"不可重复选取"的组合题**只差一个参数**，也正因为如此，
+  那一处写错就完全变了一道题。
+
+  第一类错误是**递归时传 `i + 1` 而不是 `i`**。这就变成了
+  "每个数最多选一次"，所有含重复元素的组合都会丢失。样例 1
+  中 `2 2 3` 会消失，只剩 `7`。这是本题最核心的一处。
+  错因标签：off_by_one。
+
+  第二类错误是**没有排序就剪枝**（`c[i] <= rest` 提前 break）。
+  剪枝依赖候选数升序；若未排序，遇到第一个大于 `rest` 的数就
+  `break`，会把后面更小的可行候选漏掉。样例 2（候选 `2 3 5`，
+  $t=8$）若输入顺序是 `5 3 2` 且未排序，会在 `5` 处判断
+  `5 <= 8` 通过、继续，看似没事；但若 $t=4$ 且首个候选是 5，
+  会直接 break 而漏掉 `[2,2]`。错因标签：wrong_algorithm。
+
+  第三类错误是**终止条件只写 `rest == 0`，却允许 `rest` 变负
+  继续递归**。若没有 `c[i] <= rest` 的剪枝，`rest` 会一路减到
+  负数，永远达不到 0，递归深度无限增长直到栈溢出或 TLE。
+  错因标签：boundary_condition。
+
+  第四类错误是**没有 `start` 参数、每次都从 0 开始枚举**。
+  这会产生**排列而非组合**：`[2,3]` 和 `[3,2]` 被当成两个不同
+  答案重复输出，而行内又要求非递减，于是 `[3,2]` 非法。
+  样例 2 会多出 `3 2 3` 之类。错因标签：wrong_algorithm。
+
+  第五类错误是**候选数含 0 或负数时死循环**。本题保证
+  $c_i \ge 1$，所以**不会发生**——这是题目约束有意封住的一个坑。
+  若候选含 0，`rest` 永远不减少，立即爆栈。错因标签：
+  missing_case（认知层面）。
+
+  第六类错误是**先收集所有组合再统一输出**。答案正确、
+  顺序也只要最后排序即可，但多占内存；本题 $t \le 100$ 规模
+  很小，不会超时也无法区分。属等价解法。错因标签：
+  wrong_complexity（认知层面，不构成判错）。
+
+  第七类错误是**行内输出用空格分隔但在行末多输出一个空格**。
+  样例 3（单个组合 `3 3`）能暴露。错因标签：io_format_error。

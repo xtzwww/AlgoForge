@@ -1,0 +1,93 @@
+id: p024-prefix-sum-range
+title: 区间和查询
+knowledge_tags:
+  - 数组
+  - 前缀和
+  - 循环
+difficulty: medium
+source: 经典练习题
+description: |
+  给定一个长度为 $n$ 的整数数组 $a$ 和 $q$ 次询问。
+  每次询问给出两个整数 $l$ 和 $r$，求下标 $l$ 到 $r$ 之间所有
+  元素的和（下标从 1 开始，包含 $l$ 和 $r$）。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $q$，以空格分隔。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$。
+  接下来 $q$ 行，每行两个整数 $l$ 和 $r$。
+
+  **输出格式**
+
+  共 $q$ 行，每行一个整数，依次为每次询问的区间和。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$1 \le q \le 10^5$，
+  $1 \le l \le r \le n$，$|a_i| \le 10^9$
+
+  **提示**
+
+  答案最大可达 $10^{14}$，请使用 `long long`。
+input_format: 第一行 n 和 q；第二行 n 个整数；随后 q 行每行 l 和 r。
+output_format: 共 q 行，每行一个整数，表示区间和。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 3\n1 2 3 4 5\n1 2\n3 5\n1 5\n"
+    expected_output: "3\n12\n15\n"
+    is_sample: true
+  - input: "1 1\n7\n1 1\n"
+    expected_output: "7\n"
+    is_sample: true
+  - input: "3 2\n10 20 30\n1 3\n2 2\n"
+    expected_output: "60\n20\n"
+  - input: "4 3\n-5 5 -5 5\n1 4\n2 3\n1 1\n"
+    expected_output: "0\n0\n-5\n"
+  - input: "5 4\n1000000000 1000000000 1000000000 1000000000 1000000000\n1 5\n1 1\n2 4\n3 3\n"
+    expected_output: "5000000000\n1000000000\n3000000000\n1000000000\n"
+  - input: "6 3\n0 0 0 0 0 0\n1 6\n4 5\n2 2\n"
+    expected_output: "0\n0\n0\n"
+  - input: "3 3\n1 2 3\n3 3\n1 1\n2 3\n"
+    expected_output: "3\n1\n5\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, q;
+      cin >> n >> q;
+      vector<long long> pre(n + 1, 0);
+      for (int i = 1; i <= n; ++i) {
+          long long x;
+          cin >> x;
+          pre[i] = pre[i - 1] + x;
+      }
+      while (q--) {
+          int l, r;
+          cin >> l >> r;
+          // Each query is answered independently; nothing carries over.
+          cout << pre[r] - pre[l - 1] << '\n';
+      }
+      return 0;
+  }
+eval_notes: |
+  第一类错误是**状态没有在询问之间重置**——把累加变量写在询问循环
+  外面且每次不清零，于是各次答案层层累加：第一次对，从第二次起全错。
+  区间和必须是每次询问独立计算的量，任何跨询问保留的累加器都会破坏
+  这一点。错因标签：uninitialized_state。
+
+  第二类错误是把前缀和写成 `for (int i = 0; i < n; ++i) pre[i + 1] =
+  pre[i] + a[i];` 之后用 `pre[r] - pre[l]` 查询——下标从此整体错位
+  一位。这类错误的特征是**所有答案都偏小**（多减了一个元素），
+  且区间长度越大偏差越大。错因标签：off_by_one。
+
+  第三类错误是把整个数组读成一个变量或用了 `getline`，
+  导致只有第一次询问读到数字。错因标签：io_format_error。
+
+  第四类是把 `pre` 与答案都声明成 `int`：n 为 $10^5$、元素为 $10^9$
+  时答案达到 $10^{14}$，早已超出 32 位范围。错因标签：overflow。

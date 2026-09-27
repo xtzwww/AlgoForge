@@ -72,6 +72,24 @@ vi.mock('../components/RadarChart.vue', () => ({
   }
 }))
 
+vi.mock('../components/BarChart.vue', () => ({
+  default: {
+    name: 'BarChartStub',
+    props: [
+      'items',
+      'height',
+      'horizontal',
+      'max',
+      'color',
+      'valueFormatter',
+      'loading',
+      'emptyTitle',
+      'emptyExplanation'
+    ],
+    template: '<div class="bar-stub" />'
+  }
+}))
+
 const mounted: VueWrapper[] = []
 
 afterEach(() => {

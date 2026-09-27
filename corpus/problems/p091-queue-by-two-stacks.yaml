@@ -1,0 +1,133 @@
+id: p091-queue-by-two-stacks
+title: 用两个栈实现队列
+knowledge_tags:
+  - 栈
+  - 队列
+  - 数据结构
+  - 模拟
+difficulty: medium
+source: 经典算法题
+description: |
+  请只用**栈**（后进先出）来实现一个**队列**（先进先出），
+  并支持下面三种操作：
+
+  - `push x` —— 把整数 $x$ 放入队尾；
+  - `pop` —— 取出队首元素并输出它；
+  - `peek` —— 输出队首元素但不取出。
+
+  **输入格式**
+
+  第一行一个整数 $q$，表示操作次数。
+  接下来 $q$ 行，每行是 `push x`、`pop` 或 `peek` 之一。
+
+  **输出格式**
+
+  对每个 `pop` 和 `peek` 操作，输出一行一个整数。
+
+  **数据范围**
+
+  $1 \le q \le 10^5$，$|x| \le 10^9$，
+  **保证 `pop` / `peek` 时队列不为空**
+input_format: 第一行 q，接下来 q 行操作命令。
+output_format: 每个 pop/peek 输出一行一个整数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5\npush 1\npush 2\npop\npush 3\npop\n"
+    expected_output: "1\n2\n"
+    is_sample: true
+  - input: "4\npush 7\npeek\npush 8\npeek\n"
+    expected_output: "7\n7\n"
+    is_sample: true
+  - input: "4\npush 1\npush 2\npop\npop\n"
+    expected_output: "1\n2\n"
+  - input: "6\npush 1\npush 2\npop\npush 3\npop\npop\n"
+    expected_output: "1\n2\n3\n"
+  - input: "4\npush -5\npop\npush 100\npop\n"
+    expected_output: "-5\n100\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int q;
+      cin >> q;
+
+      // in_ holds the queue in reverse (newest on top); out_ holds it in
+      // queue order (oldest on top). A pop/peek only ever needs out_, and
+      // out_ is refilled from in_ only once it is empty — so each element
+      // is moved at most once, giving amortised O(1).
+      vector<long long> in_, out_;
+
+      auto pour = [&]() {
+          if (out_.empty()) {
+              while (!in_.empty()) {
+                  out_.push_back(in_.back());
+                  in_.pop_back();
+              }
+          }
+      };
+
+      for (int i = 0; i < q; ++i) {
+          string op;
+          cin >> op;
+          if (op == "push") {
+              long long x;
+              cin >> x;
+              in_.push_back(x);
+          } else if (op == "pop") {
+              pour();
+              cout << out_.back() << '\n';
+              out_.pop_back();
+          } else {  // peek
+              pour();
+              cout << out_.back() << '\n';
+          }
+      }
+      return 0;
+  }
+eval_notes: |
+  这题的唯一考点是**倒栈的时机**：只能在 `out_` 空了才倒，
+  否则顺序会被打乱。
+
+  第一类错误是**每次 `push` 都把 `in_` 全部倒进 `out_`**。
+  这样 `out_` 的顶部永远是**最新**的元素，队列变成了栈，
+  先进先出被破坏。样例 1（`push 1, push 2, pop`）会输出 2
+  而不是 1。这是最典型的一处。错因标签：wrong_algorithm。
+
+  第二类错误是**每次 `pop` 都倒栈**（不管 `out_` 是否为空）。
+  若 `out_` 里还有更早的元素，倒进去会把新元素压在它们上面，
+  于是**后 push 的元素先被弹出**。样例 4
+  （`push 1, push 2, pop, push 3, pop, pop`，正确输出 1 2 3）
+  会在第二次 pop 时输出 3 而不是 2。样例 4 专门覆盖这个。
+  错因标签：wrong_algorithm。
+
+  第三类错误是**`peek` 时把元素也弹出去了**（`peek` 与 `pop`
+  写成一样）。样例 2（`push 7, peek, push 8, peek`，
+  正确输出 `7 7`）会输出 `7 8`。样例 2 专门覆盖这个。
+  错因标签：misread_problem。
+
+  第四类错误是**倒栈时从 `in_` 的顶部取而不是底部**
+  （`out_.push_back(in_.front())`）。`vector` 的 `front()`
+  是**最早**的元素，把它先 push 进 `out_` 会让 `out_` 的
+  顶部变成最早的元素——这碰巧是**对**的，但与 `pop_back`
+  的写法不一致时容易混淆。若同时用 `in_.erase(in_.begin())`
+  则是 $O(n)$，总复杂度退化。错因标签：wrong_complexity。
+
+  第五类错误是**用一个栈模拟但每次 pop 时把整个栈倒来倒去**。
+  答案正确，但每次操作 $O(n)$，最坏 $O(qn) = 10^{10}$，必然
+  TLE。这是本题的主要超时来源。错因标签：wrong_complexity。
+
+  第六类错误是**读入命令用 `getline` 却没处理前导换行**，
+  或 `cin >> op` 后忘记读 `x`。前者会把第一行残余的换行
+  当成一个空命令；后者会让下一个命令被当成数字吃掉。
+  错因标签：io_format_error。
+
+  第七类错误是**直接用 `std::queue`**。这**能过所有样例**，
+  但完全违背了题目的意图；本题在**输出层面无法区分**——
+  这是输入输出形式带来的不可观测性，写在此处以示说明。
+  错因标签：wrong_algorithm（意图层面，判题不可观测）。

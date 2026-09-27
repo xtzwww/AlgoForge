@@ -1,0 +1,129 @@
+id: p031-string-to-integer
+title: 字符串转整数
+knowledge_tags:
+  - 字符串
+  - 数字拆分
+  - 模拟
+  - 边界处理
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个字符串 $s$，请把它转换成对应的整数。转换规则如下：
+
+  1. 忽略开头的若干空格（可能没有）；
+  2. 接下来可能有一个 `+` 或 `-` 号，表示正负（可能没有）；
+  3. 再往后读取连续的**数字字符**，直到遇到第一个非数字字符或
+     字符串结束为止；
+  4. 如果第 3 步一个数字都没有读到，则结果为 $0$。
+
+  转换结果需要限制在 32 位有符号整数范围内：
+
+  - 结果大于 $2^{31} - 1 = 2147483647$ 时，输出 `2147483647`；
+  - 结果小于 $-2^{31} = -2147483648$ 时，输出 `-2147483648`。
+
+  **输入格式**
+
+  一行，一个字符串 $s$（可能包含空格）。
+
+  **输出格式**
+
+  一行，一个整数，表示转换结果。
+
+  **数据范围**
+
+  字符串长度不超过 $200$，字符均在 ASCII 范围内
+input_format: 一行一个字符串（可能含空格）。
+output_format: 一行一个整数，转换结果。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "42\n"
+    expected_output: "42\n"
+    is_sample: true
+  - input: "   -42\n"
+    expected_output: "-42\n"
+    is_sample: true
+  - input: "4193 with words\n"
+    expected_output: "4193\n"
+  - input: "words and 987\n"
+    expected_output: "0\n"
+  - input: "-91283472332\n"
+    expected_output: "-2147483648\n"
+  - input: "+1\n"
+    expected_output: "1\n"
+  - input: "+-12\n"
+    expected_output: "0\n"
+  - input: "2147483648\n"
+    expected_output: "2147483647\n"
+  - input: "  00000000000000123\n"
+    expected_output: "123\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  #include <cctype>
+  using namespace std;
+  int main() {
+      string s;
+      getline(cin, s);
+
+      int i = 0;
+      while (i < (int)s.size() && s[i] == ' ') ++i;
+
+      int sign = 1;
+      if (i < (int)s.size() && (s[i] == '+' || s[i] == '-')) {
+          if (s[i] == '-') sign = -1;
+          ++i;
+      }
+
+      long long value = 0;
+      while (i < (int)s.size() && isdigit((unsigned char)s[i])) {
+          value = value * 10 + (s[i] - '0');
+          // Clamping during accumulation keeps value far below the
+          // overflow point, so a 200-digit input is still safe.
+          if (sign == 1 && value > 2147483647LL) {
+              value = 2147483647LL;
+              break;
+          }
+          if (sign == -1 && value > 2147483648LL) {
+              value = 2147483648LL;
+              break;
+          }
+          ++i;
+      }
+
+      cout << (sign == 1 ? value : -value) << endl;
+      return 0;
+  }
+eval_notes: |
+  本题是一个"规则密集"的模拟题，每一条规则都可以单独写错，
+  而且多数错误的暴露输入都很短、很像样例。
+
+  第一类错误是**读入方式用 `cin >> s`**。这样遇到空格就停下，
+  输入 `4193 with words` 只会读到 `4193`，恰好得到正确答案——
+  错误被样例 1、2 完美掩盖；而输入 `words and 987` 时只会读到
+  `words`，本该输出 0 却会输出 0，也看不出问题。真正的差别出现
+  在以空格开头的输入上。正确写法是 `getline`。错因标签：
+  io_format_error。
+
+  第二类错误是**允许连写两个符号**：判断符号时用 `while` 而不是
+  `if`，于是 `+-12` 会被解析成 `-12`。规则只允许一个符号。
+  用例 `+-12` 专门覆盖它。错因标签：boundary_condition。
+
+  第三类错误是**没读到数字时忘记返回 0**，让结果停留在初值——
+  如果初值是 0 恰好正确，但如果实现成"跳过空格后就从 `s[i]` 开始
+  减 `'0'`"，`words` 会得到一个巨大的负数。错因标签：
+  uninitialized_state。
+
+  第四类错误是**用 `int` 累加再判断越界**：$-91283472332$ 这样的
+  输入在累加过程中就会溢出，溢出后的值可能落在合法范围内，
+  于是输出一个看似正常的数。必须在 `long long` 上累加并提前截断。
+  错因标签：overflow。
+
+  第五类错误是**只判断了正溢出、忘了负溢出**：
+  `-2147483649` 会输出 `2147483647`（符号丢了）。错因标签：
+  missing_case。
+
+  第六类错误是把紧跟在符号后的非数字字符当成了数字的一部分，
+  例如把 `+` 之后的字符直接转成数字。错因标签：misread_problem。

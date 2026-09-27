@@ -563,11 +563,14 @@ def handle_insert(
 
 
 def assignment_level(session: Session, assignment_id: Optional[int]) -> int:
-    """取某次作业的辅助强度。
+    """取某次作业的辅助强度 —— 也就是老师设的**上限**。
 
     作业不存在或 ``assignment_id`` 为空时返回**默认档**（三档）。默认取
     中间而不是最高，理由同 :func:`app.assistance.normalize_level`：配置缺失
     时偏向严格的那一侧。
+
+    注意这是**上限**不是最终生效值。学生可以自愿往下调，两者取小才是
+    真正裁决用的档位 —— 见 :func:`effective_level`。
     """
     from app.assistance import DEFAULT_ASSISTANCE_LEVEL
     from app.models.assignment import Assignment
@@ -581,6 +584,119 @@ def assignment_level(session: Session, assignment_id: Optional[int]) -> int:
     if value is None:
         return DEFAULT_ASSISTANCE_LEVEL
     return policy_for(value).level
+
+
+def student_preference(
+    session: Session,
+    student_id: Optional[int],
+    assignment_id: Optional[int],
+) -> Optional[int]:
+    """取某个学生在这份作业上**自己选的**档位。没选过返回 ``None``。
+
+    返回 ``None`` 与返回一个数字是不同的事：``None`` 表示"没表达过意愿"，
+    调用方应当直接用老师给的档位；一个数字表示"他自己要这个"。**不要**
+    在这里兜底成默认档 —— 那会让"没选过"和"选了默认那一档"变得无法区分。
+    """
+    from app.models.assistance_preference import AssistancePreference
+
+    if student_id is None:
+        return None
+    row = session.execute(
+        select(AssistancePreference.level).where(
+            AssistancePreference.student_id == student_id,
+            # NULL 的比较在 SQL 里不成立，所以自由练习要显式用 IS NULL。
+            (
+                AssistancePreference.assignment_id.is_(None)
+                if assignment_id is None
+                else AssistancePreference.assignment_id == assignment_id
+            ),
+        )
+    )
+    value = row.scalar_one_or_none()
+    if value is None:
+        return None
+    return policy_for(value).level
+
+
+def effective_level(
+    session: Session,
+    student_id: Optional[int],
+    assignment_id: Optional[int],
+) -> int:
+    """真正生效的档位 = ``min(老师设的上限, 学生自己选的)``。
+
+    **这是全项目唯一的"我这次能用多少 AI"的定义**，四个动作接口都走它。
+
+    取小的方向是这条规则的全部安全性所在：学生的意愿只能**收紧**不能
+    放宽。老师把一份作业压到一档而学生想用五档，得到一档 —— 往上调在
+    这里根本表达不出来，不是靠界面藏起来。
+
+    学生没表达意愿（``None``）时直接用老师的档位，而不是当成"一档"：
+    "没选过"不是"选了最严的"，把它当后者会让每个学生默认被降级。
+    """
+    ceiling = assignment_level(session, assignment_id)
+    wanted = student_preference(session, student_id, assignment_id)
+    if wanted is None:
+        return ceiling
+    return min(ceiling, wanted)
+
+
+def set_student_preference(
+    session: Session,
+    student_id: int,
+    assignment_id: Optional[int],
+    level: Optional[int],
+) -> Optional[int]:
+    """记录（或清除）学生在某份作业上的辅助强度意愿。
+
+    ``level=None`` 表示**清除意愿、回到老师给的上限**，而不是"设成某一档"。
+    这是必要的第三种状态：学生试过一档之后想恢复默认，如果只能选一个
+    数字，他就必须记得老师设的是几档，而那个数字可能已经被改过。
+
+    传入的 ``level`` 会先被夹到 ``[1, 老师的上限]``，但**存的是夹过之后
+    的值**而不是原样存下再在读取时夹 —— 这样读路径不必每次都多查一次
+    老师的档位。代价是老师之后**调高**上限时，学生不会自动跟着变宽，
+    这是刻意的：学生的"我要少用 AI"是一个仍然成立的意愿，不该因为老师
+    放松了要求就替他作废。
+
+    Returns:
+        真正存下来的档位；``level=None`` 时为 ``None``。
+    """
+    from app.models.assistance_preference import AssistancePreference
+
+    existing = session.execute(
+        select(AssistancePreference).where(
+            AssistancePreference.student_id == student_id,
+            (
+                AssistancePreference.assignment_id.is_(None)
+                if assignment_id is None
+                else AssistancePreference.assignment_id == assignment_id
+            ),
+        )
+    ).scalar_one_or_none()
+
+    if level is None:
+        if existing is not None:
+            session.delete(existing)
+            session.commit()
+        return None
+
+    ceiling = assignment_level(session, assignment_id)
+    clamped = min(max(policy_for(level).level, 1), ceiling)
+
+    if existing is None:
+        session.add(
+            AssistancePreference(
+                student_id=student_id,
+                assignment_id=assignment_id,
+                level=clamped,
+            )
+        )
+    else:
+        existing.level = clamped
+    session.commit()
+    return clamped
+
 
 
 def usage_summary(

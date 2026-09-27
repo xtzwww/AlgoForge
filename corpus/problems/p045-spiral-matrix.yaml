@@ -1,0 +1,129 @@
+id: p045-spiral-matrix
+title: 螺旋矩阵
+knowledge_tags:
+  - 二维数组
+  - 模拟
+  - 边界处理
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个 $n \times m$ 的整数矩阵，请按**顺时针螺旋**的顺序
+  从外到内遍历它，并输出遍历到的元素。
+
+  螺旋顺序从左上角开始，先向右走到最右列，再向下走到最下行，
+  再向左走到最左列，再向上走——如此一圈一圈向内收缩，
+  直到所有元素都被访问。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$。
+  接下来 $n$ 行，每行 $m$ 个整数，以空格分隔。
+
+  **输出格式**
+
+  一行，按螺旋顺序输出全部 $n \times m$ 个整数，以空格分隔。
+
+  **数据范围**
+
+  $1 \le n, m \le 1000$，$|a_{ij}| \le 10^9$
+input_format: 第一行 n 和 m，接下来 n 行每行 m 个整数。
+output_format: 一行 n*m 个整数，以空格分隔。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 3\n1 2 3\n4 5 6\n7 8 9\n"
+    expected_output: "1 2 3 6 9 8 7 4 5\n"
+    is_sample: true
+  - input: "3 4\n1 2 3 4\n5 6 7 8\n9 10 11 12\n"
+    expected_output: "1 2 3 4 8 12 11 10 9 5 6 7\n"
+    is_sample: true
+  - input: "1 1\n7\n"
+    expected_output: "7\n"
+  - input: "1 5\n1 2 3 4 5\n"
+    expected_output: "1 2 3 4 5\n"
+  - input: "5 1\n1\n2\n3\n4\n5\n"
+    expected_output: "1 2 3 4 5\n"
+  - input: "2 2\n1 2\n3 4\n"
+    expected_output: "1 2 4 3\n"
+  - input: "3 3\n1 1 1\n1 1 1\n1 1 1\n"
+    expected_output: "1 1 1 1 1 1 1 1 1\n"
+  - input: "2 3\n1 2 3\n4 5 6\n"
+    expected_output: "1 2 3 6 5 4\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, m;
+      cin >> n >> m;
+      vector<vector<long long>> a(n, vector<long long>(m));
+      for (int i = 0; i < n; ++i)
+          for (int j = 0; j < m; ++j) cin >> a[i][j];
+
+      int top = 0, bottom = n - 1, left = 0, right = m - 1;
+      bool first = true;
+      auto emit = [&](long long v) {
+          if (!first) cout << ' ';
+          cout << v;
+          first = false;
+      };
+
+      while (top <= bottom && left <= right) {
+          for (int j = left; j <= right; ++j) emit(a[top][j]);
+          ++top;
+          for (int i = top; i <= bottom; ++i) emit(a[i][right]);
+          --right;
+          // The last two sweeps must be guarded: once top has passed
+          // bottom (or left has passed right), the row/column they walk
+          // was already emitted by the sweeps above.
+          if (top <= bottom) {
+              for (int j = right; j >= left; --j) emit(a[bottom][j]);
+              --bottom;
+          }
+          if (left <= right) {
+              for (int i = bottom; i >= top; --i) emit(a[i][left]);
+              ++left;
+          }
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  本题是"边界收缩"这一类错误的集中体现：四条边走完之后必须
+  各自收缩一格，而**后两条边在剩余区域退化成一维时必须跳过**。
+
+  第一类错误是**后两条边不加判断就执行**。当剩余区域只剩
+  一行（或剩下最后一行刚好被上面走完）时，第三、四条边会把
+  已经输出过的元素**再输出一遍**。用例 `1 5 / 1 2 3 4 5`
+  与 `2 2 / 1 2 / 3 4` 专门覆盖它：前者应输出 5 个数，
+  错误实现会输出 9 个数。错因标签：boundary_condition。
+
+  第二类错误是**收缩时机写在循环开头**而不是每条边走完之后。
+  这会让第一次循环就跳过一个元素，且每一圈都错位一格。
+  错因标签：off_by_one。
+
+  第三类错误是**循环条件只写 `top <= bottom`**，漏掉
+  `left <= right`：$1 \times 5$ 或 $5 \times 1$ 的输入会
+  死循环或重复输出。错因标签：missing_case。
+
+  第四类错误是**方向顺序写反**（从上开始后立刻向左，即
+  逆时针螺旋）。$3 \times 3` 的样例会立刻暴露。错因标签：
+  wrong_traversal。
+
+  第五类错误是**用 `visited` 数组判断是否走过**，但判断条件
+  写在了移动之后，导致第一次进入循环时多走一格；这类实现
+  在方形矩阵上往往"看起来对"，在长方形上错。错因标签：
+  off_by_one。
+
+  第六类错误是**输出分隔符处理不当**：在每次输出后都打一个
+  空格，导致行末多一个空格——多数判题机忽略行末空格，
+  但本题的输出是单行，**中间**多空格会被严格比较判为格式错误。
+  错因标签：io_format_error。
+
+  第七类错误是**递归实现四个方向的螺旋**，深度等于圈数为
+  $O(\min(n,m))$，$1000 \times 1000$ 时约 500 层，
+  通常不爆栈但风险很高。错因标签：wrong_complexity。

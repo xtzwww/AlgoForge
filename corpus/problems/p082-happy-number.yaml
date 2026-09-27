@@ -1,0 +1,123 @@
+id: p082-happy-number
+title: 快乐数（判断是否进入 1 循环）
+knowledge_tags:
+  - 哈希表
+  - 循环检测
+  - 模拟
+difficulty: easy
+source: 经典算法题
+description: |
+  对一个正整数反复做如下操作：把它替换成**它各位数字的平方和**。
+  若最终能得到 $1$，则称该数为**快乐数**；若陷入一个**不含 1 的循环**，
+  则不是快乐数。
+
+  请判断给定的数是否为快乐数。
+
+  **输入格式**
+
+  一行一个正整数 $n$。
+
+  **输出格式**
+
+  一行，若是快乐数输出 `1`，否则输出 `0`。
+
+  **数据范围**
+
+  $1 \le n \le 10^9$
+
+  **示例说明**
+
+  $19$ 是快乐数：
+  $1^2 + 9^2 = 82$，$8^2 + 2^2 = 68$，$6^2 + 8^2 = 100$，
+  $1^2 + 0^2 + 0^2 = 1$。共 4 步到达 1。
+input_format: 一行一个正整数 n。
+output_format: 一行输出 1（是快乐数）或 0（不是）。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "19\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "2\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "1\n"
+    expected_output: "1\n"
+  - input: "7\n"
+    expected_output: "1\n"
+  - input: "4\n"
+    expected_output: "0\n"
+  - input: "1000000000\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  long long digitSquareSum(long long x) {
+      long long s = 0;
+      while (x > 0) {
+          int d = x % 10;
+          s += 1LL * d * d;
+          x /= 10;
+      }
+      return s;
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      long long n;
+      cin >> n;
+
+      // Stop when we reach 1 (happy) or revisit a value (a cycle that
+      // cannot contain 1, since 1 maps to itself and would have been
+      // caught by the first test).
+      unordered_set<long long> seen;
+      while (n != 1 && !seen.count(n)) {
+          seen.insert(n);
+          n = digitSquareSum(n);
+      }
+      cout << (n == 1 ? 1 : 0) << endl;
+      return 0;
+  }
+eval_notes: |
+  这题的核心不是"算平方和"，而是**证明并检测循环**。
+
+  第一类错误是**只循环固定次数**（例如 100 次）然后看有没有到 1。
+  这是把"一定会停"当成了"很快会停"。非快乐数会陷入
+  $4 \to 16 \to 37 \to 58 \to 89 \to 145 \to 42 \to 20 \to 4$ 这个
+  长度为 8 的循环，100 次足够覆盖，所以**本题侥幸不会错**——
+  但这是错的思路：没有任何上界能保证，只是本题数据恰好够。
+  错因标签：wrong_algorithm（认知层面）。
+
+  第二类错误是**完全不做循环检测**（`while (n != 1)` 一直算）。
+  非快乐数会**永远循环下去**，直接 TLE。样例 2（`2`）会挂住。
+  这是本题最主要的错误。错因标签：missing_case。
+
+  第三类错误是**先判断有没有访问过、再判断是否为 1，顺序颠倒**。
+  写成 `while (!seen.count(n)) { seen.insert(n); ... }` 且循环外
+  再判断 `n == 1`：逻辑上其实仍能得出正确结论，因为到 1 时
+  `1` 不在 `seen` 里会再算一次成 1，然后 `seen.count(1)` 为真退出，
+  此时 `n == 1` 成立。**两者输出一致**，属等价写法。注意若把
+  "插入"和"判断"写成同一轮的先后顺序不同，结果可能差一轮，
+  但**停止条件都是 `n == 1` 或重复**，所以本题无法区分。
+
+  第四类错误是**取各位数字时漏掉最后一位**（写成 `while (x > 1)`
+  或者 `x /= 10` 放在取模之前）。以 $19$ 为例：漏掉个位 $9$
+  会得到 $1$ 而不是 $82$，于是**任何数都会被判成快乐数**。
+  样例 2（`2`）会输出 1 而不是 0。错因标签：off_by_one。
+
+  第五类错误是**平方和用 `int` 累加且输入到 $10^9$**。
+  $10^9$ 有 10 位，每位平方最大 $81$，总和最大 $810$，
+  **远不会溢出**——这是有意留的一个"看起来危险其实安全"的点。
+  错因标签：overflow（认知层面）。
+
+  第六类错误是**用快慢指针（Floyd 判圈）代替哈希集合**。
+  这**完全正确**且只用 $O(1)$ 空间，输出与哈希写法一致，
+  本题无法区分。属等价解法。错因标签：wrong_complexity
+  （认知层面，不构成判错）。
+
+  第七类错误是**把"输出 1/0"写成输出 `true`/`false`**。
+  题面明确要求输出整数 `1` 或 `0`。错因标签：io_format_error。

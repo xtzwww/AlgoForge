@@ -1,0 +1,91 @@
+id: p033-tower-of-hanoi-moves
+title: 汉诺塔最少移动次数
+knowledge_tags:
+  - 递归
+  - 分治
+  - 大数
+difficulty: medium
+source: 经典算法题
+description: |
+  有三个柱子，编号为 A、B、C。柱子 A 上从下到上叠放着 $n$ 个大小
+  递减的圆盘。要求把全部圆盘从 A 柱移动到 C 柱。
+
+  移动规则：
+
+  1. 每次只能移动一个圆盘；
+  2. 大盘不能压在小盘之上。
+
+  请输出完成移动所需的**最少步数**。
+
+  **输入格式**
+
+  一行，一个正整数 $n$。
+
+  **输出格式**
+
+  一行，一个整数，表示最少移动步数。
+
+  **数据范围**
+
+  $1 \le n \le 60$
+input_format: 一行一个正整数 n。
+output_format: 一行一个整数，最少步数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "1\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "3\n"
+    expected_output: "7\n"
+    is_sample: true
+  - input: "2\n"
+    expected_output: "3\n"
+  - input: "10\n"
+    expected_output: "1023\n"
+  - input: "30\n"
+    expected_output: "1073741823\n"
+  - input: "60\n"
+    expected_output: "1152921504606846975\n"
+  - input: "5\n"
+    expected_output: "31\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      // 2^n - 1 exceeds 32-bit range from n = 32 on, so the shift has
+      // to happen in 64 bits (and 1 must be cast before shifting).
+      unsigned long long total = (1ULL << n) - 1;
+      cout << total << endl;
+      return 0;
+  }
+eval_notes: |
+  本题形状极简（一行输入、一行输出），却把"递推公式与数据范围"
+  这两件事拆得很干净，因此很适合作为错因分析的样本。
+
+  第一类错误是**在 `int` 上计算 `(1 << n) - 1`**。
+  $n \le 30$ 时一切正常，$n = 31$ 开始，$2^{31}$ 已经超出 32 位
+  有符号范围，左移是未定义行为；常见表现是 `n = 32` 输出 0、
+  `n = 33` 输出 1，即**对 32 取模后的结果**。这类错误的特征是
+  小数据全对、大数据全错，且错值呈现明显的周期性。错因标签：
+  overflow。
+
+  第二类错误是**写成 `1 << n` 而 `1` 是 `int`**，即使 `total`
+  声明为 `long long` 也无济于事：移位在赋值之前就发生了。
+  必须在字面量上打标记（`1ULL << n`）。错因标签：wrong_data_type。
+
+  第三类错误是**递归求解而缺少步数缓存**：用 `f(n) = 2f(n-1) + 1`
+  直接递归，$n = 60$ 时递归树有 $2^{60}$ 个结点，程序不会给出
+  错误答案，而是**永远跑不完**（超时）。这是"答案对但方法错"的
+  典型：正确解法是公式或迭代。错因标签：wrong_complexity。
+
+  第四类错误是**把公式记成 $2^n$**（漏减 1），$n = 1$ 时会输出 2
+  而不是 1。错因标签：misread_problem。
+
+  第五类错误是**把公式记成 $n^2$**：$n = 3$ 恰好等于 7 的反面——
+  $n = 3$ 时 $2^3 - 1 = 7$ 而 $n^2 = 9$，会暴露；但 $n = 1$ 时
+  两者都是 1。错因标签：misread_problem。

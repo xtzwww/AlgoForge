@@ -1,0 +1,95 @@
+id: p030-decimal-to-binary
+title: 十进制转二进制
+knowledge_tags:
+  - 进制转换
+  - 循环
+  - 字符串
+  - 边界处理
+difficulty: easy
+source: 经典入门题
+description: |
+  给定一个非负整数 $n$，输出它的二进制表示。
+
+  **输入格式**
+
+  一行，一个非负整数 $n$。
+
+  **输出格式**
+
+  一行，$n$ 的二进制表示（不含前导零）。
+  **特殊情况：$n = 0$ 时输出 `0`。**
+
+  **数据范围**
+
+  $0 \le n \le 10^{18}$
+input_format: 一行一个非负整数 n。
+output_format: 一行 n 的二进制表示，n 为 0 时输出 0。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5\n"
+    expected_output: "101\n"
+    is_sample: true
+  - input: "10\n"
+    expected_output: "1010\n"
+    is_sample: true
+  - input: "0\n"
+    expected_output: "0\n"
+  - input: "1\n"
+    expected_output: "1\n"
+  - input: "1024\n"
+    expected_output: "10000000000\n"
+  - input: "1000000000000000000\n"
+    expected_output: "110111100000101101101011001110100111011001000000000000000000\n"
+  - input: "3\n"
+    expected_output: "11\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      unsigned long long n;
+      cin >> n;
+      // Zero is the one input the divide-and-collect loop cannot handle:
+      // it produces no digits at all, so it is answered up front.
+      if (n == 0) {
+          cout << 0 << endl;
+          return 0;
+      }
+      string bits;
+      while (n > 0) {
+          bits += char('0' + n % 2);
+          n /= 2;
+      }
+      reverse(bits.begin(), bits.end());
+      cout << bits << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的核心考点是 **$n = 0$ 是唯一没有数字可输出的输入**，
+  它同时也是最容易被"循环写对了"的解法漏掉的一个。
+
+  第一类错误是**漏掉零的处理**：用 `while (n > 0)` 收集每一位，
+  输入 0 时循环体一次都不执行，得到空字符串，输出一个空行。
+  这类错误在 1 到 $10^{18}$ 的所有输入上都完全正确，
+  只在这一个点上错，因此靠随机测试很难发现。错因标签：missing_case。
+
+  第二类错误是**把 $n$ 声明成 `int`（或 `long long` 的有符号版本）
+  再处理 $10^{18}$**：$10^{18}$ 仍在 64 位有符号范围内，所以这一类
+  在本题的数据范围下**不会暴露**；真正的风险是把上界误改成
+  $2 \times 10^{18}$ 之后。列出它是为了说明：判断整型是否够用，
+  要看题目上界而不是"看起来很大"。错因标签：wrong_data_type。
+
+  第三类错误是"边除边输出"——直接在循环里 `cout << n % 2`，
+  得到的是**从低位到高位**的倒序结果（5 会输出 101 的倒序 101
+  在本题恰好是回文，但 10 会输出 0101）。这是初学者最常犯的一类
+  错误。错因标签：wrong_traversal / output_format。
+
+  第四类错误是把结果拼成字符串后**忘记反转**，与第三类同源但
+  发生在收集完成后，症状一致。错因标签：wrong_traversal。
+
+  第五类错误是输出了 `0b` 前缀、前导零或额外的空格。
+  错因标签：io_format_error。

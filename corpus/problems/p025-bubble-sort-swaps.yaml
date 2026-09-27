@@ -1,0 +1,102 @@
+id: p025-bubble-sort-swaps
+title: 冒泡排序的交换次数
+knowledge_tags:
+  - 数组
+  - 排序
+  - 循环
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数序列，请用**冒泡排序**把它从小到大排好，
+  并输出整个过程中发生的**相邻元素交换总次数**。
+
+  冒泡排序的一趟扫描是：依次比较相邻的两个元素，如果前一个大于
+  后一个，就把它们交换。一趟扫描结束后，未排序部分的最大值被移到
+  了末尾。重复这个过程直到整个序列有序。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示交换总次数。
+
+  **数据范围**
+
+  $1 \le n \le 1000$，$|a_i| \le 10^9$
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，交换总次数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\n3 2 1\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "4\n1 2 3 4\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "1\n5\n"
+    expected_output: "0\n"
+  - input: "5\n5 4 3 2 1\n"
+    expected_output: "10\n"
+  - input: "4\n2 1 4 3\n"
+    expected_output: "2\n"
+  - input: "5\n1 1 1 1 1\n"
+    expected_output: "0\n"
+  - input: "5\n3 1 3 1 3\n"
+    expected_output: "3\n"
+  - input: "6\n4 5 6 1 2 3\n"
+    expected_output: "9\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  int main() {
+      int n;
+      cin >> n;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      long long swaps = 0;
+      for (int i = 0; i < n - 1; ++i) {
+          // Compare pairs inside the still-unsorted prefix; the last i
+          // elements are already in place. Reading past n - 1 - i would
+          // both sort and count past the end of that prefix.
+          for (int j = 0; j + 1 < n - i; ++j) {
+              if (a[j] > a[j + 1]) {
+                  swap(a[j], a[j + 1]);
+                  ++swaps;
+              }
+          }
+      }
+      cout << swaps << endl;
+      return 0;
+  }
+eval_notes: |
+  第一类错误是**内层循环的上界写成固定的 `n - 1`**，
+  没有随外层轮数收缩。多出来的比较发生在已经排好序的后缀上，
+  条件是 `a[j] > a[j+1]`，那里永远不成立，所以**元素顺序仍然
+  完全正确，只有交换次数偶尔被多计**——正是本题最容易漏掉的一类
+  错误：结果看起来是对的，只是报告出来的工作量不对。
+  错因标签：off_by_one / wrong_traversal。
+
+  第二类错误是里外两层循环变量写反（内层写成 `i`、外层写成 `j`），
+  于是每一轮都在比较同一对元素。错因标签：wrong_traversal。
+
+  第三类错误是**漏掉提前终止**：某些实现把"本趟没有发生交换就结束"
+  写进了循环条件，写错方向就会在序列已经有序时继续扫。题目要求的是
+  完整过程的交换次数，提前终止**不会**改变这个数字（剩下的趟数里
+  本来就没有交换），所以这类错误通常不暴露——真正的风险在于把它
+  写成了"提前终止并少算一次"。错因标签：loop_direction。
+
+  第四类是把计数器声明成 `int`：逆序序列的交换次数是
+  $n(n-1)/2$，$n = 10^5$ 时达到 $5 \times 10^9$ 会溢出；
+  本题 $n \le 1000$ 尚在范围内，属于潜在风险。错因标签：overflow。
+
+  第五类是把元素读成 `int` 而元素可达 $10^9$——单个元素仍在 `int`
+  范围内，比较也不会出错，因此这一类**在本题不会真正暴露**；
+  列出它是为了提醒：判断溢出风险要看"会不会参与算术"，
+  本题只做比较与交换，所以安全。错因标签：wrong_data_type。

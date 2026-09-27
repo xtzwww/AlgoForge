@@ -1,0 +1,136 @@
+id: p074-fenwick-point-update-range-sum
+title: 单点修改与区间求和（树状数组）
+knowledge_tags:
+  - 树状数组
+  - 前缀和
+  - 数据结构
+  - 复杂度分析
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数数组，初始值全部为 $0$。需要处理
+  $q$ 次操作，操作有两种：
+
+  - `1 x v`：把位置 $x$ 的值**加上** $v$（可能为负）。
+  - `2 l r`：输出区间 $[l, r]$ 内所有数之和（下标从 1 开始，
+    闭区间）。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $q$。
+  接下来 $q$ 行，每行三个整数，格式如上。
+
+  **输出格式**
+
+  对每个 `2` 操作，输出一行一个整数。
+
+  **数据范围**
+
+  $1 \le n, q \le 2 \times 10^5$，$|v| \le 10^9$，
+  $1 \le l \le r \le n$
+
+  **提示**
+
+  答案可能超过 `int` 范围，请使用 64 位整数。
+input_format: 第一行 n q，接下来 q 行每行三个整数。
+output_format: 每个查询操作输出一行一个整数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 4\n1 1 3\n1 2 4\n2 1 2\n2 2 5\n"
+    expected_output: "7\n4\n"
+    is_sample: true
+  - input: "1 3\n1 1 1000000000\n2 1 1\n1 1 -1000000000\n"
+    expected_output: "1000000000\n"
+    is_sample: true
+  - input: "3 5\n2 1 3\n1 2 5\n2 1 3\n1 3 7\n2 2 3\n"
+    expected_output: "0\n5\n12\n"
+  - input: "4 3\n1 4 1\n1 4 1\n2 4 4\n"
+    expected_output: "2\n"
+  - input: "5 5\n1 1 1\n1 2 2\n1 3 3\n1 4 4\n2 1 4\n"
+    expected_output: "10\n"
+  - input: "3 4\n1 2 -5\n1 2 5\n2 1 3\n1 1 1000000000\n"
+    expected_output: "0\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  // Fenwick tree over 1-based indices. update() walks upward by adding
+  // the lowest set bit; query() walks downward by subtracting it. Mixing
+  // up those two directions is the classic bug in this structure.
+  struct Fenwick {
+      int n;
+      vector<long long> t;
+      explicit Fenwick(int n) : n(n), t(n + 1, 0) {}
+      void add(int i, long long v) {
+          for (; i <= n; i += i & (-i)) t[i] += v;
+      }
+      long long sum(int i) const {
+          long long s = 0;
+          for (; i > 0; i -= i & (-i)) s += t[i];
+          return s;
+      }
+      long long range(int l, int r) const {
+          return sum(r) - sum(l - 1);
+      }
+  };
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, q;
+      cin >> n >> q;
+      Fenwick fw(n);
+      while (q--) {
+          int op;
+          cin >> op;
+          if (op == 1) {
+              int x;
+              long long v;
+              cin >> x >> v;
+              fw.add(x, v);
+          } else {
+              int l, r;
+              cin >> l >> r;
+              cout << fw.range(l, r) << endl;
+          }
+      }
+      return 0;
+  }
+eval_notes: |
+  这道题的实现在 15 行内，但每行的常数都是精心选过的，
+  改错哪个都会在一些输入上静默跑偏。
+
+  第一类错误是**用朴素数组，每次 `2` 操作遍历 $[l,r]$ 求和**。
+  正确但 $O(nq)$，$2 \times 10^5 \times 2 \times 10^5$ 必然超时。
+  这正是本结构存在的理由。错因标签：wrong_complexity。
+
+  第二类错误是**`add` 里的步长写成 `i -= i & (-i)`（方向反了）**。
+  这会立刻死循环或永远只碰到少数位置；表现为答案偏小且
+  后续修改丢失。错因标签：wrong_traversal。
+
+  第三类错误是**`sum` 写成 `range(l,r) = sum(r) - sum(l)`**（漏掉
+  `-1`）。把 $a_l$ 一并减掉了，只要 $a_l \ne 0$ 答案就偏小。
+  以样例 1 的最后一次查询 `2 2 5` 为例，正确是 4；若写成
+  `sum(5) - sum(2)` 会得到 $7 - 3 = 4$... 但若数组中间有值，
+  如样例 5 的 `2 1 4`，正确是 10；`sum(4) - sum(1)` 会得到
+  $10 - 1 = 9$。错因标签：off_by_one。
+
+  第四类错误是**用 1-based 的 Fenwick 但读入后按下标 0 存**。
+  存的下标比操作给的下标小 1，`add(x, v)` 实际改的是 $x-1$。
+  所有查询范围整体左移，输出与正确值无关。错因标签：
+  off_by_one。
+
+  第五类错误是**内部数组用 `int` 累加**。单次 `v` 到 $10^9$、
+  $q$ 到 $2 \times 10^5$，和会到 $10^{14}$ 量级，`int` 必然溢出
+  且结果看上去是随机的负数。错因标签：overflow。
+
+  第六类错误是**`x & (-x)` 写成 `x & (~x)`**。后者恒为 0，
+  循环步长为 0 直接死循环（TLE）或者只更新一个位置。这是
+  "恒等式记反"的典型。错因标签：wrong_algorithm。
+
+  第七类错误是**把所有 `2` 操作的答案缓存起来最后统一输出**。
+  这没错，只是顺序敏感：如果实现里用 `std::set` 或排序过，
+  会把输出顺序打乱，与逐行输出不一致。错因标签：io_format_error。

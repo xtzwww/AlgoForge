@@ -1,0 +1,140 @@
+id: p098-n-queens-count
+title: N 皇后（统计摆法数）
+knowledge_tags:
+  - 回溯
+  - 递归
+  - 枚举
+  - 深度优先搜索
+difficulty: hard
+source: 经典算法题
+description: |
+  在 $n \times n$ 的棋盘上摆放 $n$ 个皇后，使得任意两个皇后
+  **不在同一行、不在同一列、不在同一条斜线**（包括主对角线方向
+  和副对角线方向）。
+
+  请统计一共有多少种不同的摆法。
+
+  **输入格式**
+
+  一行一个整数 $n$。
+
+  **输出格式**
+
+  一行，一个整数，表示摆法总数。
+
+  **数据范围**
+
+  $1 \le n \le 12$
+
+  **提示**
+
+  $n = 1$ 时有 1 种，$n = 4$ 时有 2 种。答案在 `long long`
+  范围内。
+input_format: 一行一个整数 n。
+output_format: 一行一个整数，摆法总数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "1\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "2\n"
+    expected_output: "0\n"
+  - input: "5\n"
+    expected_output: "10\n"
+  - input: "6\n"
+    expected_output: "4\n"
+  - input: "8\n"
+    expected_output: "92\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  int n;
+  long long ans = 0;
+  vector<int> colAt;  // colAt[row] = column chosen for that row
+
+  void dfs(int row) {
+      if (row == n) {
+          ++ans;
+          return;
+      }
+      for (int c = 0; c < n; ++c) {
+          bool ok = true;
+          for (int r = 0; r < row; ++r) {
+              int pc = colAt[r];
+              // Same column, or same diagonal: |row - r| == |c - pc|
+              // covers both diagonal directions in one test.
+              if (pc == c || abs(row - r) == abs(c - pc)) {
+                  ok = false;
+                  break;
+              }
+          }
+          if (!ok) continue;
+          colAt[row] = c;
+          dfs(row + 1);
+          // No explicit undo needed: colAt[row] is overwritten on the
+          // next iteration, and rows >= row are never read before being
+          // written.
+      }
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      cin >> n;
+      colAt.assign(n, -1);
+      dfs(0);
+      cout << ans << endl;
+      return 0;
+  }
+eval_notes: |
+  N 皇后的经典错误在**斜线判定的写法**和"按行放"这个前提上。
+
+  第一类错误是**斜线判定只写一个方向**（只判
+  `row - r == c - pc`，漏掉 `row - r == pc - c`）。
+  这样只挡住了主对角线方向的冲突，副对角线方向的皇后可以互相
+  攻击。样例 1（$n=4$，正确 2 种）会输出 4。
+  用 `abs(row - r) == abs(c - pc)` 一次覆盖两个方向
+  是最稳的写法。错因标签：missing_case。
+
+  第二类错误是**漏掉"同一列"的判断**（只判斜线）。
+  于是同一列可以放多个皇后，答案会大得多。样例 3
+  （$n=2$，正确 0 种）会输出 2。错因标签：missing_case。
+
+  第三类错误是**按格子枚举而不是按行枚举**（对每个格子决定
+  "放或不放"）。这是合法的搜索，但状态空间是 $2^{n^2}$，
+  $n=8$ 时是 $2^{64}$，必然 TLE。按行枚举（每行恰好放一个）
+  才是 $n!$ 级别。错因标签：wrong_complexity。
+
+  第四类错误是**用一个 `vis` 数组记录列占用，但递归返回时
+  忘记撤销**。若采用"按行 + 列标记"的写法，撤销是必需的；
+  本参考解采用"每次向前扫描已放的行"，因此**不需要撤销**——
+  这是两种等价写法，后者少了撤销这一步所以更不容易错。
+  若混用（既有 `vis` 又不撤销），会漏掉大量合法摆法。
+  错因标签：uninitialized_state（状态未回滚）。
+
+  第五类错误是**答案用 `int`**。$n=12$ 时答案不算大
+  （14200），所以**不会溢出**——这是有意留的一个
+  "看起来危险其实安全"的点。错因标签：overflow（认知层面）。
+
+  第六类错误是**把终止条件写成 `row == n - 1`**。
+  最后一行还没放就计数，答案会变成"少放一个皇后"的摆法数，
+  样例 2（$n=1$，正确 1）会输出 1（因为 row=0 时
+  `row == n-1 == 0` 成立，直接 ++ans 而没放），
+  侥幸正确；但样例 1（$n=4$）会输出 0 而不是 2。
+  错因标签：off_by_one。
+
+  第七类错误是**$n = 2$ 或 $n = 3$ 时认为有解**。
+  这两个规模**确实无解**（正确答案是 0），
+  样例 3（$n=2$）专门覆盖。若实现里把"无解"当异常情况
+  输出 -1 就错了。错因标签：missing_case。
+
+  第八类错误是**用位运算优化 + 对称性剪枝**。这些**完全正确**
+  且快得多，输出与朴素回溯一致，本题无法区分。
+  属等价解法。错因标签：无（不构成错误）。

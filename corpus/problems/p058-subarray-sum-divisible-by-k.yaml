@@ -1,0 +1,145 @@
+id: p058-subarray-sum-divisible-by-k
+title: 和能被 K 整除的子数组
+knowledge_tags:
+  - 前缀和
+  - 哈希表
+  - 计数
+  - 同余
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数数组 $a$ 和一个正整数 $k$，
+  请统计有多少个连续子数组的元素和**能被 $k$ 整除**。
+
+  子数组是指下标区间 $[l, r]$（$1 \le l \le r \le n$）对应的
+  $a_l + a_{l+1} + \dots + a_r$。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $k$，以空格分隔。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示满足条件的子数组个数。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$1 \le k \le 10^5$，$|a_i| \le 10^9$
+
+  **提示**
+
+  区间和能被 $k$ 整除，等价于**两个前缀和对 $k$ 同余**。
+
+  答案最大可达 $\frac{n(n-1)}{2}$，$n = 10^5$ 时约 $5 \times 10^9$，
+  请使用 `long long`。
+input_format: 第一行 n 和 k，第二行 n 个整数。
+output_format: 一行一个整数，满足条件的子数组个数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 3\n1 2 3 4 5\n"
+    expected_output: "7\n"
+    is_sample: true
+  - input: "3 5\n5 10 15\n"
+    expected_output: "6\n"
+    is_sample: true
+  - input: "1 1\n7\n"
+    expected_output: "1\n"
+  - input: "4 2\n1 1 1 1\n"
+    expected_output: "4\n"
+  - input: "3 7\n-1 1 0\n"
+    expected_output: "3\n"
+  - input: "5 100000\n1 -1 1 -1 1\n"
+    expected_output: "6\n"
+  - input: "2 10\n-3 3\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <unordered_map>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      long long k;
+      cin >> n >> k;
+
+      // A std::vector indexed by remainder, sized k. The remainder 0
+      // must start at 1: the empty prefix (index 0) is itself a
+      // prefix, and every later prefix congruent to 0 forms a valid
+      // subarray with it.
+      vector<long long> cnt(k, 0);
+      cnt[0] = 1;
+
+      long long prefix = 0;
+      long long answer = 0;
+      for (int i = 0; i < n; ++i) {
+          long long x;
+          cin >> x;
+          prefix += x;
+          // C++ '%' keeps the sign of the dividend, so a negative
+          // prefix gives a negative remainder. Normalise it into
+          // [0, k) before using it as an index.
+          long long r = prefix % k;
+          if (r < 0) r += k;
+          answer += cnt[r];
+          ++cnt[r];
+      }
+      cout << answer << endl;
+      return 0;
+  }
+eval_notes: |
+  本题把"同余"这一个想法用三处不同的细节埋了起来，
+  每一处都能让程序稳定地给出偏小或崩溃的结果。
+
+  第一类错误是**忘记把 `cnt[0]` 初始化为 1**。`cnt` 全 0 起步时，
+  "从数组开头起、和能被 $k$ 整除"的子数组永远不会被计入。
+  用例 `3 5 / 5 10 15` 中三个元素都是 5 的倍数，正确答案 6
+  （$4 \times 3 / 2$，四个前缀全同余），漏初始化会得到 3。
+  这一格之差对应"空前缀也是前缀"这个认知。
+  错因标签：uninitialized_state。
+
+  第二类错误是**对负前缀不做取模归一化**。C++ 的 `%` 结果符号
+  跟着被除数走：前缀为 $-3$、$k = 10$ 时 `r` 是 $-3$，
+  而 $-3 \equiv 7$，程序却把它当成另一个余数桶。用例
+  `2 10 / -3 3` 的正确结果是 1（$-3 + 3 = 0$），
+  不归一化会得到 0。用例 `5 100000 / 1 -1 1 -1 1` 同理，
+  正确答案 6（等价于 5 的倍数结构）。错因标签：
+  wrong_data_type / boundary_condition。
+
+  第三类错误是**用 `unordered_map` 存余数但忘记对负余数归一化**，
+  与第二类同源；若同时用 `vector` 按下标访问负余数，
+  则是**越界写入**，表现为崩溃或随机错误。错因标签：
+  boundary_condition。
+
+  第四类错误是**双重循环枚举所有子数组并逐个求和**。
+  答案正确，但 $n = 10^5$ 时是 $5 \times 10^9$ 次加法，
+  必然超时。错因标签：wrong_complexity。
+
+  第五类错误是**把答案累加写成 `answer += cnt[r] + 1`**
+  （多算当前这个前缀自己构成的"空区间"）。每个新前缀只能和
+  **之前**出现过的同余前缀配对，不能和自己配对。
+  错因标签：off_by_one。
+
+  第六类错误是**把 `answer` 与 `cnt` 声明成 `int`**：答案可达
+  $5 \times 10^9$，`cnt` 的单个桶也能达到 $10^5$（不至于溢出），
+  但 `answer` 一定溢出。此外**桶计数用 `int` 在极端数据下**
+  虽然能撑住本题，但把 `k` 减小到 1 时单个桶会装下全部 $10^5$ 个
+  前缀，仍安全——这一条的风险主要在 `answer` 上。
+  错因标签：overflow。
+
+  关于用例 `4 2 / 1 1 1 1`：前缀依次是 $1, 2, 3, 4$，对 2 取余
+  得到 $1, 0, 1, 0$，余数 0 出现 2 次、余数 1 出现 2 次，
+  配对数为 $1 + 1 = 4$（余数 0 的两次配对 + 余数 1 的两次配对，
+  再加上另一个 1 的出现）。正确答案 4，不是 $4 \times 3 / 2 = 6$
+  ——**"全部同余"这个直觉只在对同一个余数时才成立**，
+  这里有 0 和 1 两个不同的桶。
+
+  第七类错误是**把 `k` 声明成 `int` 却用 `vector<int> cnt(k)` 在
+  $k$ 很大时开表**，本题 $k \le 10^5$ 安全；真正的风险是把
+  "余数"理解为"$a_i$ 本身"，从而对每个元素单独取模。
+  错因标签：misread_problem。

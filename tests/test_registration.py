@@ -4,21 +4,25 @@
 其他所有写路径要么需要老师的 403 令牌，要么需要已经存在的账号。所以这里的
 用例按「漏掉之后后果多严重」排序，而不是按代码顺序。
 
-**第一条，也是唯一不能出错的一条：注册永远只能造出学生账号。**
+**第一组：角色是一道白名单，不是一句「信我」。**
 
-在这之前，账号只能由老师创建（``POST /api/v1/teacher/students``），而那条
-路径的角色是写死的。开放注册把「谁能拥有一个账号」从一个受控动作变成了
-一个公开动作，于是「谁能成为老师」必须仍然是一个受控动作。如果它失守，
-泄露的不是某个班的花名册，而是**每个班的花名册和每个人的提交记录** ——
-因为教师控制台的全部内容就是这些。
+开放注册把「谁能拥有一个账号」从一个受控动作变成了一个公开动作，于是
+「谁能成为老师」必须仍然是一个受控动作。如果它失守，泄露的不是某个班的
+花名册，而是**每个班的花名册和每个人的提交记录** —— 因为教师控制台的
+全部内容就是这些。
 
-所以这条断言写得比「发个 role 字段被忽略」更狠：直接把 ``role`` 塞进请求体
-（包括各种大小写、以及一个额外注入的字段名），然后回数据库里读那一行，
-确认它是 ``student``。请求体被 pydantic 丢掉只是**其中一种**正确结果，
-真正要钉的是最终落到库里的那个值。
+2026-09-25 的产品决策给了教师自助注册一条路（教师端网页入口的注册页
+创建教师账号），所以「永远只造学生」不再是边界——边界现在是两件事：
+**只有字面 ``teacher``（大小写、空格不敏感）能成为教师，且受
+``ALLOW_TEACHER_REGISTRATION`` 开关控制**；其他一切（``admin``、拼错的
+teacher、本产品没有的角色）都回落成学生。断言仍然写得比「发个 role 字段」
+更狠：直接把各种 role 塞进请求体，然后回数据库里读那一行，确认最终落到
+库里的角色——并确认那个角色实际能访问什么。请求体被 pydantic 丢掉只是
+**其中一种**正确结果，真正要钉的是数据库里那个值。
 
-**第二条：门有一个开关。** ``ALLOW_OPEN_REGISTRATION=false`` 时端点必须
-403，而不是「还开着但悄悄少建点号」。
+**第二条：门有两个开关。** ``ALLOW_OPEN_REGISTRATION=false`` 时端点必须
+403，而不是「还开着但悄悄少建点号」；``ALLOW_TEACHER_REGISTRATION=false``
+时请求教师账号必须 403，而不是悄悄降级成学生号。
 
 **第三条：限流只算成功次数。** 把密码打错五次的学生不该被挡在自己的账号
 外面。这条容易写成「限制请求数」——那样测起来也是绿的，但惩罚错了人。
@@ -119,16 +123,16 @@ def _register(client: TestClient, **body):
     return client.post("/api/v1/auth/register", json=payload)
 
 
-# --- 1. 角色不可协商 ----------------------------------------------------
+# --- 1. 角色白名单 ------------------------------------------------------
 
 
-def test_注册永远只能创建学生账号_即使请求里塞了_role(client, session):
-    """把 role 塞进请求体，落到库里的仍必须是 student。
+def test_白名单之外的角色一律造学生(client, session):
+    """把 admin、本产品没有的角色塞进请求体，落到库里的仍是 student。
 
     测的是数据库里那一行，不是响应体。响应体可能因为各种原因看起来正确
     （比如字段被 pydantic 丢掉），而真正要紧的是那一行是什么。
     """
-    resp = _register(client, username="sneaky", role="teacher")
+    resp = _register(client, username="sneaky", role="admin")
     assert resp.status_code == 201, resp.text
 
     row = session.execute(
@@ -139,15 +143,31 @@ def test_注册永远只能创建学生账号_即使请求里塞了_role(client,
     assert resp.json()["user"]["role"] == ROLE_STUDENT
 
 
-@pytest.mark.parametrize("spelling", ["teacher", "TEACHER", "Teacher", " teacher "])
-def test_角色的各种写法都不能提权(client, session, spelling):
+@pytest.mark.parametrize(
+    "spelling",
+    ["admin", "owner", "teacher!", "teacherX", "superuser", "student "],
+)
+def test_不是字面_teacher_的写法都不能提权(client, session, spelling):
+    """白名单是精确的：任何不是 `teacher`（归一化后）的拼写都回落学生。
+
+    2026-09-25 之前这条参数组是 ``["teacher", "TEACHER", "Teacher", " teacher "]``
+    —— 那时连合法的 teacher 都不能提权。现在大小写和首尾空格会被归一化后
+    接受（见下面的教师注册组），所以这条只拦**真正不在白名单里**的写法。
+    """
     resp = _register(client, username="sneaky2", role=spelling)
     assert resp.status_code == 201, resp.text
     row = session.execute(select(User).where(User.username == "sneaky2")).scalar_one()
     assert row.role == ROLE_STUDENT
 
 
-def test_注册出来的账号拿不到教师接口(client, session):
+def test_不填角色时默认是学生(client, session):
+    """``role`` 缺省 = 学生。老客户端不发这个字段，行为不能变。"""
+    resp = _register(client, username="norole")
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["user"]["role"] == ROLE_STUDENT
+
+
+def test_学生注册出来的账号拿不到教师接口(client, session):
     """真正要防的是这个：拿到令牌之后能不能读到教师控制台。
 
     上一条测「库里的角色字段」，这条测「那个角色实际能做什么」。两者都要，
@@ -163,18 +183,61 @@ def test_注册出来的账号拿不到教师接口(client, session):
     assert guarded.status_code == 403, guarded.text
 
 
-def test_registration_role_不接受任何参数():
-    """这个函数必须一直是无参的。
+# --- 1b. 教师自助注册（2026-09-25） --------------------------------------
 
-    加一个参数就等于把「能不能成为老师」变成一句校验而不是一个不存在的能力。
-    这条用例的价值在于：哪天有人给它加了参数，这里会红，而加参数的人会被
-    引到 registration.py 的模块注释里读到为什么。
+
+@pytest.mark.parametrize("spelling", ["teacher", "TEACHER", "Teacher", " teacher "])
+def test_字面_teacher_的各种写法都归一化为教师(client, session, spelling):
+    """教师端网页入口发的就是 ``"teacher"``，大小写与首尾空格不敏感。"""
+    resp = _register(client, username="teach_self", role=spelling)
+    assert resp.status_code == 201, resp.text
+
+    row = session.execute(
+        select(User).where(User.username == "teach_self")
+    ).scalar_one()
+    assert row.role == ROLE_TEACHER
+    assert resp.json()["user"]["role"] == ROLE_TEACHER
+
+
+def test_自助注册的教师账号能进教师接口(client, session):
+    """对应上面的「学生拿不到」：教师必须拿得到。
+
+    这个产品的教师控制台就是「每个班的花名册 + 每个人的提交」，所以这条
+    与「白名单外回落学生」是同一道边界的两个方向。
     """
-    import inspect
+    resp = _register(client, username="real_teacher", role="teacher")
+    assert resp.status_code == 201, resp.text
+    token = resp.json()["token"]
 
-    params = inspect.signature(registration.registration_role).parameters
-    assert list(params) == []
-    assert registration.registration_role() == ROLE_STUDENT
+    guarded = client.get(
+        "/api/v1/teacher/students", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert guarded.status_code == 200, guarded.text
+
+
+def test_关闭教师注册开关后_请求教师账号返回_403(client, session, monkeypatch):
+    """开关关掉时：403，而不是悄悄降级成学生号。
+
+    悄悄降级会让教师端的注册页「成功」地造出一个没用的学生号——用户不知道
+    哪里错了，也不会有任何重试的念头。403 的 message 会直接告诉它门关了。
+    """
+    monkeypatch.setattr(settings, "allow_teacher_registration", False)
+
+    resp = _register(client, username="wannabe", role="teacher")
+    assert resp.status_code == 403, resp.text
+    assert "教师" in resp.json()["detail"]
+
+    # 开关只关教师，学生注册不受影响。
+    ok = _register(client, username="plain_student")
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["user"]["role"] == ROLE_STUDENT
+
+
+def test_关闭教师开关后_白名单外的角色仍是学生(client, session, monkeypatch):
+    monkeypatch.setattr(settings, "allow_teacher_registration", False)
+    resp = _register(client, username="admin_wannabe", role="admin")
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["user"]["role"] == ROLE_STUDENT
 
 
 # --- 2. 开关 ------------------------------------------------------------

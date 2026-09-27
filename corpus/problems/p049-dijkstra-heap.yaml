@@ -1,0 +1,146 @@
+id: p049-dijkstra-heap
+title: 单源最短路（堆优化）
+knowledge_tags:
+  - 图论
+  - 最短路
+  - 优先队列
+  - 贪心
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个 $n$ 个点、$m$ 条边的**有向**图，边权均为**非负整数**。
+  求从起点 $1$ 到其余每个点的最短距离。
+
+  如果某个点不可达，它的最短距离记作 $-1$。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$，以空格分隔。
+  接下来 $m$ 行，每行三个整数 $u$、$v$、$w$，
+  表示一条从 $u$ 到 $v$、权值为 $w$ 的边。
+
+  **输出格式**
+
+  一行，$n$ 个整数，以空格分隔。第 $i$ 个数表示从 1 到 $i$
+  的最短距离，不可达输出 `-1`。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$0 \le m \le 2 \times 10^5$，
+  $1 \le u, v \le n$，$0 \le w \le 10^9$
+input_format: 第一行 n 和 m，接下来 m 行每行 u、v、w。
+output_format: 一行 n 个整数，第 i 个是 1 到 i 的最短距离，不可达 -1。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4 4\n1 2 1\n2 3 2\n1 3 5\n3 4 1\n"
+    expected_output: "0 1 3 4\n"
+    is_sample: true
+  - input: "3 2\n1 2 1\n2 1 1\n"
+    expected_output: "0 1 -1\n"
+    is_sample: true
+  - input: "1 0\n"
+    expected_output: "0\n"
+  - input: "3 1\n2 3 1\n"
+    expected_output: "0 -1 -1\n"
+  - input: "2 2\n1 2 5\n1 2 3\n"
+    expected_output: "0 3\n"
+  - input: "4 3\n1 2 0\n2 3 0\n3 4 0\n"
+    expected_output: "0 0 0 0\n"
+  - input: "5 5\n1 2 1000000000\n2 3 1000000000\n3 4 1000000000\n4 5 1000000000\n1 5 1\n"
+    expected_output: "0 1000000000 2000000000 3000000000 1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <queue>
+  using namespace std;
+  const long long INF = (long long)4e18;
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, m;
+      cin >> n >> m;
+      vector<vector<pair<int, long long>>> adj(n + 1);
+      for (int i = 0; i < m; ++i) {
+          int u, v;
+          long long w;
+          cin >> u >> v >> w;
+          adj[u].push_back({v, w});
+      }
+
+      vector<long long> dist(n + 1, INF);
+      // Min-heap of (distance, node). A max-heap would pop the farthest
+      // unsettled node first, which silently breaks the greedy invariant.
+      priority_queue<pair<long long, int>,
+                     vector<pair<long long, int>>,
+                     greater<pair<long long, int>>> pq;
+      dist[1] = 0;
+      pq.push({0, 1});
+
+      while (!pq.empty()) {
+          auto [d, u] = pq.top();
+          pq.pop();
+          // Stale entry: a shorter path to u was found after this was
+          // pushed. Skipping it is what keeps the algorithm O(m log n).
+          if (d > dist[u]) continue;
+          for (auto [v, w] : adj[u]) {
+              if (dist[u] + w < dist[v]) {
+                  dist[v] = dist[u] + w;
+                  pq.push({dist[v], v});
+              }
+          }
+      }
+
+      for (int i = 1; i <= n; ++i) {
+          if (i > 1) cout << ' ';
+          long long d = dist[i];
+          cout << (d >= INF ? -1 : d);
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  本题是"贪心不变式"这类错误的载体：算法框架看起来完整，
+  但某一处细节破坏后，程序仍然会跑完、仍然输出一个矩阵，
+  只是结果是错的。
+
+  第一类错误是**用最大堆**（`priority_queue` 默认）而不是最小堆。
+  此时每次弹出的是当前距离**最大**的节点，Dijkstra 的
+  "已确定节点的距离不会再变小"这一前提不成立，结果会明显偏大
+  或出现平凡路径。样例 1 会立刻暴露。
+  错因标签：inverted_condition / wrong_algorithm。
+
+  第二类错误是**用普通队列（SPFA 风格）但不做任何限制**，
+  在负权图上或许"看起来对"，在本题非负权图上虽然能得正确答案，
+  但最坏复杂度退化到 $O(nm)$，$n = 10^5$、$m = 2 \times 10^5$
+  时会超时。错因标签：wrong_complexity。
+
+  第三类错误是**没有跳过脏节点**（`if (d > dist[u]) continue;`）。
+  正确性一般不受影响，但队列里会堆入大量过期条目，
+  在稠密图上明显变慢。错因标签：wrong_complexity。
+
+  第四类错误是**把 `dist` 的初值设成 `INT_MAX` 而不是足够大的
+  `long long`**：松弛时 `dist[u] + w` 会溢出成负数，
+  进而把不可达的点标记成可达。用例 4（`2 3 1`，节点 1 不可达
+  节点 2）会暴露：错误实现可能输出一个负数距离。
+  错因标签：overflow。
+
+  第五类错误是**把 `dist` 和边权都声明成 `int`**：用例 7 中
+  路径长度为 $3 \times 10^9$，超出 32 位有符号范围。
+  错因标签：overflow。
+
+  第六类错误是**把"不可达"判断写成 `dist[i] == INF` 之外的形式**
+  （例如 `dist[i] < 0`），或者在图中存在 0 权边时把
+  距离为 0 的节点误判成不可达。用例 6（全 0 权边）专门覆盖它：
+  正确答案是 `0 0 0 0`，把 0 当成"未访问"的实现会输出 `-1`。
+  错因标签：uninitialized_state / boundary_condition。
+
+  第七类错误是**把有向边当无向边处理**（`adj[v].push_back({u, w})`）。
+  样例 2（`3 2 / 1 2 1 / 2 1 1`）中，正确答案是 `0 1 -1`
+  （节点 3 不可达）；当成无向图后依然是这个结果，
+  所以这两条用例都掩盖了错误。真正的差别要在"边方向不对称"
+  的图上才出现，本题隐藏用例保留了这类结构。错因标签：
+  misread_problem。

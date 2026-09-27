@@ -1,0 +1,125 @@
+id: p099-longest-increasing-subsequence
+title: 最长递增子序列长度
+knowledge_tags:
+  - 动态规划
+  - 二分
+  - 数组
+  - 复杂度分析
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数序列，请找出其中**最长严格递增子序列**
+  的长度。
+
+  子序列不要求连续，但**元素的相对顺序必须与原来一致**。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最长严格递增子序列的长度。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$-10^9 \le a_i \le 10^9$
+
+  **提示**
+
+  "严格递增"意味着相等的元素**不能**同时出现在同一个子序列里。
+
+  请尝试用 $O(n \log n)$ 完成；$O(n^2)$ 的做法在本题规模下
+  会超时。
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，LIS 长度。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "8\n10 9 2 5 3 7 101 18\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "6\n0 1 0 3 2 3\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "1\n5\n"
+    expected_output: "1\n"
+  - input: "5\n1 1 1 1 1\n"
+    expected_output: "1\n"
+  - input: "5\n5 4 3 2 1\n"
+    expected_output: "1\n"
+  - input: "7\n2 6 8 3 4 5 1\n"
+    expected_output: "4\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+
+      // tails[len] = smallest possible tail of an increasing subsequence
+      // of length len+1. Keeping tails minimal is what lets the next
+      // element extend the longest one it can.
+      vector<long long> tails;
+      for (int i = 0; i < n; ++i) {
+          // lower_bound (not upper_bound): equal values must NOT form a
+          // longer subsequence, so the first element >= a[i] is replaced.
+          auto it = lower_bound(tails.begin(), tails.end(), a[i]);
+          if (it == tails.end()) tails.push_back(a[i]);
+          else *it = a[i];
+      }
+      cout << tails.size() << endl;
+      return 0;
+  }
+eval_notes: |
+  这题的 $O(n\log n)$ 解法里，`lower_bound` 与 `upper_bound`
+  的差别就是"严格递增"与"非递减"的差别——一字之差，题意全变。
+
+  第一类错误是**用 `upper_bound` 而不是 `lower_bound`**。
+  `upper_bound` 找的是第一个**严格大于**的位置，于是相等元素
+  可以接在后面，算出来的是**最长非递减子序列**的长度。
+  样例 4（全 1，正确 1）会输出 5。样例 4 专门覆盖这个。
+  这是本题最核心的一处。错因标签：inverted_condition。
+
+  第二类错误是**手写的二分找的是"最后一个 $\le a_i$ 的位置"
+  而不是"第一个 $\ge a_i$ 的位置"**。两者在**没有重复元素**
+  时等价，一旦有重复就偏一格。样例 2（`0 1 0 3 2 3`，
+  正确 4）能暴露。错因标签：off_by_one。
+
+  第三类错误是**把 `tails` 的语义理解成"长度为 len 的子序列
+  的末尾元素"却不做最小化**，直接 `push_back` 每个比当前末尾
+  大的元素。这是贪心而非正确的维护，样例 6
+  （`2 6 8 3 4 5 1`，正确 4）会输出 3（贪到 `2 6 8` 就停了）。
+  样例 6 专门覆盖这个。错因标签：wrong_algorithm。
+
+  第四类错误是**用 $O(n^2)$ 的 DP**（`dp[i] = max(dp[j]+1)`）。
+  答案完全正确，但 $n = 10^5$ 时是 $10^{10}$ 次比较，必然
+  TLE。这是本题主要的超时来源。错因标签：wrong_complexity。
+
+  第五类错误是**把问题当成"最长连续递增段"**（要求子序列
+  连续）。样例 1（`10 9 2 5 3 7 101 18`，正确 4）
+  会输出 2（`2 5` 或 `3 7` 等）。注意本项目另有一道
+  「最长连续上升段」，两者容易混淆。错因标签：misread_problem。
+
+  第六类错误是**数组元素值域到 $10^9$，用"以值为下标"的
+  桶代替二分**。这需要离散化；若直接开 $10^9$ 大小的数组
+  会 MLE。若做了离散化则**完全正确**，属等价解法。
+  错因标签：wrong_data_type。
+
+  第七类错误是**答案为 1 的情形没处理**（$n=1$ 或严格递减）。
+  若 `tails` 初始为空且循环里只处理 `push_back`，
+  $n=1$ 时 `tails` 为空会让 `lower_bound` 返回 `end()`，
+  走 `push_back` 分支，答案是 1，**恰好正确**。
+  样例 3、5 覆盖这两个。错因标签：boundary_condition。
+
+  第八类错误是**用 `int` 存 `a[i]` 且值域到 $\pm10^9$**。
+  $10^9$ 在 `int` 范围内（上限约 $2.1\times10^9$），
+  **不会溢出**——这是有意留的一个"看起来危险其实安全"的点。
+  错因标签：overflow（认知层面）。

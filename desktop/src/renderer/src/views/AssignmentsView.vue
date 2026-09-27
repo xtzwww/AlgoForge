@@ -170,10 +170,7 @@ watch(
       <h1 class="text-lg font-semibold text-af-primary">我的作业</h1>
 
       <!-- Signed out: the page cannot compute "my" anything. -->
-      <div
-        v-if="!signedIn"
-        class="af-glass mt-5 rounded-[var(--af-radius-lg)] p-6 text-center"
-      >
+      <div v-if="!signedIn" class="af-glass mt-5 rounded-[var(--af-radius-lg)] p-6 text-center">
         <p class="text-sm text-af-primary">还没有登录</p>
         <p class="mt-2 text-xs leading-relaxed text-af-secondary">
           作业、进度和班级都记在你的账号上，登录后才会显示。
@@ -303,7 +300,11 @@ watch(
                 <RouterLink
                   v-if="nextProblem(row) !== null"
                   class="rounded-[var(--af-radius-sm)] bg-af-accent px-3 py-1.5 text-xs font-medium af-press text-af-inverse transition-colors hover:bg-af-accent-hover"
-                  :to="{ name: 'problem', params: { id: nextProblem(row) } }"
+                  :to="{
+                    name: 'problem',
+                    params: { id: nextProblem(row) },
+                    query: { assignment: row.id }
+                  }"
                 >
                   {{ row.progress === null ? '开始做题' : '继续做题' }}
                 </RouterLink>
@@ -320,7 +321,11 @@ watch(
                 <li v-for="problemId in row.problem_ids" :key="problemId">
                   <RouterLink
                     class="flex items-center gap-2 rounded-[var(--af-radius-sm)] px-2 py-1.5 text-xs transition-colors hover:bg-af-elevated"
-                    :to="{ name: 'problem', params: { id: problemId } }"
+                    :to="{
+                      name: 'problem',
+                      params: { id: problemId },
+                      query: { assignment: row.id }
+                    }"
                   >
                     <span
                       class="w-4 shrink-0 text-center"

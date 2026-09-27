@@ -277,7 +277,11 @@ class CatalogueProblem:
             )
 
         for i, tc in enumerate(self.test_cases, start=1):
-            if not tc.input.strip() and not tc.expected_output.strip():
+            # "Empty on both sides" means no content at all — checking
+            # with .strip() would also flag a case whose whole point is
+            # whitespace (e.g. an all-spaces line for a string problem),
+            # making that input unrepresentable. Compare the text as-is.
+            if not tc.input and not tc.expected_output:
                 problems.append(f"case {i} is empty on both sides")
 
         return problems

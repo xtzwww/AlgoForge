@@ -1,0 +1,147 @@
+id: p039-fractional-knapsack
+title: 分数背包
+knowledge_tags:
+  - 贪心
+  - 排序
+  - 背包问题
+difficulty: medium
+source: 经典算法题
+description: |
+  有一个容量为 $W$ 的背包和 $n$ 种物品。
+
+  第 $i$ 种物品的总重量为 $w_i$，总价值为 $v_i$。
+
+  与 01 背包不同的是，这里每种物品**可以只取一部分**：
+  取用 $x$（$0 \le x \le w_i$）的重量，就得到 $x / w_i \times v_i$
+  的价值。
+
+  求在总重量不超过 $W$ 的前提下能获得的最大总价值，
+  结果**保留两位小数**输出。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $W$，以空格分隔。
+  接下来 $n$ 行，每行两个整数 $w_i$ 和 $v_i$。
+
+  **输出格式**
+
+  一行，一个实数，表示最大总价值，保留两位小数。
+
+  **数据范围**
+
+  $1 \le n \le 1000$，$1 \le W \le 10^5$，
+  $1 \le w_i \le 10^5$，$0 \le v_i \le 10^9$
+input_format: 第一行 n 和 W，接下来 n 行每行 w 和 v。
+output_format: 一行一个保留两位小数的实数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "2 5\n3 60\n4 100\n"
+    expected_output: "120.00\n"
+    is_sample: true
+  - input: "3 50\n10 60\n20 100\n30 120\n"
+    expected_output: "240.00\n"
+    is_sample: true
+  - input: "1 10\n3 30\n"
+    expected_output: "30.00\n"
+  - input: "3 10\n5 4\n5 5\n5 6\n"
+    expected_output: "11.00\n"
+  - input: "1 10\n3 10\n"
+    expected_output: "10.00\n"
+  - input: "2 1\n2 100\n3 100\n"
+    expected_output: "50.00\n"
+  - input: "2 10\n20 10\n5 7\n"
+    expected_output: "9.50\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  #include <iomanip>
+  #include <cmath>
+  using namespace std;
+  struct Item { long long w; double v; };
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      long long W;
+      cin >> n >> W;
+      vector<Item> items(n);
+      for (int i = 0; i < n; ++i) {
+          cin >> items[i].w >> items[i].v;
+      }
+      // Value per unit of weight, descending. Comparing v1*w2 > v2*w1 by
+      // cross-multiplication avoids the precision loss of dividing.
+      sort(items.begin(), items.end(), [](const Item &a, const Item &b) {
+          return a.v * b.w > b.v * a.w;
+      });
+
+      double total = 0.0;
+      // A separate "room left" counter, decremented by what is actually
+      // taken. Keeping the original W and testing `W <= 0` instead is the
+      // classic bug here: W only reaches 0 when the knapsack is filled
+      // exactly, so on any input with leftover capacity the loop body
+      // keeps running and the last item gets counted in full.
+      long long room = W;
+      for (auto &it : items) {
+          if (room <= 0) break;
+          long long take = min(room, it.w);
+          total += it.v * (double)take / (double)it.w;
+          room -= take;
+      }
+      // The judge compares printed text, so round to the exact hundredth:
+      // stream precision alone can land on a value that prints one ulp
+      // below, e.g. 100.00 coming out as "99.99".
+      total = round(total * 100.0) / 100.0;
+      cout << fixed << setprecision(2) << total << endl;
+      return 0;
+  }
+eval_notes: |
+  分数背包与 01 背包只差一句话（"可以只取一部分"），
+  但正确做法完全不同，因此本题的第一个考点就是**识别题型**。
+
+  第一类错误是**按价值从大到小贪心**，而不是按单位重量价值
+  （性价比）从大到小。样例 1 专门覆盖它：性价比是
+  $60/3 = 20$ 与 $100/4 = 25$，所以应先取重量 4、价值 100 的
+  那种，剩余容量 1 只能取重量 3 的那一种的 $1/3$，
+  合计 $100 + 20 = 120$。按价值排序会先取 100（恰好也是它），
+  所以这组数据对两类贪心**都给出 120**；真正的区别要靠
+  "价值最大但性价比最低"的物品才暴露。错因标签：
+  greedy_choice_wrong / wrong_algorithm。
+
+  第二类错误是**把它当成 01 背包做 DP**。本题的样例 1
+  装不下两件物品（$4 + 3 > 5$），只能整件取，答案同样是
+  120——恰好与分数背包一致；样例 2 中三种物品总重 60
+  超过容量 50，但 $10 + 20 + 30$ 都装得下，01 背包能取到
+  240 也是正确答案。**这两组样例都掩盖了 01 背包的错误**，
+  只有在"必须取一部分"时才分道扬镳：用例 `1 10 / 3 30`
+  中 01 背包只能取整件得 30，而正确答案是
+  $30 \times (10/3) = 100$。错因标签：wrong_algorithm。
+
+  第三类错误是**排序键计算精度不足**：用 `double r = v / w;`
+  再按 $r$ 排序时，两个性价比接近但不同的物品会因浮点误差
+  排错顺序，导致结果偏小零点几。用交叉相乘（`a.v * b.w > b.v * a.w`）
+  可以完全避免。错因标签：wrong_data_type。
+
+  第四类错误是**没有处理"物品重量大于剩余容量时需要部分取用"**：
+  写成 `if (w <= W) { ... }` 只在整件装得下时才取，
+  剩余容量被浪费。用例 `1 10 / 3 30` 会得到 30 而不是 100。
+  错因标签：missing_case。
+
+  第五类错误是**排序时把零价值物品排到了最后却没跳过它们**，
+  在背包只剩零价值物品可装时输出 0——本题这类情形不构成
+  错误答案（取 0 价值物品不影响总价值），列出它是提示
+  "跳过"与"不跳过"在分数背包里等价，不要为此加特判。
+  错因标签：missing_case。
+
+  第五类错误是**输出精度**：用 `setprecision(2)` 但不写 `fixed`
+  时会输出两位**有效数字**（130 会变成 `1.3e+02`）；
+  更隐蔽的是浮点累加后的舍入，`total = 100.00000000000001`
+  与 `99.99999999999999` 打印出来分别是 `100.00` 与 `99.99`，
+  同一个正确答案会因累加顺序不同而字节不同。稳妥做法是先
+  `round(total * 100) / 100` 再打印。错因标签：io_format_error。
+
+  第六类错误是 `total` 用 `int` 累加：$v_i$ 可达 $10^9$、
+  $n$ 可达 1000，总和到 $10^{12}$ 会溢出。错因标签：overflow。

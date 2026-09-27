@@ -14,6 +14,7 @@ walks the package on disk and fails if this list falls behind again.
 """
 
 from app.models.assignment import Assignment
+from app.models.assistance_preference import AssistancePreference
 from app.models.assistance_usage import AssistanceUsage
 from app.models.base import Base
 from app.models.classroom import ClassMember, Classroom
@@ -24,6 +25,14 @@ from app.models.problem import (
     DEFAULT_TIME_LIMIT,
     DIFFICULTIES,
     Problem,
+)
+from app.models.problem_set import (
+    VISIBILITIES,
+    VISIBILITY_CLASS,
+    VISIBILITY_PRIVATE,
+    VISIBILITY_PUBLIC,
+    ProblemSet,
+    ProblemSetItem,
 )
 from app.models.review import ReviewRecord
 from app.models.submission import STATUSES, Submission
@@ -37,15 +46,22 @@ __all__ = [
     "DIFFICULTIES",
     "STATUSES",
     "Assignment",
+    "AssistancePreference",
     "AssistanceUsage",
     "ClassMember",
     "Classroom",
     "KnowledgeStat",
     "MistakeBookEntry",
     "Problem",
+    "ProblemSet",
+    "ProblemSetItem",
     "ReviewRecord",
     "Submission",
     "TestCase",
     "User",
+    "VISIBILITIES",
+    "VISIBILITY_CLASS",
+    "VISIBILITY_PRIVATE",
+    "VISIBILITY_PUBLIC",
     "compute_knowledge_stats",
 ]

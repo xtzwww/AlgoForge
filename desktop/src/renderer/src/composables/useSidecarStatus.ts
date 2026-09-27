@@ -55,12 +55,22 @@ let inFlight: Promise<void> | null = null
 /**
  * Turn whatever went wrong into a sentence a user can act on.
  *
- * The two failure modes are genuinely different and used to be
- * indistinguishable in the console: "the shell never told us where the
- * sidecar is" (a configuration problem — no `VITE_SIDECAR_URL` in the
- * web build, or the desktop main process has not finished starting it)
- * versus "we know where it is and it did not answer" (a connectivity
- * problem). Only the second is worth offering a retry for.
+ * Three failure modes, and they used to read identically:
+ *
+ * 1. "the shell never told us where the sidecar is" — a configuration
+ *    problem (no `VITE_SIDECAR_URL` in the web build, or the desktop main
+ *    process has not finished starting it);
+ * 2. "we know where it is and it answered with an error" — the engine is
+ *    connected and unhealthy, which is a *different* fix;
+ * 3. "we know where it is and nothing answered" — either nothing is
+ *    listening, or it accepted the connection and then died mid-request.
+ *
+ * Mode 3 used to say "无法连接到分析引擎" outright, which was actively
+ * misleading: the commonest cause on this project is that the engine
+ * **crashed** while handling the request (a `SystemExit` escaping an
+ * endpoint kills uvicorn), and the process dying is what severs the
+ * connection. The wording now names both possibilities instead of
+ * asserting the one that is usually wrong.
  */
 function describeFailure(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
@@ -77,7 +87,13 @@ function describeFailure(err: unknown): string {
   if (status !== undefined) {
     return `分析引擎返回 ${status}。地址：${baseURL}`
   }
-  return `无法连接到分析引擎。地址：${baseURL}`
+
+  // No response at all. Two causes, and the distinction matters because
+  // only one of them is fixed by starting the engine again.
+  if (message.includes('timeout')) {
+    return `分析引擎没有在规定时间内响应（可能是它卡住了，而不是没启动）。地址：${baseURL}`
+  }
+  return `无法连接到分析引擎，或它在处理时崩溃了。地址：${baseURL}`
 }
 
 async function runProbe(): Promise<void> {

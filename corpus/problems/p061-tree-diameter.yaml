@@ -1,0 +1,147 @@
+id: p061-tree-diameter
+title: 树的直径
+knowledge_tags:
+  - 树
+  - 深度优先搜索
+  - 图论
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一棵 $n$ 个节点的无向树，边权都为 1。
+  请找出树上**最远两个节点之间的距离**（即树的直径）。
+
+  距离定义为两点之间简单路径上的边数。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  接下来 $n - 1$ 行，每行两个整数 $a$ 和 $b$，
+  表示节点 $a$ 与节点 $b$ 之间有一条边。
+
+  **输出格式**
+
+  一行，一个整数，表示树的直径。
+
+  **数据范围**
+
+  $2 \le n \le 10^5$
+
+  **提示**
+
+  树的形状不受限制，可能是一条链，也可能是菊花，
+  也可能是随机的树。
+input_format: 第一行 n，接下来 n-1 行每行 a 和 b。
+output_format: 一行一个整数，树的直径。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5\n1 2\n2 3\n3 4\n4 5\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "4\n1 2\n1 3\n1 4\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "2\n1 2\n"
+    expected_output: "1\n"
+  - input: "3\n1 2\n2 3\n"
+    expected_output: "2\n"
+  - input: "6\n1 2\n2 3\n4 3\n4 5\n5 6\n"
+    expected_output: "5\n"
+  - input: "7\n1 2\n1 3\n1 4\n1 5\n1 6\n1 7\n"
+    expected_output: "2\n"
+  - input: "5\n1 2\n1 3\n3 4\n3 5\n"
+    expected_output: "3\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+
+  int n;
+  vector<int> head, nxt, to;
+  vector<int> dist;
+
+  void addEdge(int u, int v) {
+      to.push_back(v);      nxt.push_back(head[u]);   head[u] = to.size() - 1;
+      to.push_back(u);      nxt.push_back(head[v]);   head[v] = to.size() - 1;
+  }
+
+  // Returns (farthest node, its distance). Iterative so a 1e5-node
+  // chain does not overflow the call stack.
+  pair<int, int> farthestFrom(int start) {
+      fill(dist.begin(), dist.end(), -1);
+      vector<int> stk;
+      stk.push_back(start);
+      dist[start] = 0;
+      int bestNode = start, bestDist = 0;
+      while (!stk.empty()) {
+          int u = stk.back();
+          stk.pop_back();
+          if (dist[u] > bestDist) {
+              bestDist = dist[u];
+              bestNode = u;
+          }
+          for (int e = head[u]; e != -1; e = nxt[e]) {
+              int v = to[e];
+              if (dist[v] == -1) {
+                  dist[v] = dist[u] + 1;
+                  stk.push_back(v);
+              }
+          }
+      }
+      return {bestNode, bestDist};
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      cin >> n;
+      head.assign(n + 1, -1);
+      dist.assign(n + 1, -1);
+      for (int i = 0; i < n - 1; ++i) {
+          int a, b;
+          cin >> a >> b;
+          addEdge(a, b);
+      }
+
+      // Classic two-sweep diameter: far from any node, then far from
+      // that node. The distance returned by the second sweep IS the
+      // diameter — do not return the node id by mistake.
+      int far1 = farthestFrom(1).first;
+      cout << farthestFrom(far1).second << endl;
+      return 0;
+  }
+eval_notes: |
+  两次 DFS 求直径的写法极短，但"返回的是什么"这一点经常被写错，
+  而错误本身仍然给出一个看似合理的正整数。
+
+  第一类错误是**第二次搜索返回的是"最远节点编号"而不是"距离"**。
+  节点编号与距离都是 $[1, n]$ 内的数，输出仍然好看，但语义完全
+  错了。样例 1 中正确答案是 4，而最远节点编号也恰好是 5 或 1，
+  所以这组数据可能碰巧给出别的值——这是最容易蒙混过关的一处。
+  错因标签：misread_problem。
+
+  第二类错误是**只做一次 DFS**，直接从节点 1 开始取最远距离。
+  这对菊花图（用例 2、6）恰好给出正确答案 2，但对链状
+  （用例 1）也能给出正确答案 4 —— 因为从端点出发恰好是最优！
+  真正暴露它的是用例 5：从节点 1 出发的最远距离是 3，
+  而直径是 5。**样例 1 与样例 2 都无法暴露这个错误**，
+  这是本题设计上刻意留下的陷阱。错因标签：wrong_algorithm。
+
+  第三类错误是**把树当有向图单向建边**，导致一半节点不可达。
+  错因标签：misread_problem。
+
+  第四类错误是**递归 DFS**：链状树上深度 $10^5$，爆栈。
+  用例 1 本身就是一条链。错因标签：stack_overflow。
+
+  第五类错误是**`dist` 用 `int` 数组但初始化为 0 当做"未访问"**：
+  这样根节点自己也被当成"距离 0 的可达点"，在只有一个节点时
+  输出错误；更常见的是判断条件写成 `if (dist[v] == 0)`，
+  把"距离为 0 的起点"重复压栈。错因标签：uninitialized_state。
+
+  第六类错误是**用邻接矩阵存图**：$n = 10^5$ 时是 $10^{10}$ 个
+  `int`，内存直接爆掉。错因标签：wrong_data_type。
+
+  第七类错误是**把"边数"与"节点数"混淆**：直径的边数是
+  $n - 1$（链），若输出成节点数就会多 1。错因标签：off_by_one。

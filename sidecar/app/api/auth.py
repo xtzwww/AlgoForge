@@ -1,6 +1,6 @@
 """Authentication endpoints (B1).
 
-POST /api/v1/auth/register {username, password, display_name?} -> {token, user}
+POST /api/v1/auth/register {username, password, display_name?, role?} -> {token, user}
 POST /api/v1/auth/login   {username, password} -> {token, user}
 POST /api/v1/auth/logout  -> {ok: true}
 GET  /api/v1/auth/me      -> {user}
@@ -26,16 +26,19 @@ the *policy* lives in its own module rather than inline here:
     app/registration.py
 
 That module holds the parts that are security-relevant rather than
-mechanical: the role is hardcoded to student and unreachable from a
-request, the whole door has an on/off switch
-(``ALLOW_OPEN_REGISTRATION``), credentials have a floor, and attempts
-are rate limited per client. Read it before changing anything about how
-accounts get created.
+mechanical: the role is a whitelisted *parameter* (only the literal
+``"teacher"`` can ask for a teacher account, and only while
+``ALLOW_TEACHER_REGISTRATION`` is on — anything else is a student),
+the whole door has an on/off switch (``ALLOW_OPEN_REGISTRATION``),
+credentials have a floor, and attempts are rate limited per client.
+Read it before changing anything about how accounts get created.
 
-Still deliberately absent: password reset, email, and role
-self-service. Each is a real feature with its own storage and failure
-modes, and none is required by "a student can sign up". An unverified
-email field in particular would look like a control while being none.
+Still deliberately absent: password reset and email. Each is a real
+feature with its own storage and failure modes, and none is required by
+"a student can sign up". An unverified email field in particular would
+look like a control while being none. Role self-service is *present*
+since 2026-09-25 — the teacher web entry's sign-up page creates a
+teacher account — and is governed by the switch above, not by the route.
 
 The token is not the sidecar token
 ----------------------------------
@@ -92,12 +95,14 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     """A self-service sign-up.
 
-    Note what is *absent*: there is no ``role`` field, and there never
-    should be. The role is decided by
-    :func:`app.registration.registration_role`, which takes no argument.
-    Accepting one here — even validated against a whitelist — would make
-    "can a stranger become a teacher?" a question about validation
-    instead of a question about whether the capability exists at all.
+    ``role`` is what the client *asks* for, and nothing more. The only
+    value that can produce a teacher account is the literal ``"teacher"``
+    (case- and space-insensitive), and it is honoured only while
+    ``ALLOW_TEACHER_REGISTRATION`` is on — the actual decision lives in
+    :func:`app.registration.registration_role`, which also rejects any
+    spelling that is not exactly ``teacher`` and any role this product
+    does not have (those fall back to a student). Absent means
+    "a student, please", which is the default.
 
     ``display_name`` is optional and blank means "use the username", so
     a student who does not want to type their real name is not blocked.
@@ -106,6 +111,7 @@ class RegisterRequest(BaseModel):
     username: str = Field(max_length=64)
     password: str = Field(max_length=256)
     display_name: str = Field(default="", max_length=64)
+    role: str = Field(default="student", max_length=16)
 
 
 class UserOut(BaseModel):
@@ -190,7 +196,12 @@ def _client_key(request: Request) -> str:
 
 @router.post("/register", response_model=LoginResponse, status_code=201)
 def register(req: RegisterRequest, request: Request) -> LoginResponse:
-    """Create a student account and sign it in.
+    """Create an account and sign it in.
+
+    The account is a student one by default; a request for ``role=
+    "teacher"`` is honoured only while ``ALLOW_TEACHER_REGISTRATION`` is
+    on (the teacher web entry's sign-up page is the caller that sends
+    it). Everything else is decided in :mod:`app.registration`.
 
     Returns the same shape as :func:`login`, including a session token,
     because the alternative — create, then make the client post its own
@@ -200,8 +211,10 @@ def register(req: RegisterRequest, request: Request) -> LoginResponse:
     Status codes, and why each is distinct:
 
     * **403** — self-registration is switched off
-      (``ALLOW_OPEN_REGISTRATION=false``). A different thing from a bad
-      request: the client should not retry with different data.
+      (``ALLOW_OPEN_REGISTRATION=false``), or a teacher account was
+      asked for while ``ALLOW_TEACHER_REGISTRATION=false``. A different
+      thing from a bad request: the client should not retry with
+      different data.
     * **429** — too many accounts created from this client recently. The
       form shows the retry delay from the message.
     * **400** — the username or password does not meet the floor in
@@ -231,6 +244,10 @@ def register(req: RegisterRequest, request: Request) -> LoginResponse:
         username = validate_username(req.username)
         password = validate_password(req.password)
         display_name = validate_display_name(req.display_name)
+        # The whitelist + switch decision, made here rather than at the
+        # call site below. Raises 403 when a teacher account is asked for
+        # while ALLOW_TEACHER_REGISTRATION is off.
+        role = registration_role(req.role)
     except RegistrationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from None
 
@@ -240,17 +257,16 @@ def register(req: RegisterRequest, request: Request) -> LoginResponse:
                 session,
                 username=username,
                 password=password,
-                # Not from the request. See RegisterRequest's docstring.
-                role=registration_role(),
+                role=role,
                 display_name=display_name,
             )
             token = issue_session(session, user)
             out = _user_out(user)
     except ValueError:
         # create_user raises ValueError only for a taken username or an
-        # unknown role; the role is a module constant, so this is the
-        # username. 409 rather than 400, matching the teacher's
-        # add_student — the client can pick another name.
+        # unknown role; the role came from registration_role's whitelist,
+        # so this is the username. 409 rather than 400, matching the
+        # teacher's add_student — the client can pick another name.
         raise HTTPException(status_code=409, detail="该用户名已被占用") from None
 
     throttle.record(key)

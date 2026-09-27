@@ -97,6 +97,12 @@ def _run_version_command(cmd: list[str]) -> tuple[bool, Optional[str], Optional[
         return False, None, f"timed out after {_PROBE_TIMEOUT}s"
     except OSError as exc:  # e.g. permission denied
         return False, None, f"failed to launch: {exc}"
+    except BaseException as exc:  # noqa: BLE001
+        # Same reasoning as probe_sandbox_tmp: a hook or signal that raises a
+        # BaseException while spawning a compiler must degrade to "this one
+        # language is unavailable", not crash /env-check and make the whole
+        # engine look dead. One broken toolchain is not a broken app.
+        return False, None, f"probe interrupted: {type(exc).__name__}: {exc}"
 
     combined = ((proc.stdout or "") + (proc.stderr or "")).strip()
     first_line = combined.splitlines()[0].strip() if combined else None
@@ -212,13 +218,25 @@ def probe_sandbox_tmp() -> ProbeResult:
     A read-only or missing temp dir is a silent judge-breaker: every
     submission would fail at compile time with an opaque linker error.
     Checking up front turns that into an actionable startup message.
+
+    **Why the cleanup is separated from the write.** The old version did
+    write-then-``unlink`` inside one ``try``. The write is what this probe
+    is actually about; the ``unlink`` is bookkeeping. When something in
+    the environment hijacks deletion -- a delete-guard hook, an A/V
+    quarantine -- that hook raises ``SystemExit``, which is a
+    ``BaseException`` and therefore slips straight through ``except
+    OSError`` and out of the endpoint as a 500. The whole app then looks
+    down because a *cleanup* step failed, which is both wrong and
+    spectacularly unhelpful to diagnose.
+
+    Splitting them means: the write decides availability, and a failed
+    cleanup is reported in ``detail`` without changing the verdict.
     """
     base = sandbox_tmp_base()
     try:
         base.mkdir(parents=True, exist_ok=True)
         probe_file = base / ".algoforge_write_probe"
         probe_file.write_text("ok", encoding="utf-8")
-        probe_file.unlink()
     except OSError as exc:
         return ProbeResult(
             id="sandbox_tmp",
@@ -229,13 +247,24 @@ def probe_sandbox_tmp() -> ProbeResult:
             detail=f"not writable: {exc}",
         )
 
+    # `BaseException` on purpose. A delete hook that calls `sys.exit()` or
+    # raises `KeyboardInterrupt` must not be able to take down the probe:
+    # the directory *was* written successfully, so the sandbox is usable
+    # and the leftover file is harmless (the judge clears its scratch dir
+    # between runs).
+    leftover: Optional[str] = None
+    try:
+        probe_file.unlink()
+    except BaseException as exc:  # noqa: BLE001 - see the docstring
+        leftover = f"could not remove probe file: {type(exc).__name__}: {exc}"
+
     return ProbeResult(
         id="sandbox_tmp",
         display_name="Sandbox temp dir",
         available=True,
         version=None,
         path=str(base),
-        detail=None,
+        detail=leftover,
     )
 
 

@@ -1,0 +1,117 @@
+id: p084-plus-one
+title: 加一（高精度进位）
+knowledge_tags:
+  - 数组
+  - 大数
+  - 模拟
+  - 边界处理
+difficulty: easy
+source: 经典算法题
+description: |
+  给定一个由**数字数组**表示的非负整数，最高位在数组最左边。
+  请计算这个整数**加 1** 后的结果，并用同样的数组形式输出。
+
+  **输入格式**
+
+  第一行一个整数 $n$，表示数组长度。
+  第二行 $n$ 个整数 $d_0, d_1, \dots, d_{n-1}$（每个都在 $0$ 到 $9$
+  之间），依次表示这个数从高位到低位的每一位。
+
+  **输出格式**
+
+  一行若干个整数，表示加 1 后结果的每一位（从高位到低位），
+  以空格分隔。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$0 \le d_i \le 9$，**保证最高位不为 0**
+  （除非整个数就是单个 `0`）
+
+  **提示**
+
+  注意全是 $9$ 的情形：`999` 加 1 变成 `1000`，**位数会多一位**。
+input_format: 第一行 n，第二行 n 个 0-9 的数字表示一个大整数。
+output_format: 一行若干个整数，加 1 后的每一位。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\n1 2 3\n"
+    expected_output: "1 2 4\n"
+    is_sample: true
+  - input: "3\n9 9 9\n"
+    expected_output: "1 0 0 0\n"
+    is_sample: true
+  - input: "1\n0\n"
+    expected_output: "1\n"
+  - input: "3\n1 2 9\n"
+    expected_output: "1 3 0\n"
+  - input: "1\n9\n"
+    expected_output: "1 0\n"
+  - input: "4\n1 0 0 9\n"
+    expected_output: "1 0 1 0\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<int> d(n);
+      for (int i = 0; i < n; ++i) cin >> d[i];
+
+      // Carry propagates right to left. If it survives past the most
+      // significant digit, the result needs one more digit — and that
+      // digit is 1, with every original digit having become 0.
+      int carry = 1;
+      for (int i = n - 1; i >= 0 && carry; --i) {
+          int s = d[i] + carry;
+          d[i] = s % 10;
+          carry = s / 10;
+      }
+
+      if (carry) cout << "1 ";
+      for (int i = 0; i < n; ++i) {
+          if (i) cout << ' ';
+          cout << d[i];
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  这题唯一的考点是**最高位进位导致位数增加**，其余都是送分。
+
+  第一类错误是**没有处理最高位进位**（只在数组内改数字，不补位）。
+  `999` 加 1 会输出 `0 0 0` 而不是 `1 0 0 0`——**位数没变、值
+  完全错误**，且看起来像是"进位逻辑写反了"。样例 2 专门覆盖这个，
+  是本题最重要的一处。错因标签：missing_case。
+
+  第二类错误是**从高位往低位加**（循环方向反了）。个位是数组
+  **最后**一个元素；从 `i = 0` 开始加会把进位加到最高位上，
+  于是 `1 2 9` 变成 `2 2 9`（最高位被加了 1）而不是 `1 3 0`。
+  样例 4 专门覆盖这个。错因标签：wrong_traversal。
+
+  第三类错误是**进位条件写成 `if (d[i] == 9) { d[i] = 0; carry = 1; }`
+  但循环结束后忘记用 carry**。也就是判断了进位却没在更高位上加。
+  样例 4（`1 2 9`）会得到 `1 2 0` 而正确答案是 `1 3 0`。
+  错因标签：off_by_one（进位丢失一位）。
+
+  第四类错误是**把数组当整数读进来直接 `+1`**（`long long x; cin >> x;`）。
+  本题 $n$ 可达 $10^5$，远超任何整数类型，必然溢出；而且输入是
+  **空格分隔的数字序列**而不是一个整数，读法本身就不对。
+  样例 2（`9 9 9`）会被读成 9，加 1 得 10，输出 `1 0`，
+  与正确输出 `1 0 0 0` 不同。错因标签：wrong_data_type。
+
+  第五类错误是**输出时最高位补 1 的位置写错**（把 `1` 插在末尾
+  而不是开头）。`999` 会输出 `0 0 0 1` 而不是 `1 0 0 0`。
+  错因标签：wrong_traversal。
+
+  第六类错误是**没有处理 `n = 1` 且 `d = 0`**（输入单个 0）。
+  加 1 后应为 `1`；若实现里把"最高位为 0"当成非法输入直接返回，
+  会输出空。样例 3 专门覆盖这个。错因标签：boundary_condition。
+
+  第七类错误是**输出用空格分隔但行末多一个空格**。多数评测机
+  忽略，严格比对下 WA。样例 3（单个 `1`）能暴露"多一个空格"
+  的情形。错因标签：io_format_error。

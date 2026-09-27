@@ -1,0 +1,110 @@
+id: p070-sliding-window-longest-substring
+title: 无重复字符的最长子串长度
+knowledge_tags:
+  - 字符串
+  - 滑动窗口
+  - 哈希表
+  - 双指针
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个只包含小写英文字母的字符串 $s$，请找出其中**不含重复字符**
+  的最长连续子串，输出它的长度。
+
+  **输入格式**
+
+  一行，一个字符串 $s$（长度不超过 $10^5$，只含小写字母 `a`~`z`）。
+
+  **输出格式**
+
+  一行，一个整数，表示最长无重复字符子串的长度。
+
+  **数据范围**
+
+  $1 \le |s| \le 10^5$
+
+  **提示**
+
+  子串必须**连续**。字符可以重复出现，只是不能落在同一个子串里。
+input_format: 一行一个只含小写字母的字符串。
+output_format: 一行一个整数，最长无重复字符子串的长度。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "abcabcbb\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "bbbbb\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "a\n"
+    expected_output: "1\n"
+  - input: "pwwkew\n"
+    expected_output: "3\n"
+  - input: "abcdefg\n"
+    expected_output: "7\n"
+  - input: "abba\n"
+    expected_output: "2\n"
+  - input: "dvdf\n"
+    expected_output: "3\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      string s;
+      cin >> s;
+
+      // last[c] = the last index at which character c appeared, or -1.
+      // left is the start of the current window. When we meet a character
+      // whose last position is inside the window, the window must jump to
+      // last[c] + 1 — NOT to i, and NOT merely +1.
+      vector<int> last(26, -1);
+      int left = 0, best = 0;
+      for (int i = 0; i < (int)s.size(); ++i) {
+          int c = s[i] - 'a';
+          if (last[c] >= left) left = last[c] + 1;
+          last[c] = i;
+          best = max(best, i - left + 1);
+      }
+      cout << best << endl;
+      return 0;
+  }
+eval_notes: |
+  这是一道"模板看起来很熟、但边界逐条都是坑"的滑动窗口题。
+
+  第一类错误是**只用哈希集合、遇到重复就不断左移一格**。实现
+  上没错，但最坏情况下（如 `abbbbbbb`）每一步都要连续左移，
+  复杂度退化到 $O(n^2)$，$10^5$ 会超时。这是本题最主要的一个
+  TLE 来源：样例全过、思路也对、就是慢。错因标签：
+  wrong_complexity。
+
+  第二类错误是**左指针跳跃写成 `left = i`** 而不是
+  `last[c] + 1`。以 `abba` 为例：读到第二个 `b`（下标 2）时，
+  正确左界是 `last[b]+1 = 2`，结果长度 1；继续读到第二个 `a`
+  （下标 3）时 `last[a]=0 < left=2`，不该动窗口。若写成
+  `left = i`，第三次循环时窗口变成从 3 开始，长度 1，最终
+  答案是 1 而不是正确的 2。错因标签：off_by_one。
+
+  第三类错误是**忘记判断 `last[c] >= left`**，直接
+  `left = last[c] + 1`。以 `abba` 为例：读到末尾 `a` 时
+  `last[a]=0`，无条件跳到 1，窗口从 3 退回 1，长度算成 3，
+  输出 3 而不是 2。这是"答案比正确值大"的一种典型。错因标签：
+  boundary_condition。
+
+  第四类错误是**窗口长度写成 `i - left`**。差一个 1，所有不含
+  重复字符的输入都会少 1，而样例 `bbbbb`（正确答案 1）会输出 0。
+  错因标签：off_by_one。
+
+  第五类错误是**用 `map<char,int>` 记录"出现次数"而不是
+  "最后位置"**，然后靠计数是否为 1 判断。这在 `dvdf` 上会
+  出错：`v` 重复时窗口该跳到下标 2，但计数法只能一格一格挪，
+  若同时又把 `best` 计算写在外面，会得到 2 而不是 3。错因标签：
+  wrong_algorithm。
+
+  本题无法区分"数组记 last 位置"与"哈希表记 last 位置"两种
+  写法——它们输出的完全一致，只有常数差异。这属于等价解法，
+  不应当作错。

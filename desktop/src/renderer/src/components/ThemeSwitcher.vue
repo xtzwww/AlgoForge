@@ -199,8 +199,11 @@ onBeforeUnmount(() => {
 }
 
 .theme-menu {
+  /* 50 > the drawer (40) and its scrim (30): below 1024px an open menu
+   * must float above both, and it lives in the topbar's stacking context
+   * which AppTopbar now lifts as a whole (see that component). */
   position: absolute;
-  z-index: 30;
+  z-index: 50;
   top: calc(100% + 6px);
   left: 0;
   min-width: 268px;

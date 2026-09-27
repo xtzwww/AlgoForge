@@ -1,0 +1,106 @@
+id: p085-find-the-difference
+title: 找不同（多出来的那个字符）
+knowledge_tags:
+  - 字符串
+  - 位运算
+  - 哈希表
+  - 计数
+difficulty: easy
+source: 经典算法题
+description: |
+  给定两个只含小写英文字母的字符串 $s$ 和 $t$。字符串 $t$ 是由
+  字符串 $s$ **随机重排后、再在任意位置插入一个字符**得到的。
+
+  请找出这个被插入的字符。
+
+  **输入格式**
+
+  第一行一个字符串 $s$。
+  第二行一个字符串 $t$。
+
+  **输出格式**
+
+  一行，一个字符，表示被插入的字符。
+
+  **数据范围**
+
+  $0 \le |s| \le 10^5$，$|t| = |s| + 1$，两串都只含小写字母 `a`~`z`
+
+  **提示**
+
+  $s$ 可能为空串，此时 $t$ 只有一个字符，答案就是它。
+input_format: 第一行字符串 s，第二行字符串 t。
+output_format: 一行一个字符，被插入的那个字符。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "abcd\nabcde\n"
+    expected_output: "e\n"
+    is_sample: true
+  - input: "\na\n"
+    expected_output: "a\n"
+    is_sample: true
+  - input: "a\naa\n"
+    expected_output: "a\n"
+  - input: "abc\ncabx\n"
+    expected_output: "x\n"
+  - input: "xyz\nzzyx\n"
+    expected_output: "z\n"
+  - input: "abcabc\ncbaabcz\n"
+    expected_output: "z\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      string s, t;
+      // s may be empty, so read both with getline: operator>> would skip
+      // the blank first line and read t into s.
+      getline(cin, s);
+      getline(cin, t);
+
+      // XOR cancels equal characters, leaving exactly the extra one.
+      char ans = 0;
+      for (char c : s) ans ^= c;
+      for (char c : t) ans ^= c;
+      cout << ans << endl;
+      return 0;
+  }
+eval_notes: |
+  这题的解法有三种（异或、计数、求和差），三种都对，
+  真正的坑在**读输入**和"`s` 可能为空"这两处。
+
+  第一类错误是**用 `cin >> s >> t` 读输入**。当 $s$ 为空串时，
+  `operator>>` 会跳过空行，把 `t` 读进 `s`，然后 `t` 读不到内容。
+  样例 2（第一行空、第二行 `a`）会因此出错。必须用 `getline`。
+  这是本题最主要的错误。错因标签：io_format_error。
+
+  第二类错误是**可以读入但把 `s` 为空当成非法输入提前返回**。
+  样例 2 专门覆盖这个。错因标签：boundary_condition。
+
+  第三类错误是**用计数数组但只遍历了 $t$**，`s` 的部分没减掉。
+  这样得到的是 $t$ 中各字符的计数，取"计数为 1 的"在多数情况下
+  碰巧正确，但样例 3（`a` / `aa`，答案是 `a`）会因为 `a` 的计数
+  为 2 而被跳过，输出空或错误字符。错因标签：wrong_algorithm。
+
+  第四类错误是**用"字符求和之差"但没考虑 `char` 可能为负数**。
+  本题只含小写字母（ASCII 为正），所以**不会出错**——
+  这是有意留的一个"看起来危险其实安全"的点。错因标签：
+  wrong_data_type（认知层面）。
+
+  第五类错误是**异或初始化为 `'a'` 或某个非空值**。异或的
+  单位元是 0，初值必须是 0；若初值为 `'a'`，答案会被额外
+  异或一次 `a`。样例 1（答案 `e`）会输出 `e ^ a` 对应的
+  不可见字符。错因标签：initialization。
+
+  第六类错误是**用哈希表计数再找计数为奇数的字符**。这**完全
+  正确**，输出与异或写法一致，本题无法区分，属等价解法。
+  错因标签：wrong_complexity（认知层面，不构成判错）。
+
+  第七类错误是**认为答案是"`t` 中某个不在 `s` 里的字符"**，
+  于是用集合差集。这只在被插入字符是全新字符时成立；
+  若插入的是 $s$ 中已有的字符（如样例 3 插入第二个 `a`），
+  会找不到答案。错因标签：misread_problem。

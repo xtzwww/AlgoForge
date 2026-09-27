@@ -1,0 +1,100 @@
+id: p072-single-number-xor
+title: 只出现一次的数（其余出现两次）
+knowledge_tags:
+  - 位运算
+  - 数组
+  - 复杂度分析
+difficulty: easy
+source: 经典算法题
+description: |
+  给定 $n$ 个整数，其中**恰好有一个数只出现一次**，其余每个数都
+  恰好出现**两次**。请找出这个只出现一次的数。
+
+  **输入格式**
+
+  第一行一个整数 $n$（奇数）。
+  第二行 $n$ 个整数，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，只出现一次的数。
+
+  **数据范围**
+
+  $1 \le n \le 2 \times 10^5$，$1 \le n$ 为奇数，$|a_i| \le 10^9$，
+  保证除一个数外其余都成对出现
+
+  **提示**
+
+  请尝试使用**常数级额外空间**完成本题。
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\n2 2 1\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "1\n7\n"
+    expected_output: "7\n"
+    is_sample: true
+  - input: "5\n4 1 2 1 2\n"
+    expected_output: "4\n"
+  - input: "7\n-1 5 -1 5 9 9 1000000000\n"
+    expected_output: "1000000000\n"
+  - input: "3\n0 0 3\n"
+    expected_output: "3\n"
+  - input: "9\n8 8 7 7 6 6 5 5 4\n"
+    expected_output: "4\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+
+      // XOR cancels equal values: x ^ x == 0 and 0 ^ y == y.
+      // Every paired value annihilates; the lone value is what remains.
+      // Values up to 1e9 exceed int's comfortable XOR domain only in
+      // that they need the full 32-bit range — long long keeps it simple.
+      long long acc = 0;
+      for (int i = 0; i < n; ++i) {
+          long long x;
+          cin >> x;
+          acc ^= x;
+      }
+      cout << acc << endl;
+      return 0;
+  }
+eval_notes: |
+  这道题的解法本身就是"一眼可见"的，但有三处细节会让它出错。
+
+  第一类错误是**用哈希表计数再找出现 1 次的值**。这**完全正确**，
+  只是用了 $O(n)$ 额外空间，与题目"提示请尝试常数空间"的要求不符。
+  因为输出一致，本题**无法与异或解法区分**——这是一处有意的
+  不可观测性，作为"等价解法"记录，不作对错判定。错因标签：
+  wrong_complexity。
+
+  第二类错误是**累加各元素出现次数**（`sum += x` 之类）而不是
+  异或。任何"成对相消"的直觉只要写错运算符就会给出错误答案，
+  且错误值与输入没有直观联系，难以自测发现。错因标签：
+  wrong_algorithm。
+
+  第三类错误是**用 `int` 承接异或结果但元素绝对值到 $10^9$**。
+  $10^9$ 在 `int` 范围内（上限约 $2.1 \times 10^9$），所以本题
+  **不会**溢出错——这是有意留的一个"看起来危险其实安全"的位置。
+  若把范围改成 $|a_i| \le 4 \times 10^9$ 才会真的挂。错因标签：
+  overflow（认知层面）。
+
+  第四类错误是**把 `n` 读成数组长度后只读 `n-1` 个数**（当成
+  "n 是配对数"）。以样例 3 为例会只读 `4 1 2 1`，得到
+  `4^1^2^1 = 6`，输出 6 而不是 4。错因标签：misread_problem。
+
+  第五类错误是**输入读取用 `cin >> n` 后忘记 `n` 的奇偶含义**。
+  本题保证 $n$ 为奇数，但若实现里写了"若 n 为偶数则最后再读一个"
+  之类多余分支，会多吃一个不存在的数导致后续全部错位。错因标签：
+  io_format_error。

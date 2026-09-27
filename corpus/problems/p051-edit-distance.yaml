@@ -1,0 +1,128 @@
+id: p051-edit-distance
+title: 编辑距离
+knowledge_tags:
+  - 动态规划
+  - 字符串
+difficulty: hard
+source: 经典算法题
+description: |
+  给定两个字符串 $s$ 和 $t$，求把 $s$ 变成 $t$ 所需的**最少操作次数**。
+
+  允许的操作有三种：
+
+  1. 插入一个字符（可以在任意位置）；
+  2. 删除一个字符；
+  3. 替换一个字符。
+
+  每次操作计 1 次。
+
+  **输入格式**
+
+  第一行，字符串 $s$。
+  第二行，字符串 $t$。
+
+  两个字符串都可能为空行。
+
+  **输出格式**
+
+  一行，一个整数，表示最少操作次数。
+
+  **数据范围**
+
+  两个字符串的长度均不超过 $1000$，字符为小写英文字母
+input_format: 第一行 s，第二行 t（均可能为空行）。
+output_format: 一行一个整数，最少操作次数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "horse\nros\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "intention\nexecution\n"
+    expected_output: "5\n"
+    is_sample: true
+  - input: "abc\nabc\n"
+    expected_output: "0\n"
+  - input: "\nabc\n"
+    expected_output: "3\n"
+  - input: "abc\n\n"
+    expected_output: "3\n"
+  - input: "\n\n"
+    expected_output: "0\n"
+  - input: "kitten\nsitting\n"
+    expected_output: "3\n"
+  - input: "abcdef\nfedcba\n"
+    expected_output: "6\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      string s, t;
+      getline(cin, s);
+      getline(cin, t);
+      int n = s.size(), m = t.size();
+
+      // dp[i][j] = edit distance between s[0..i-1] and t[0..j-1].
+      // Row/column 0 are the "empty prefix" base cases: turning a string
+      // of length k into the empty string costs k deletions.
+      vector<vector<int>> dp(n + 1, vector<int>(m + 1, 0));
+      for (int i = 0; i <= n; ++i) dp[i][0] = i;
+      for (int j = 0; j <= m; ++j) dp[0][j] = j;
+
+      for (int i = 1; i <= n; ++i) {
+          for (int j = 1; j <= m; ++j) {
+              if (s[i - 1] == t[j - 1]) {
+                  // Equal characters cost nothing — but they must still
+                  // carry dp[i-1][j-1] forward rather than being skipped.
+                  dp[i][j] = dp[i - 1][j - 1];
+              } else {
+                  dp[i][j] = 1 + min({dp[i - 1][j],      // delete
+                                      dp[i][j - 1],      // insert
+                                      dp[i - 1][j - 1]}); // replace
+              }
+          }
+      }
+      cout << dp[n][m] << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的转移方程是固定的，但它有一处最经典的"看起来对"的错误，
+  而且该错误在很长的字符串上仍然给出正确答案。
+
+  第一类错误是**把三个转移的代价全部写成 1 + min(...)**，
+  包括 `s[i-1] == t[j-1]` 时也用 `1 + min(dp[i-1][j-1], ...)`。
+  正确做法是字符相等时直接继承 `dp[i-1][j-1]`。错写后会**在所有
+  数据上稳定偏大**（通常大 1 到几），kitten/sitting 会输出 4
+  而不是 3。错因标签：inverted_condition。
+
+  第二类错误是**第一行/第一列没有初始化**：`dp[0][j]` 与
+  `dp[i][0]` 保持 0，或只初始化其中一个。此时"把空串变成
+  长度为 $m$ 的串"的费用被算成 0，答案严重偏小。
+  用例 4、5、6（其中一边为空）专门覆盖它。错因标签：
+  missing_case / off_by_one。
+
+  第三类错误是**下标用 `s[i]` 而不是 `s[i-1]`**：字符串下标
+  从 0 开始而 dp 从 1 开始，混用会让所有比较错位一格。
+  错因标签：off_by_one。
+
+  第四类错误是**用 `cin >> s >> t` 读入**：空行读完 still 为空，
+  恰好得到正确答案 0（用例 6），所以这两个空串用例**掩盖了**
+  读入方式的问题；真正的差别出现在含空格的字符串上，
+  此时 `cin >>` 会截断。正确写法是 `getline`。错因标签：
+  io_format_error。
+
+  第五类错误是**认为只有替换一种操作**（把长度差也算成替换），
+  得到 $\max(n, m)$ 或错误的距离。错因标签：misread_problem。
+
+  第六类错误是**用滚动数组优化时只保留一维但没保存
+  `dp[i-1][j-1]`**，导致替换分支读到的是本行已更新的值，
+  结果偏小。错因标签：uninitialized_state。
+
+  第七类错误是**把状态定义成"最长公共子序列"**再换算，
+  转换公式写错时只在特定长度组合上正确。错因标签：
+  wrong_algorithm。

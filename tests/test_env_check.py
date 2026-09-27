@@ -194,3 +194,71 @@ def test_sandbox_tmp_base_is_ascii_on_windows() -> None:
 def test_sandbox_tmp_is_actually_writable() -> None:
     result = env_probe.probe_sandbox_tmp()
     assert result.available is True, result.detail
+
+
+def test_probe_survives_a_delete_hook_that_raises_systemexit(monkeypatch) -> None:
+    """A cleanup failure must not be reported as "the sandbox is unusable".
+
+    This is a real production crash, not a hypothetical. A delete-guard
+    hook in ``sitecustomize`` intercepts ``Path.unlink`` and calls
+    ``sys.exit(1)`` once enough files have been deleted in one session.
+    ``SystemExit`` derives from ``BaseException``, so it sailed straight
+    through the old ``except OSError``:
+
+    * the probe reported nothing (the write had actually succeeded), and
+    * the exception escaped ``/api/v1/env-check`` as a 500 and **killed
+      uvicorn**, so the entire engine looked dead.
+
+    The write is what decides availability; the cleanup is bookkeeping.
+    """
+    import pathlib
+
+    real_unlink = pathlib.Path.unlink
+
+    def exploding_unlink(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self.name == ".algoforge_write_probe":
+            raise SystemExit(1)
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", exploding_unlink)
+
+    result = env_probe.probe_sandbox_tmp()
+
+    # The directory *was* written to, so the sandbox is usable.
+    assert result.available is True, result.detail
+    # ...and the cleanup problem is reported rather than swallowed, so it
+    # is still diagnosable from /env-check.
+    assert result.detail is not None
+    assert "SystemExit" in result.detail
+
+
+def test_env_check_endpoint_survives_a_delete_hook_that_raises() -> None:
+    """The same hook must not be able to 500 the whole endpoint.
+
+    Guards the integration seam, not just the probe function: the crash
+    only became visible because the exception crossed the FastAPI
+    boundary.
+    """
+    import pathlib
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    real_unlink = pathlib.Path.unlink
+
+    def exploding_unlink(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self.name == ".algoforge_write_probe":
+            raise SystemExit(1)
+        return real_unlink(self, *args, **kwargs)
+
+    original = pathlib.Path.unlink
+    pathlib.Path.unlink = exploding_unlink  # type: ignore[method-assign]
+    try:
+        with TestClient(app, headers=TEST_SIDECAR_HEADERS) as client:
+            resp = client.get("/api/v1/env-check")
+    finally:
+        pathlib.Path.unlink = original  # type: ignore[method-assign]
+
+    assert resp.status_code == 200
+    assert resp.json()["core_ready"] is True

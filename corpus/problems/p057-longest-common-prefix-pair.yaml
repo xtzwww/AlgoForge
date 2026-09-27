@@ -1,0 +1,110 @@
+id: p057-longest-common-prefix-pair
+title: 最长连续上升段
+knowledge_tags:
+  - 数组
+  - 循环
+  - 边界处理
+difficulty: easy
+source: 经典练习题
+description: |
+  给定一个长度为 $n$ 的整数数组，请找出其中**最长的一段连续上升子数组**
+  的长度。
+
+  一段子数组 $a_l, a_{l+1}, \dots, a_r$ 是"连续上升"的，
+  当且仅当对每个 $l \le i < r$ 都有 $a_i < a_{i+1}$。
+  单个元素自身构成一段长度为 1 的上升段。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最长连续上升段的长度。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$|a_i| \le 10^9$
+
+  **提示**
+
+  相等不算上升：`1 1 2` 的最长上升段是 `1 2`，长度为 2。
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，最长连续上升段长度。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "6\n1 3 5 4 6 7\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "4\n5 4 3 2\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "1\n7\n"
+    expected_output: "1\n"
+  - input: "4\n1 1 2 3\n"
+    expected_output: "3\n"
+  - input: "5\n1 2 3 4 5\n"
+    expected_output: "5\n"
+  - input: "3\n1 1 1\n"
+    expected_output: "1\n"
+  - input: "6\n-5 -3 -1 -1 2 4\n"
+    expected_output: "3\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      long long prev;
+      cin >> prev;
+
+      // Seeded with 1, not 0: the first element already forms a run of
+      // length 1, and the loop below only ever sees the *transitions*.
+      int best = 1, cur = 1;
+      for (int i = 1; i < n; ++i) {
+          long long x;
+          cin >> x;
+          if (x > prev) {
+              ++cur;
+          } else {
+              cur = 1;
+          }
+          if (cur > best) best = cur;
+          prev = x;
+      }
+      cout << best << endl;
+      return 0;
+  }
+eval_notes: |
+  第一类错误是**把初值设成 0**（`int best = 0, cur = 0;`）。这样
+  每个上升段都被少数了 1：`1 2 3 4 5` 会输出 4 而不是 5。
+  这一格之差来自"段的长度 = 段内比较次数 + 1"，而循环统计的是
+  比较次数。错因标签：off_by_one / uninitialized_state。
+
+  第二类错误是**把"上升"写成 `x >= prev`**（允许相等）。题目要求
+  严格上升，`1 1 1` 会被算成长度 3 的一段。用例 6 专门覆盖它。
+  错因标签：inverted_condition。
+
+  第三类错误是**只看整个数组是否上升**，而不是找最长的一段。
+  `1 3 5 4 6 7` 会被判成"不是上升数组"从而输出 1。
+  错因标签：misread_problem。
+
+  第四类错误是**在更新 `best` 的时机上写错**：只在"上升中断"时
+  更新 `best`。这样**数组末尾那段上升段永远不会被计入**，
+  `1 2 3 4 5`（整段都在末尾、从未中断）会输出 1。
+  正确做法是每步都比较一次，或在循环结束后补一次。
+  错因标签：boundary_condition / missing_case。
+
+  第五类错误是**用双重循环枚举每段起点**：答案正确，$n = 10^5$
+  时最坏 $10^{10}$ 次操作，超时。错因标签：wrong_complexity。
+
+  第六类错误是**把 `prev` 声明成 `int`**：$|a_i| \le 10^9$ 仍在
+  32 位范围内，比较安全，因此本题不暴露；列出是为了提示
+  "只做比较的变量不需要升位，参与算术的才需要"。错因标签：
+  wrong_data_type。

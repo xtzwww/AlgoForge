@@ -34,6 +34,17 @@ _DEFAULT_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 _ENV_FILE = Path(os.environ.get("ALGOFORGE_ENV_FILE") or _DEFAULT_ENV_FILE)
 
 
+def env_file_path() -> Path:
+    """The absolute path of the ``.env`` file the settings were loaded from.
+
+    Public accessor so the runtime-config endpoint can write back to the
+    same file the settings read — a second copy of this resolution inside
+    the API layer would drift the moment one of them honours an override
+    the other does not.
+    """
+    return _ENV_FILE
+
+
 def _project_root() -> Path:
     """Where the repository's data lives: `corpus/`, `sidecar/data/`.
 
@@ -283,10 +294,19 @@ class Settings(BaseSettings):
     # 默认开。要回到旧行为（账号一律由老师建）把这里设为 false 即可，
     # 端点是 403，不需要改代码。
     #
-    # 注意**不能**靠这个开关来区分角色：自助注册永远只创建学生账号，
+    # 注意**不能**靠这个开关来区分角色：自助注册默认只创建学生账号，
     # 那一条硬编码在 :func:`app.registration.registration_role` 里，
     # 没有任何参数能影响它。
     allow_open_registration: bool = Field(default=True)
+
+    # 是否允许自助注册创建**教师**账号（2026-09-25）。教师端网页入口的
+    # 注册页创建的就是教师账号（产品决策），本开关是它的总闸：设为
+    # false 后，请求 role="teacher" 会得到 403，而不是悄悄降级成学生号。
+    #
+    # 默认开是因为产品要的是「教师从教师网址自助开通」。请部署方注意它
+    # 的含义：一个教师账号能看到**全部**班级的花名册和每个人的提交记录
+    # —— 开放它之前先确认这个服务不会被陌生人访问到。
+    allow_teacher_registration: bool = Field(default=True)
 
     # 每个客户端一小时内最多成功注册几个账号。**只计成功次数**，不记失败：
     # 密码打错五次的学生不该被挡在自己的账号外面，要防的是「一个客户端能刷

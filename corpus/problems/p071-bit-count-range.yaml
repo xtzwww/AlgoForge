@@ -1,0 +1,105 @@
+id: p071-bit-count-range
+title: 区间内二进制 1 的个数
+knowledge_tags:
+  - 位运算
+  - 动态规划
+  - 数学建模
+  - 复杂度分析
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个非负整数 $n$，请对 $0 \le i \le n$ 的每一个 $i$，算出
+  $i$ 的二进制表示中 `1` 的个数，并把 $n+1$ 个答案按 $i$ 递增的
+  顺序输出。
+
+  **输入格式**
+
+  一行，一个非负整数 $n$。
+
+  **输出格式**
+
+  一行，$n+1$ 个整数，第 $i$ 个数表示 $i$ 的二进制中 `1` 的个数，
+  以空格分隔。
+
+  **数据范围**
+
+  $0 \le n \le 10^5$
+
+  **提示**
+
+  $0$ 的二进制里有 $0$ 个 `1`。
+input_format: 一行一个整数 n。
+output_format: 一行 n+1 个整数，空格分隔。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "2\n"
+    expected_output: "0 1 1\n"
+    is_sample: true
+  - input: "5\n"
+    expected_output: "0 1 1 2 1 2\n"
+    is_sample: true
+  - input: "0\n"
+    expected_output: "0\n"
+  - input: "1\n"
+    expected_output: "0 1\n"
+  - input: "8\n"
+    expected_output: "0 1 1 2 1 2 2 3 1\n"
+  - input: "16\n"
+    expected_output: "0 1 1 2 1 2 2 3 1 2 2 3 2 3 3 4 1\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+
+      // dp[i] = dp[i >> 1] + (i & 1). Removing the lowest bit of i
+      // gives a number whose bit count is already known, and the removed
+      // bit contributes i & 1. This is O(1) per value, O(n) overall.
+      vector<int> dp(n + 1, 0);
+      for (int i = 1; i <= n; ++i) {
+          dp[i] = dp[i >> 1] + (i & 1);
+      }
+      for (int i = 0; i <= n; ++i) {
+          if (i) cout << ' ';
+          cout << dp[i];
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  这道题的正确解只有一行递推，难的是想清楚递推的**下标关系**。
+
+  第一类错误是**对每个 $i$ 单独用 `__builtin_popcount` 或循环
+  移位统计**。这在小数据上完全正确，但复杂度是 $O(n \log n)$；
+  本题 $n \le 10^5$ 时其实还能过，所以这类错误在本题数据下
+  **不会暴露成 TLE**，只是解法层次不同。真正会挂的是把它写成
+  内层 `while` 加链表之类的低常数实现。错因标签：wrong_complexity。
+
+  第二类错误是**递推下标写成 `dp[i] = dp[i - 1] + (i & 1)`**。
+  以 `8` 为例：$8$ 的二进制是 `1000`（1 个 1），$7$ 是 `111`
+  （3 个 1），`dp[7] + 0 = 3` 而不是 1。这类错误在 $i$ 是
+  2 的幂次时会立刻暴露，输出会是 `... 3 4 1` 之外的错值。
+  错因标签：wrong_algorithm。
+
+  第三类错误是**递推写成 `dp[i] = dp[i / 2] + (i & 1)`** ——
+  这其实是**对的**，等价于 `i >> 1`。出题人故意留下这个位置，
+  因为有人认为"除 2 和右移不一样（负数时）"。本题保证非负，
+  两者完全等价，不构成错误。
+
+  第四类错误是**输出格式**：用 `for (i=0; i<=n; ++i) cout << dp[i] << ' ';`
+  末尾多一个空格。多数评测机忽略行末空格，但本题输出 $10^5$ 个数时
+  这也是常见扣分点，应写成"前导空格"形式。错因标签：io_format_error。
+
+  第五类错误是**只输出 $1$ 到 $n$，漏掉 $0$**。题目明确要求输出
+  $n+1$ 个数，漏掉第一个会让所有答案左移一位。以 `2` 为例会输出
+  `1 1` 而不是 `0 1 1`。错因标签：off_by_one。
+
+  第六类错误是**把 `n = 0` 当成"没有数据"提前返回**。此时正确
+  输出是一行 `0`；如果实现里写了 `if (n == 0) return 0;` 就会
+  完全没有输出。错因标签：missing_case。

@@ -1,0 +1,129 @@
+id: p040-count-inversions
+title: 逆序对计数
+knowledge_tags:
+  - 分治
+  - 归并排序
+  - 排序
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数序列 $a$。
+
+  逆序对是指这样的一对下标 $(i, j)$：$i < j$ 且 $a_i > a_j$。
+
+  请统计序列中逆序对的总数。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示逆序对总数。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$|a_i| \le 10^9$
+
+  **提示**
+
+  最后一段样例说明：选择右半部分的元素时，
+  **「比它大的左半部分元素」可能有多个（甚至整段），
+  一次都要数进来**。
+
+  答案最大可达 $\frac{n(n-1)}{2}$，$n = 10^5$ 时约 $5 \times 10^9$，
+  请使用 `long long`。
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，逆序对总数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5\n2 4 1 3 5\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "4\n5 4 3 2\n"
+    expected_output: "6\n"
+    is_sample: true
+  - input: "1\n7\n"
+    expected_output: "0\n"
+  - input: "5\n1 2 3 4 5\n"
+    expected_output: "0\n"
+  - input: "4\n5 5 5 5\n"
+    expected_output: "0\n"
+  - input: "6\n4 5 6 1 2 3\n"
+    expected_output: "9\n"
+  - input: "3\n3 1 2\n"
+    expected_output: "2\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  long long mergeCount(vector<long long> &a, vector<long long> &buf,
+                       int lo, int hi) {
+      if (hi - lo <= 1) return 0;
+      int mid = (lo + hi) / 2;
+      long long cnt = mergeCount(a, buf, lo, mid) +
+                      mergeCount(a, buf, mid, hi);
+      int i = lo, j = mid, k = lo;
+      while (i < mid || j < hi) {
+          if (j >= hi || (i < mid && a[i] <= a[j])) {
+              buf[k++] = a[i++];
+          } else {
+              // Everything from i to mid-1 is strictly greater than a[j];
+              // they all form an inversion with a[j], so add the whole
+              // remaining length rather than just one.
+              cnt += mid - i;
+              buf[k++] = a[j++];
+          }
+      }
+      for (int t = lo; t < hi; ++t) a[t] = buf[t];
+      return cnt;
+  }
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<long long> a(n), buf(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      cout << mergeCount(a, buf, 0, n) << endl;
+      return 0;
+  }
+eval_notes: |
+  本题是"分治合并阶段计数"这一方法的载体，核心只有一行
+  `cnt += mid - i;`，但这一行有四种不同的写错方式，
+  而且前两种会得到"看起来合理"的小数字。
+
+  第一类错误是**每选一个右半元素只加 1**（`++cnt;` 而不是
+  `cnt += mid - i;`）。这等于只统计了"跨过中点的相邻对"，
+  答案会显著偏小，量级从 $O(n^2)$ 掉到 $O(n)$。
+  用例 `4 / 5 4 3 2` 正确答案 6，这类实现给出 3。
+  错因标签：off_by_one。
+
+  第二类错误是**加上 `mid - i + 1`**（把左半剩余个数多算了一个）。
+  错因标签：off_by_one。
+
+  第三类错误是**合并条件写成 `a[i] < a[j]` 而不是 `a[i] <= a[j]`**。
+  这会把**相等**的元素也计入逆序对：题目定义要求
+  $a_i > a_j$ 才构成逆序对，相等的两对不计数。用例
+  `4 / 5 5 5 5` 正确答案 0，这类实现会给出 6。
+  错因标签：inverted_condition / boundary_condition。
+
+  第四类错误是**只在 `a[i] > a[j]` 时加 `mid - i`，
+  没有把相等情形排除干净**，与第三类同源但方向相反：
+  它会漏掉真正需要的分支。错因标签：inverted_condition。
+
+  第五类错误是**用双重循环 $O(n^2)$ 暴力统计**。$n = 10^5$ 时
+  有 $5 \times 10^9$ 次比较，必然超时。错因标签：wrong_complexity。
+
+  第六类错误是把计数器声明成 `int`。$n = 10^5$ 时答案约
+  $5 \times 10^9$，超出 32 位有符号范围，在完全逆序的数据上
+  会溢出成负数。用例 `4 / 5 4 3 2` 的量级还看不出问题，
+  但在最大数据上必然崩。错因标签：overflow。
+
+  第七类错误是**归并时忘记把缓冲区写回原数组**，导致上一层
+  看到的是未排序的数据，计数结果随数据分布剧烈变化。
+  错因标签：uninitialized_state。

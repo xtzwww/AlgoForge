@@ -1,0 +1,131 @@
+id: p063-min-cost-climbing
+title: 使用最小花费爬楼梯
+knowledge_tags:
+  - 动态规划
+  - 递推
+  - 边界处理
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的数组 $a$，其中 $a_i$ 表示从第 $i$ 级台阶
+  **向上迈步**所需的花费。台阶编号从 0 到 $n - 1$。
+
+  你从楼层底部出发（可以理解为位于"-1"层，不需要花费），
+  每次可以向上迈 **1 级或 2 级**。
+
+  一旦迈上第 $i$ 级台阶，就要支付 $a_i$ 的花费。
+
+  楼顶位于第 $n$ 级（**虚拟的一层，没有花费**）。
+  请计算到达楼顶所需的最小总花费。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $a_0, a_1, \dots, a_{n-1}$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最小总花费。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$0 \le a_i \le 10^4$
+
+  **提示**
+
+  从"第 0 级之前"直接迈 2 级到第 1 级是允许的，
+  这样不会支付 $a_0$。
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，最小总花费。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\n10 15 20\n"
+    expected_output: "15\n"
+    is_sample: true
+  - input: "1\n5\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "2\n1 100\n"
+    expected_output: "1\n"
+  - input: "4\n1 100 1 1\n"
+    expected_output: "2\n"
+  - input: "5\n0 0 0 0 0\n"
+    expected_output: "0\n"
+  - input: "3\n100 1 1\n"
+    expected_output: "1\n"
+  - input: "4\n10 15 20 1\n"
+    expected_output: "16\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+
+      // dp[i] = min cost to *stand on* step i. The virtual ground below
+      // step 0 is reachable at cost 0, and so is "one step in".
+      vector<long long> dp(n + 1, 0);
+      if (n >= 1) dp[0] = a[0];
+      if (n >= 2) dp[1] = a[1];
+      for (int i = 2; i < n; ++i) {
+          dp[i] = min(dp[i - 1], dp[i - 2]) + a[i];
+      }
+      // The roof is one or two steps past the last stair; stepping onto
+      // it costs nothing, so the answer is the cheaper of the two
+      // launch points, and 0 when there are no stairs at all.
+      long long answer = 0;
+      if (n == 1) {
+          answer = 0;                       // jump straight to the roof
+      } else {
+          answer = min(dp[n - 1], dp[n - 2]);
+      }
+      cout << answer << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的答案**不是** `dp` 数组的最后一个值，而是一次"再迈一步"
+  之后的最小值——这一处最容易写成"返回 dp[n-1]"。
+  题目本身设计了一个 n = 1 的用例，让"到达楼顶"与"站在最后一级"
+  的差别无法回避。
+
+  第一类错误是**输出 `dp[n-1]`**（站在最后一级的花费）。
+  这比正确答案多算了"从最后一级迈到楼顶"这一步，
+  但楼顶没有花费，所以正确做法是从最后两级里挑更便宜的。
+  对 `10 15 20`，`dp[2] = 15 + 20 = 35`，而正确答案是
+  `min(35, 15) = 15`。错因标签：boundary_condition。
+
+  第二类错误是**把 `dp[0]` 与 `dp[1]` 都初始化为 0**。
+  这等于承认可以从地面免费站到第 1 级，但**只要数组有 2 个以上
+  元素，站在第 1 级就必须支付 `a[1]`**。样例 1 会暴露：
+  会被算成 0。错因标签：uninitialized_state。
+
+  第三类错误是**`n = 1` 时输出 `a[0]`**。此时可以直接从地面
+  迈 2 级到楼顶（$n = 1$ 表示楼顶在第 1 级），花费为 0。
+  用例 2 专门覆盖它。错因标签：missing_case。
+
+  第四类错误是**认为第一步必须先站上第 0 级**（即
+  `dp[0] = a[0]` 必须是唯一的起点），于是任何输入都要支付
+  `a[0]`。用例 6 `100 1 1` 的正确答案是 1（跳过昂贵的第 0 级），
+  这类实现会给出 101。错因标签：misread_problem。
+
+  第五类错误是**递推写成"从当前级能跳到哪些级"**（正向推），
+  这时候需要额外处理"某级不可达"的情况；两种方向都对，
+  但混用会漏掉状态。错因标签：wrong_traversal。
+
+  第六类错误是**把 `dp` 声明成 `int`**：$n = 10^5$、$a_i = 10^4$
+  时总花费可达 $10^9$，仍在 32 位有符号范围内（接近上限）。
+  本题不暴露，但一旦 $a_i$ 上界放大就会溢出。错因标签：overflow。
+
+  第七类错误是**把"迈 2 级"理解成"必须支付中间那级的花费"**。
+  题目只要求支付**落到**的台阶的花费，跳过的台阶不付费。
+  这会把问题变成"每级都要付费"，用例 6 会暴露。
+  错因标签：misread_problem。

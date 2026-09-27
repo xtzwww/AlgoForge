@@ -1,0 +1,127 @@
+id: p066-anagram-groups
+title: 字母异位词分组计数
+knowledge_tags:
+  - 字符串
+  - 哈希表
+  - 排序
+difficulty: medium
+source: 经典算法题
+description: |
+  给定 $n$ 个由小写英文字母组成的字符串。
+  如果两个字符串包含的**每种字母的个数完全相同**（只是排列顺序不同），
+  就称它们互为**字母异位词**。
+
+  请统计：这些字符串一共能分成多少个**互不相交的异位词组**。
+
+  也就是说，把所有互为异位词的字符串归到一组，
+  求组的总数。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  接下来 $n$ 行，每行一个非空字符串，由小写英文字母组成。
+
+  **输出格式**
+
+  一行，一个整数，表示组数。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，每个字符串长度不超过 $100$
+
+  **提示**
+
+  形如 `ab` 与 `ab` 的两个**完全相同**的字符串也是异位词，归为一组。
+input_format: 第一行 n，接下来 n 行每行一个字符串。
+output_format: 一行一个整数，组数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4\neat\ntea\ntan\nate\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "1\na\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "3\nab\nba\nab\n"
+    expected_output: "1\n"
+  - input: "3\na\nbb\ncc\n"
+    expected_output: "3\n"
+  - input: "2\nabc\ncba\n"
+    expected_output: "1\n"
+  - input: "4\nab\nabc\na\nba\n"
+    expected_output: "3\n"
+  - input: "2\nlisten\nsilent\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  #include <vector>
+  #include <unordered_set>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+
+      unordered_set<string> keys;
+      keys.reserve(n * 2);
+      for (int i = 0; i < n; ++i) {
+          string s;
+          cin >> s;
+          // A 26-slot signature. Sorting would also work and is
+          // simpler, but counting is O(len) instead of O(len log len)
+          // and, more importantly, it cannot be fooled by a wrong
+          // comparison function.
+          int cnt[26] = {0};
+          for (char c : s) ++cnt[c - 'a'];
+          string key;
+          key.reserve(26 * 2);
+          for (int j = 0; j < 26; ++j) {
+              // A separator is required: without it, counts (1, 11) and
+              // (11, 1) both flatten to "111" and collide.
+              key += to_string(cnt[j]);
+              key += '#';
+          }
+          keys.insert(key);
+      }
+      cout << keys.size() << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的思路（把"字母构成"压成一个可比较的键）不难，
+  但**把键拼成字符串时少一个分隔符**这个错误极其隐蔽，
+  而且它产生的是"偏小的组数"，看起来像是数据本身就有重复。
+
+  第一类错误是**键里不加分隔符**：直接把 26 个计数拼起来。
+  计数 $(1, 11)$ 与 $(11, 1)$ 拼出的字符串都是 `111`——
+  两个**字母构成完全不同**的字符串被归进了同一组，组数偏小。
+  这道题的数据刻意包含长度不同的字符串（用例 4、6）来增大
+  多位数计数出现的概率。正确做法是每个计数后加一个不会出现在
+  数字里的分隔符，或改用固定宽度编码。错因标签：wrong_data_type。
+
+  第二类错误是**用排序后的字符串当键但只在某些路径上排序**，
+  例如先判长度相等再排序——长度不等确实不可能是异位词，
+  这个优化是对的，但若写成"长度不等就直接跳过不计数"，
+  会让这些字符串**完全不进集合**，组数偏小。
+  错因标签：missing_case。
+
+  第三类错误是**键用 `int` 存 26 位计数**（位压缩），
+  字母表扩大到 26 时位数不够，高位被截断。
+  错因标签：wrong_data_type。
+
+  第四类错误是**把"统计组数"理解成"统计每一组的大小"**，
+  输出的是最大的组大小。用例 1（`eat tea tan ate`）
+  最大组大小是 3，而正确答案是 2——这组数据能让错误答案
+  显得同样合理。错因标签：misread_problem。
+
+  第五类错误是**用 `cin >> n` 之后没有处理换行**，
+  接着用 `getline` 读到空串，导致第一个字符串被当成空串计入，
+  组数多 1。错因标签：io_format_error。
+
+  第六类错误是**对每个字符串与之前所有字符串两两比较**：
+  答案正确，但 $n = 10^5$ 时是 $5 \times 10^9$ 次字符串比较，
+  必然超时。错因标签：wrong_complexity。

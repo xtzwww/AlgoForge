@@ -1,0 +1,142 @@
+id: p048-course-schedule
+title: 课程安排（拓扑排序）
+knowledge_tags:
+  - 图论
+  - 拓扑排序
+  - 队列
+difficulty: hard
+source: 经典算法题
+description: |
+  某专业共有 $n$ 门课程，编号为 $1$ 到 $n$。
+  有 $m$ 条先修关系，第 $i$ 条形如 `u v`，
+  表示"课程 $u$ 必须先于课程 $v$ 修读"。
+
+  请判断是否存在一种修读顺序，使得所有先修关系都被满足。
+  如果存在，输出**字典序最小**的那种顺序；如果不存在
+  （即先修关系形成了环），输出 `-1`。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$，以空格分隔。
+  接下来 $m$ 行，每行两个整数 $u$ 和 $v$。
+
+  **输出格式**
+
+  一行，$n$ 个整数，表示字典序最小的合法修读顺序；
+  若不存在则输出 `-1`。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$0 \le m \le 10^5$，
+  $1 \le u, v \le n$，保证没有重边和自环
+input_format: 第一行 n 和 m，接下来 m 行每行 u 和 v。
+output_format: 一行 n 个整数（字典序最小）或 -1。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4 3\n1 2\n2 3\n3 4\n"
+    expected_output: "1 2 3 4\n"
+    is_sample: true
+  - input: "3 3\n1 2\n2 3\n3 1\n"
+    expected_output: "-1\n"
+    is_sample: true
+  - input: "3 0\n"
+    expected_output: "1 2 3\n"
+  - input: "2 1\n2 1\n"
+    expected_output: "2 1\n"
+  - input: "4 2\n1 3\n2 3\n"
+    expected_output: "1 2 3 4\n"
+  - input: "5 4\n1 2\n1 3\n4 5\n5 1\n"
+    expected_output: "4 5 1 2 3\n"
+  - input: "2 2\n1 2\n2 1\n"
+    expected_output: "-1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <queue>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, m;
+      cin >> n >> m;
+      vector<vector<int>> adj(n + 1);
+      vector<int> indeg(n + 1, 0);
+      for (int i = 0; i < m; ++i) {
+          int u, v;
+          cin >> u >> v;
+          adj[u].push_back(v);
+          ++indeg[v];
+      }
+
+      // A min-heap, not a plain queue: "lexicographically smallest" is a
+      // real requirement here, and a FIFO queue only guarantees *some*
+      // valid order.
+      priority_queue<int, vector<int>, greater<int>> pq;
+      for (int i = 1; i <= n; ++i) {
+          if (indeg[i] == 0) pq.push(i);
+      }
+
+      vector<int> order;
+      while (!pq.empty()) {
+          int u = pq.top();
+          pq.pop();
+          order.push_back(u);
+          for (int v : adj[u]) {
+              if (--indeg[v] == 0) pq.push(v);
+          }
+      }
+
+      // Fewer than n nodes emitted means the remaining ones sit on a
+      // cycle and never reach in-degree 0.
+      if ((int)order.size() != n) {
+          cout << -1 << endl;
+      } else {
+          for (int i = 0; i < n; ++i) {
+              if (i) cout << ' ';
+              cout << order[i];
+          }
+          cout << endl;
+      }
+      return 0;
+  }
+eval_notes: |
+  本题有两个独立的考点：**环的检测**和**字典序最小**。
+  第一个错会输出一个不完整的序列，第二个错会输出一个
+  合法但顺序不对的序列——后者几乎无法从输出本身看出来。
+
+  第一类错误是**用普通队列而不是优先队列**。拓扑排序本身
+  仍然是正确的（输出的顺序满足所有先修关系），但**不是字典序
+  最小**：入队顺序由邻接表的遍历顺序决定。用例 5
+  （`1 2 / 1 3 / 4 5 / 5 1`，正确答案 `4 5 1 2 3`）
+  专门覆盖它——错误实现可能给出 `1 4 5 2 3` 这类顺序。
+  这类错误的特点是"看起来完全合理"，只有严格比对才能发现。
+  错因标签：wrong_algorithm / missing_case。
+
+  第二类错误是**把"入度为 0 的节点"一次性全部输出**，
+  而不是每轮只取最小的一个。这会让输出中并列的节点
+  按编号顺序全排在前面，破坏字典序要求。
+  错因标签：wrong_traversal。
+
+  第三类错误是**忘记判断环**：直接输出 `order`，长度为
+  $n$ 时正确，有环时只输出了环外部分。用例 2 与 7 专门覆盖。
+  错因标签：missing_case。
+
+  第四类错误是**在有环时输出了 $-1$ 但前面已经打印了部分序列**，
+  导致输出是两个东西。正确做法是先收集、最后统一输出。
+  错因标签：io_format_error。
+
+  第五类错误是**把边的方向记反**（把 `indeg[v]++` 写成
+  `indeg[u]++`）：这会把"$u$ 先于 $v$"变成"$v$ 先于 $u$"，
+  输出正好是反的。用例 `2 1 / 2 1` 中正确答案是 `2 1`，
+  错误实现会给出 `1 2`。错因标签：inverted_condition。
+
+  第六类错误是**环检测写在队列为空之后才做，但漏掉了
+  $m = 0$ 的情形**：此时所有节点入度为 0，应该输出
+  `1 2 ... n`。用例 3 覆盖它。错因标签：missing_case。
+
+  第七类错误是**递归 DFS 求拓扑序但忘记标记"正在访问"状态**，
+  导致有环时无限递归（栈溢出）。错因标签：wrong_complexity /
+  infinite_recursion。

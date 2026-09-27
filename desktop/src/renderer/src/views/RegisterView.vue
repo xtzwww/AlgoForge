@@ -12,12 +12,23 @@
  *
  * What this page must never do
  * ----------------------------
- * Offer a choice of role. There is no role field and there is no "I am a
- * teacher" checkbox, because the server decides the role and ignores
- * anything a request says about it (`app/registration.py`). A control
- * here would be a lie in the interface even if the server refused it —
- * and if the server ever stopped refusing it, the control would be the
- * exploit.
+ * Offer a role *field*. There is no role input and no free-form "I am a
+ * teacher" claim, but there is now (2026-09-25, second round) a
+ * 学生/老师 toggle: the person picks which side they are signing up for,
+ * and the page asks the server for exactly that role. The toggle is a
+ * request, not a fact — the server keeps its own whitelist + switch
+ * (`app/registration.py`): only the literal `teacher` can become a
+ * teacher, and only while the deployment has that switch on; everything
+ * else comes back a student. A role control the server did not own
+ * would be an exploit the day it stopped refusing; the whitelist is
+ * what keeps this one honest.
+ *
+ * Entry is identity (third round, 2026-09-25): switching the toggle to
+ * the *other side's* identity sends the visitor to that side's register
+ * URL, and a sign-up that comes back with the wrong role for this entry
+ * (the server downgraded it — switch off, whitelist miss) is refused
+ * with a message pointing at where that account belongs. Electron
+ * (`both`) has no entry and is exempt.
  *
  * Why the client validates at all, given the server does
  * -----------------------------------------------------
@@ -38,7 +49,18 @@
 
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { register, sessionReady, sessionUser } from '../api/session'
+import { register, logout, sessionReady, sessionUser } from '../api/session'
+import {
+  defaultIntent,
+  entryMismatch,
+  entryUrlForIntent,
+  homeForIntent,
+  landingName,
+  mismatchMessage,
+  type LoginIntent
+} from '../router/landing'
+import { appMode } from '../runtime/mode'
+import { goTo } from '../runtime/navigation'
 
 const router = useRouter()
 
@@ -62,9 +84,52 @@ const USERNAME_MIN = 2
 const USERNAME_MAX = 32
 const PASSWORD_MIN = 6
 
-/** Where each role belongs once signed in. Mirrors `LoginView`. */
+/**
+ * Which side this page asks the server to create (2026-09-25, second
+ * round). Defaults to the entry (teacher entry → teacher), switchable on
+ * the page. The server's whitelist + switch stays the final word.
+ */
+const intent = ref<LoginIntent>(defaultIntent(appMode))
+
+function setIntent(next: LoginIntent): void {
+  intent.value = next
+  // 入口即身份：跨端的身份切换是「指路」，直接送去那端的注册页。
+  if (
+    (appMode === 'teacher' && next === 'student') ||
+    (appMode === 'student' && next === 'teacher')
+  ) {
+    goTo(entryUrlForIntent(next, 'register'))
+  }
+}
+
+/** Whether the person asked for a teacher account — drives the copy. */
+const isTeacherIntent = computed<boolean>(() => intent.value === 'teacher')
+
+/** The role this page will ask the server for. */
+const requestedRole = computed<'student' | 'teacher'>(() => intent.value)
+
+/**
+ * Land per the picked intent: same-entry route when available, otherwise
+ * a full page hop to the other entry (same-origin session carries over).
+ */
+function navigateHome(i: LoginIntent): void {
+  const routeName = homeForIntent(i, appMode)
+  if (routeName) {
+    void router.replace({ name: routeName })
+  } else {
+    goTo(entryUrlForIntent(i))
+  }
+}
+
+/**
+ * Where an already-signed-in visitor goes, on the *current side*
+ * (2026-09-25). Mirrors `LoginView` and uses the same `landingName`
+ * fallback: a student account registered on the teacher entry has no
+ * student route to land on, and lands on the console, whose own 403
+ * explanation then talks (see `router/landing.ts`).
+ */
 function homeFor(role: string): string {
-  return role === 'teacher' ? 'teacher' : 'assignments'
+  return landingName(appMode, role)
 }
 
 /** The first thing wrong with what has been typed, or `''`. */
@@ -140,12 +205,24 @@ async function submit(): Promise<void> {
 
   busy.value = true
   try {
-    const user = await register(name, password.value, displayName.value.trim())
-    // Registered accounts are always students, so this lands on the
-    // assignments page — but it reads the role off the response rather
-    // than assuming, so the day the server produces something else the
-    // navigation is still right.
-    await router.replace({ name: homeFor(user.role) })
+    const user = await register(
+      name,
+      password.value,
+      displayName.value.trim(),
+      requestedRole.value
+    )
+    // The server may answer with something other than what was asked for
+    // (whitelist/switch). 入口即身份：注册得到的账号不属于当前入口时
+    // （例如教师端网址在开关关闭时被降级成学生号），提示去哪一端，
+    // 并清掉刚签发的会话。
+    const mismatch = entryMismatch(appMode, user.role)
+    if (mismatch) {
+      errorMsg.value = mismatchMessage(mismatch)
+      await logout()
+      await router.replace({ name: 'login' })
+      return
+    }
+    navigateHome(intent.value)
   } catch (err) {
     errorMsg.value = describe(err)
   } finally {
@@ -173,8 +250,52 @@ onMounted(() => {
   <div class="flex flex-1 items-center justify-center overflow-y-auto p-6">
     <div class="w-full max-w-sm">
       <div class="af-glass rounded-[var(--af-radius-lg)] p-6">
+        <!--
+          Who are you signing up as. Asks the server for the picked role;
+          the server's whitelist + switch is the final word (docstring).
+        -->
+        <div
+          class="mb-4 flex rounded-[var(--af-radius-sm)] border border-af-border bg-af-elevated p-0.5"
+          role="group"
+          aria-label="注册成什么账号"
+        >
+          <button
+            class="flex-1 rounded-[var(--af-radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors"
+            :class="
+              intent === 'student'
+                ? 'bg-af-accent text-af-inverse'
+                : 'text-af-secondary hover:text-af-primary'
+            "
+            type="button"
+            :aria-pressed="intent === 'student' ? 'true' : 'false'"
+            @click="setIntent('student')"
+          >
+            学生
+          </button>
+          <button
+            class="flex-1 rounded-[var(--af-radius-sm)] px-3 py-1.5 text-xs font-medium transition-colors"
+            :class="
+              intent === 'teacher'
+                ? 'bg-af-accent text-af-inverse'
+                : 'text-af-secondary hover:text-af-primary'
+            "
+            type="button"
+            :aria-pressed="intent === 'teacher' ? 'true' : 'false'"
+            @click="setIntent('teacher')"
+          >
+            老师
+          </button>
+        </div>
+
         <h1 class="text-lg font-semibold text-af-primary">注册</h1>
-        <p class="mt-1.5 text-xs leading-relaxed text-af-secondary">
+        <p v-if="isTeacherIntent" class="mt-1.5 text-xs leading-relaxed text-af-secondary">
+          自己创建一个教师账号。注册成功后就能建班、布置作业、查看全班学情。已有账号？直接
+          <RouterLink class="text-af-accent hover:text-af-accent-hover" :to="{ name: 'login' }">
+            去登录
+          </RouterLink>
+          。
+        </p>
+        <p v-else class="mt-1.5 text-xs leading-relaxed text-af-secondary">
           自己创建一个学生账号。如果老师已经给你发过账号，直接
           <RouterLink class="text-af-accent hover:text-af-accent-hover" :to="{ name: 'login' }">
             去登录
@@ -264,7 +385,12 @@ onMounted(() => {
       </div>
 
       <p class="mt-4 text-center text-[11px] leading-relaxed text-af-muted">
-        注册得到的是学生账号。要建班、布置作业，需要老师账号 —— 请让老师登录后在「班级管理」里操作。
+        <template v-if="isTeacherIntent">
+          这里注册得到的是教师账号，可以建班、布置作业、查看全班学情。学生账号请到学生网址（index.web.html）注册，或由老师在「班级管理」里添加。
+        </template>
+        <template v-else>
+          这里注册得到的是学生账号。教师账号请到教师网址（teacher.web.html）注册。
+        </template>
       </p>
     </div>
   </div>

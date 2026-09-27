@@ -1,0 +1,127 @@
+id: p026-pair-sum-closest
+title: 最接近的两数之和
+knowledge_tags:
+  - 数组
+  - 双指针
+  - 排序
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数数组 $a$ 和一个目标值 $t$。
+  请从数组中选出**两个不同位置**的数 $a_i$ 和 $a_j$（$i \ne j$），
+  使它们的和最接近 $t$，输出这个和。
+
+  保证 $n \ge 2$。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $t$，以空格分隔。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最接近 $t$ 的两数之和。
+
+  **数据范围**
+
+  $2 \le n \le 10^5$，$|a_i| \le 10^9$，$|t| \le 2 \times 10^9$
+
+  **提示**
+
+  距离的度量是**不作绝对值的**：$m$ 与 $t$ 的距离记作 $m - t$。
+  严格精确等于 $t$ 的两数之和距离为 0，是唯一的零距离，
+  因此它一旦出现就必然被选中。
+input_format: 第一行 n 和 t，第二行 n 个整数。
+output_format: 一行一个整数，最接近 t 的两数之和。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4 10\n1 4 7 9\n"
+    expected_output: "10\n"
+    is_sample: true
+  - input: "3 5\n1 2 4\n"
+    expected_output: "5\n"
+    is_sample: true
+  - input: "2 0\n-3 3\n"
+    expected_output: "0\n"
+  - input: "2 100\n-1000000000 -1000000000\n"
+    expected_output: "-2000000000\n"
+  - input: "5 7\n10 20 30 40 50\n"
+    expected_output: "30\n"
+  - input: "4 1\n-10 -5 100 105\n"
+    expected_output: "-15\n"
+  - input: "4 5\n1 1 1 1\n"
+    expected_output: "2\n"
+  - input: "3 100\n1 2 3\n"
+    expected_output: "5\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      long long t;
+      cin >> n >> t;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      sort(a.begin(), a.end());
+
+      long long best = a[0] + a[1];
+      int l = 0, r = n - 1;
+      while (l < r) {
+          long long sum = a[l] + a[r];
+          // Prefer the closer sum; on a tie prefer the smaller one. That
+          // is exactly what updating only on a strict "<" would break,
+          // so the tie has to be decided explicitly.
+          if (abs(sum - t) < abs(best - t) ||
+              (abs(sum - t) == abs(best - t) && sum < best)) {
+              best = sum;
+          }
+          // Strict: a[l] + a[r] == t is already the best possible sum,
+          // but the pointers must still move or the loop never ends.
+          if (sum < t) {
+              ++l;
+          } else if (sum > t) {
+              --r;
+          } else {
+              break;
+          }
+      }
+      cout << best << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的考点是**双指针收缩方向**，混进了一个同价的替代方案
+  （枚举所有数对）+ 一个必须额外处理的平局规则。
+
+  第一类错误是收缩方向写反：`sum > t` 时应该左移右指针让和变小，
+  写成移动左指针会让和**继续变大**，越走越远，最终停在某个端点，
+  输出的是最大和而不是最接近和。这类错误的特征是**输出恒为
+  数组最大值与某数之和**，与 t 几乎无关。错因标签：wrong_traversal /
+  inverted_condition。
+
+  第二类错误是循环条件写成 `l <= r`。两个指针相交时 `a[l] + a[r]`
+  变成同一个元素与自己相加，相当于把同一个位置用了两次，违反
+  "两个不同位置"的约定。错因标签：boundary_condition。
+
+  第三类错误是初始值 `best` 设成 0。当所有两数之和都远离 0 时
+  （例如元素全在 100 附近而 $t = 1000$），0 会被当成一个候选答案
+  留在 `best` 里，最后输出 0——一个数组中根本不存在的和。
+  平局规则要求输出较小的那个和，因此 0 更不能作为初值。
+  正确做法是用第一个真实存在的数对初始化 `best`。错因标签：
+  uninitialized_state / initialization。
+
+  第四类错误是**忽略了平局规则**，只在严格更接近时才更新，
+  于是 $t = 0$、可选和 $-3$ 与 $3$ 时先遇到谁就输出谁。排序后
+  双指针从左向右、从右向左同时收敛，先遇到的通常是较小的和，
+  这个错误在多数数据上表现正常，只在特定输入上颠倒了结果，
+  属于典型的"看运气"错误。错因标签：missing_case。
+
+  第五类是把 `a[l] + a[r]`、`best`、`abs(...)` 都放在 `int` 里，
+  元素绝对值 $10^9$ 时两数之和可达 $2 \times 10^9$，超出 32 位有符号
+  范围。错因标签：overflow。

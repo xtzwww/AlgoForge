@@ -57,6 +57,7 @@ import { useRouter } from 'vue-router'
 import EmptyState from '../components/EmptyState.vue'
 import PageHeader from '../components/PageHeader.vue'
 import RadarChart from '../components/RadarChart.vue'
+import BarChart from '../components/BarChart.vue'
 import { masteryColorFor } from '../assets/tokens'
 import { getKnowledgeStats, getRadar, type KnowledgeStat } from '../api/profile'
 
@@ -136,6 +137,9 @@ function formatPercent(v: number): string {
 function accuracyColor(accuracy: number): string {
   return masteryColorFor(accuracy)
 }
+
+/** 条形图按掌握度分级着色——和雷达、表格同一套 ramp，三处不能打架。 */
+const barColorFor = (value: number): string => accuracyColor(value)
 
 function goToProblems(): void {
   void router.push({ name: 'problems' })
@@ -228,6 +232,20 @@ onMounted(load)
             :loading="loading"
             empty-title="暂无知识点数据"
             empty-explanation="题目的知识点标签为空时无法生成雷达图。"
+          />
+        </section>
+
+        <!-- Knowledge bars -->
+        <section v-if="sortedStats.length > 0" class="section">
+          <h2 class="section-title">知识点掌握</h2>
+          <p class="section-note">横条长度 = 正确率，颜色按掌握度分级——最需要补的在最上面。</p>
+          <BarChart
+            :items="sortedStats.map((s) => ({ label: s.tag, value: s.accuracy }))"
+            :max="1"
+            :color="barColorFor"
+            :value-formatter="formatPercent"
+            empty-title="暂无知识点数据"
+            empty-explanation="题目的知识点标签为空时无法生成条形图。"
           />
         </section>
 

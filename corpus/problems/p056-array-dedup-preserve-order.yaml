@@ -1,0 +1,101 @@
+id: p056-array-dedup-preserve-order
+title: 数组去重（保持首次出现顺序）
+knowledge_tags:
+  - 数组
+  - 哈希表
+  - 计数
+difficulty: easy
+source: 经典练习题
+description: |
+  给定一个长度为 $n$ 的整数数组，请**去掉重复元素**，
+  输出剩下的元素。
+
+  去重后的顺序按每个值**第一次出现**的位置排列。
+  也就是说：从左到右扫描原数组，遇到一个没有输出过的值就输出它。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，去重后的元素，以空格分隔。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$|a_i| \le 10^9$
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行去重后的元素，以空格分隔。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "6\n1 2 1 3 2 4\n"
+    expected_output: "1 2 3 4\n"
+    is_sample: true
+  - input: "3\n5 5 5\n"
+    expected_output: "5\n"
+    is_sample: true
+  - input: "1\n7\n"
+    expected_output: "7\n"
+  - input: "4\n1 2 3 4\n"
+    expected_output: "1 2 3 4\n"
+  - input: "5\n3 1 3 1 3\n"
+    expected_output: "3 1\n"
+  - input: "6\n-1 -1 0 -1 0 1\n"
+    expected_output: "-1 0 1\n"
+  - input: "4\n1000000000 -1000000000 1000000000 0\n"
+    expected_output: "1000000000 -1000000000 0\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <unordered_set>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      unordered_set<long long> seen;
+      seen.reserve(n * 2);
+      vector<long long> out;
+      for (int i = 0; i < n; ++i) {
+          long long x;
+          cin >> x;
+          // "Insert" tells us in one step whether this value is new:
+          // a separate count() followed by insert() would hash twice.
+          if (seen.insert(x).second) out.push_back(x);
+      }
+      for (size_t i = 0; i < out.size(); ++i) {
+          if (i) cout << ' ';
+          cout << out[i];
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  第一类错误是**先全部读入再排序去重**。`unique` 之后数组按**数值
+  大小**有序，而题目要求按**首次出现**的顺序，`3 1 3 1 3` 会输出
+  `1 3` 而不是 `3 1`。这类错误在本身就有序的输入上完全看不出来，
+  样例 1（`1 2 1 3 2 4`）恰好是升序的，所以它**掩盖了**这个错误，
+  真正暴露它的是隐藏用例 `3 1 3 1 3`。错因标签：misread_problem /
+  wrong_traversal。
+
+  第二类错误是**用双重循环逐个检查"之前有没有出现过"**：答案是
+  对的，但 $n = 10^5$ 时是 $10^{10}$ 次比较，必然超时。
+  错因标签：wrong_complexity。
+
+  第三类错误是**判断写成 `if (seen.find(x) == seen.end())` 之后
+  忘记 `insert`**：每个元素都判成新的，等于没有去重。
+  错因标签：uninitialized_state。
+
+  第四类错误是**输出去重后的元素个数而不是元素本身**（与
+  "统计不同元素个数"这类题混淆）。错因标签：misread_problem。
+
+  第五类错误是**输出时多一个尾随空格**（循环里无条件 `cout << x << ' '`）。
+  错因标签：io_format_error。
+
+  第六类错误是**用值域数组开哈希表**（`bool seen[2000000001]`），
+  $|a_i| \le 10^9$ 时内存直接爆掉。错因标签：wrong_data_type。

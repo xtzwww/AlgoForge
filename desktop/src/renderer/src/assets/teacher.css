@@ -1,0 +1,303 @@
+/*
+ * 教师端共享样式（2026-09-26）。
+ *
+ * 为什么有这么一个文件
+ * --------------------
+ * 教师端原本是一个 2200 行的视图（`views/TeacherView.vue`），十块功能平铺
+ * 在一个页面里。按使用场景拆成五个独立面板之后，每块都要用到同一套"分析
+ * 控制台"的皮肤：内容栏宽、区块标题、数据表、进度条、主/次按钮、审核按钮。
+ *
+ * 如果每个视图各抄一份，第五条规则就会出现六种写法——这正是 `PageHeader.vue`
+ * 的文档里记着的那次教训（三个页面各写一份表头，连底部边距都漂了）。
+ * 也不适合塞进 `main.css`：这些类只在教师端用，学生端不需要背这份重量。
+ *
+ * **非 scoped，且带 `af-t-` 前缀。** 用 scoped 就要在每个视图里各写一遍，
+ * 正是要避免的；用不带前缀的通用类名（`.section`、`.primary`）会污染全站
+ * ——学生端已经有自己的 `.primary` 语义。前缀是这里的显式代价。
+ *
+ * 与 Tailwind 的分工沿用 `AppSidebar.vue` 文档里的判据：单值静态布局用
+ * 工具类，**复合规则**（同一个元素随状态/断点同时变几件事）用这里的类。
+ */
+
+/* ---- 页面容器 ---- */
+
+.af-t-page {
+  height: 100%;
+  overflow-y: auto;
+  background: var(--af-canvas);
+  color: var(--af-text-primary);
+}
+
+.af-t-content {
+  max-width: var(--af-content-max);
+  margin: 0 auto;
+  padding: 20px 16px 32px 16px;
+  box-sizing: border-box;
+}
+
+/* 概览面板专用：一屏内看完，把多余的高度让给下方的"需要关注"。
+ * `min-height: 0` 是必需的——没有它，flex 子项的最小高度是内容高度，
+ * 内部那个 `overflow-y: auto` 永远不会真的滚动。 */
+.af-t-content-fill {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100% - 20px);
+}
+
+/* ---- 状态占位 ---- */
+
+.af-t-placeholder {
+  padding: 40px 16px;
+  font-size: 14px;
+  text-align: center;
+  color: var(--af-text-muted);
+}
+
+.af-t-placeholder-inline {
+  margin: 0;
+  font-size: 13px;
+  color: var(--af-text-muted);
+}
+
+.af-t-empty {
+  padding: 18px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--af-text-muted);
+  background: var(--af-surface);
+  border: 1px dashed var(--af-border-strong);
+  border-radius: var(--af-radius-md);
+}
+
+.af-t-error-inline {
+  margin: 0;
+  font-size: 13px;
+  color: var(--af-text-primary);
+}
+
+/* 成功/错误的提示条 2026-09-26 改成 `NAlert` 了（图标、边框、主题色
+ * 都由组件库给）。这两个类留着会被误用成"新提示样式"的起点，
+ * 所以直接删掉。 */
+
+/* ---- 区块 ---- */
+
+.af-t-section {
+  margin-bottom: 24px;
+}
+
+.af-t-section-title {
+  margin: 0 0 8px 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.af-t-section-note {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--af-text-muted);
+}
+
+/* 控制台在说它自己，不是在做学情陈述。静音、左描边，不读成数据。
+ * 唯一的用处是"未分析条目最多"——那时数字不代表学生的问题。 */
+.af-t-self-note {
+  margin: 0 0 10px 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--af-text-secondary);
+  border-left: 3px solid var(--af-warning);
+  background: var(--af-elevated);
+  border-radius: var(--af-radius-sm);
+}
+
+/* ---- 数据表 ---- */
+
+.af-t-table-scroll {
+  overflow-x: auto;
+  background: var(--af-surface);
+  border: 1px solid var(--af-border);
+  border-radius: var(--af-radius-md);
+}
+
+.af-t-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.af-t-table th,
+.af-t-table td {
+  padding: 9px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--af-border);
+}
+
+.af-t-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.af-t-table thead th {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--af-text-muted);
+}
+
+.af-t-table td {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.af-t-table .af-t-num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.af-t-strong-cell {
+  font-weight: 600;
+}
+
+.af-t-clickable-row {
+  cursor: pointer;
+}
+
+.af-t-clickable-row:hover {
+  background: var(--af-elevated);
+}
+
+.af-t-row-open {
+  background: var(--af-accent-subtle);
+}
+
+/* ---- 按钮 ----
+ *
+ * 2026-09-26 这一整段被删掉了。`.af-t-primary` / `.af-t-ghost` /
+ * `.af-t-review-btn` 三套手写按钮曾经在整个教师端各写各的（同一件事
+ * 三种写法，间距、字号、圆角都在漂），现在全部由 `NButton` 承担。
+ *
+ * 教师端不再有任何手写按钮样式。要加一种新的按钮外观，先看 NButton 的
+ * `type` / `quaternary` / `dashed` / `size` 能不能表达——改配色去
+ * `components/naive-theme.ts`，不要在这里加类。
+ */
+
+/* ---- 表单 ----
+ *
+ * 2026-09-26 组件库落地后这一段的**大部分被删掉了**：`.af-t-form`、
+ * `.af-t-form-card`、`.af-t-field`、`.af-t-field-label`、`.af-t-form-actions`、
+ * `.af-t-field-inline` 全部改由 Naive UI 的 NForm / NFormItem 承担，
+ * 按钮改由 NButton 承担（见下）。留下的是两样组件库**给不了**的东西：
+ *
+ *  - `.af-t-field-note`：紧跟控件的说明文字。NFormItem 的 `feedback`
+ *    是校验信息，不是解释——两者的语义不同，混用会让"为什么这么填"
+ *    长得像"你填错了"。
+ *  - `.af-t-input`：只剩 datetime-local 一处在用。Naive 的 NInput 没有这个
+ *    type，而浏览器的原生日期控件免费带着时区与本地化，值得保留。
+ *
+ * 新增控件样式前先看 `naive-theme.ts` 能不能解决——配色应该改那里。
+ */
+
+/* 紧跟控件的说明。与 `.af-t-section-note` 分开是有意的：两者被阅读的
+ * 距离不同，这个属于它正上方那个控件，复用区块样式会让它和描述对象脱离。 */
+.af-t-field-note {
+  margin: -4px 0 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--af-text-muted);
+}
+
+/* 只给 datetime-local 一处用（见上面的说明）。 */
+.af-t-input {
+  padding: 7px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--af-text-primary);
+  background: var(--af-canvas);
+  border: 1px solid var(--af-border-strong);
+  border-radius: var(--af-radius-sm);
+}
+
+.af-t-input:focus-visible {
+  outline: 2px solid var(--af-accent);
+  outline-offset: 1px;
+}
+
+/* 模态框底部按钮：右对齐，主操作在右——和页面级按钮的左对齐不同，
+ * 因为弹窗的视线终点在右下角（"做完"的位置）。 */
+.af-t-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-note {
+  margin: 0 0 16px 0;
+}
+
+.modal-alert {
+  margin-top: 12px;
+}
+
+.af-t-link-btn {
+  margin-left: 6px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--af-accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ---- 徽标 / 进度条 ---- */
+
+.af-t-flag-badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 6px;
+  font-size: 12px;
+  color: var(--af-warning);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border-strong);
+  border-radius: 999px;
+}
+
+.af-t-progress-bar {
+  display: inline-block;
+  width: 120px;
+  height: 8px;
+  overflow: hidden;
+  vertical-align: middle;
+  background: var(--af-elevated);
+  border-radius: 999px;
+}
+
+.af-t-progress-fill {
+  height: 100%;
+  background: var(--af-accent);
+  border-radius: 999px;
+  transition: width var(--af-duration-base) var(--af-ease);
+}
+
+/* "未分析"是一处缺席，不是一个原因：用灰色而非彩色填充，免得读成诊断。 */
+.af-t-fill-unknown {
+  background: var(--af-border-strong);
+}
+
+.af-t-share-text {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--af-text-muted);
+}
+
+@media (max-width: 640px) {
+  .af-t-progress-bar {
+    width: 72px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .af-t-progress-fill {
+    transition: none;
+  }
+}

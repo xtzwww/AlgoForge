@@ -447,7 +447,10 @@ def test_the_real_corpus_loads() -> None:
     """The shipped corpus must at least parse and satisfy its own shape."""
     problems = load_catalogue()
 
-    assert len(problems) == 20, f"expected 20 problems, got {len(problems)}"
+    # A floor, not an exact count: the catalogue is meant to grow, and an
+    # exact number would fail on every addition while telling us nothing
+    # about whether the files actually parsed.
+    assert len(problems) >= 20, f"expected at least 20 problems, got {len(problems)}"
 
 
 def test_the_real_corpus_shape_is_sound() -> None:

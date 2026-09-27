@@ -1,0 +1,110 @@
+id: p029-longest-common-prefix
+title: 最长公共前缀
+knowledge_tags:
+  - 字符串
+  - 循环
+  - 边界处理
+difficulty: easy
+source: 经典算法题
+description: |
+  给定 $n$ 个**非空**字符串，求它们的最长公共前缀。
+
+  最长公共前缀是指：同时是这 $n$ 个字符串前缀的最长字符串。
+  如果不存在公共前缀（第一个字符就不相同），输出空行
+  （即输出一个空字符串）。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  接下来 $n$ 行，每行一个非空字符串，由小写英文字母组成。
+
+  **输出格式**
+
+  一行，表示最长公共前缀；没有公共前缀时输出一个空行。
+
+  **数据范围**
+
+  $1 \le n \le 1000$，每个字符串长度不超过 $1000$
+input_format: 第一行 n，接下来 n 行每行一个字符串。
+output_format: 一行，最长公共前缀（可能为空行）。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\nflower\nflow\nflight\n"
+    expected_output: "fl\n"
+    is_sample: true
+  - input: "2\nabc\nabc\n"
+    expected_output: "abc\n"
+    is_sample: true
+  - input: "1\nhello\n"
+    expected_output: "hello\n"
+  - input: "2\nabc\nxyz\n"
+    expected_output: "\n"
+  - input: "3\ndog\nracecar\ncar\n"
+    expected_output: "\n"
+  - input: "2\naaaa\naa\n"
+    expected_output: "aa\n"
+  - input: "4\nprefix\nprefixes\npre\nprelude\n"
+    expected_output: "pre\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <string>
+  #include <vector>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<string> s(n);
+      for (int i = 0; i < n; ++i) cin >> s[i];
+
+      // Seed with the first string itself, never with an empty string:
+      // an empty seed would make every answer empty.
+      string prefix = s[0];
+      for (int i = 1; i < n; ++i) {
+          int j = 0;
+          // The length guard has to come first: reading s[i][j] past
+          // the end of a short string is out of bounds.
+          while (j < (int)prefix.size() && j < (int)s[i].size() &&
+                 prefix[j] == s[i][j]) {
+              ++j;
+          }
+          if (j == 0) {
+              prefix.clear();
+              break;
+          }
+          prefix = prefix.substr(0, j);
+      }
+      cout << prefix << endl;
+      return 0;
+  }
+eval_notes: |
+  本题只有 6 行核心代码，却包含两个方向相反、各自都不报错的
+  边界错误，是"简单题不好判"的典型。
+
+  第一类错误是**长度判断放在字符比较之后**：
+  `while (prefix[j] == s[i][j] && j < prefix.size() && ...)`。
+  `s[i][j]` 的下标访问先于越界检查发生，短字符串上会读到
+  `std::string` 的终止符甚至越界内存。这类错误在 GCC 下通常
+  "看起来能跑"（越界位置恰好多为 `\0`，比较失败后正常退出循环），
+  但在优化打开或其他编译器上行为不同。错因标签：boundary_condition。
+
+  第二类错误是把初始 `prefix` 设成空串再逐字符累加，这样
+  第一轮循环的起点就错了，最终结果恒为空。正确做法是**用第一个
+  字符串作为初始前缀**再依次截短。错因标签：uninitialized_state。
+
+  第三类错误是**忽略了 $n = 1$ 的情形**：若在循环里才给 `prefix`
+  赋值，$n = 1$ 时循环体一次都不执行，输出空行。用例 `1 / hello`
+  专门覆盖它。错因标签：missing_case。
+
+  第四类错误是"没有公共前缀"时输出了 `\n` 以外的东西（例如
+  `""`、`-1`、`none`），或忘记换行导致输出多一个字符。
+  错因标签：io_format_error。
+
+  第五类错误是求成了"所有字符串的最长公共**子串**"或
+  "两两之间最长公共前缀的最大值"。例如 `4 / prefix / prefixes /
+  pre / prelude` 若两两比较取最大会得到 `prefix`，正确答案是
+  `pre`。错因标签：misread_problem。

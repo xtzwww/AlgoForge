@@ -1,0 +1,136 @@
+id: p059-linked-list-reverse
+title: 单链表反转
+knowledge_tags:
+  - 链表
+  - 指针
+  - 模拟
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个单链表，请把它反转后输出。
+
+  链表在输入中这样描述：第一行一个整数 $k$，表示链表节点个数；
+  第二行 $k$ 个整数，按**从头到尾**的顺序给出每个节点的值。
+
+  请输出反转后的链表，即原来的末尾节点排到最前面。
+
+  本题**不允许**先读入数组再倒着输出——必须体现链表反转的过程。
+  但在本题的数据规模下，数组写法与链表写法**输出完全一致**，
+  所以判题无法区分；这里的约束是学习要求，不是判题要求。
+
+  **输入格式**
+
+  第一行一个整数 $k$（可能为 0，表示空链表）。
+  第二行 $k$ 个整数，以空格分隔（$k = 0$ 时该行为空行）。
+
+  **输出格式**
+
+  一行，反转后的链表元素，以空格分隔；空链表输出空行。
+
+  **数据范围**
+
+  $0 \le k \le 10^5$，$|v| \le 10^9$
+input_format: 第一行 k；第二行 k 个整数（k 为 0 时为空行）。
+output_format: 一行反转后的元素，以空格分隔；空链表输出空行。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5\n1 2 3 4 5\n"
+    expected_output: "5 4 3 2 1\n"
+    is_sample: true
+  - input: "1\n42\n"
+    expected_output: "42\n"
+    is_sample: true
+  - input: "0\n\n"
+    expected_output: "\n"
+  - input: "2\n1 2\n"
+    expected_output: "2 1\n"
+  - input: "4\n-1 0 0 1\n"
+    expected_output: "1 0 0 -1\n"
+  - input: "3\n7 7 7\n"
+    expected_output: "7 7 7\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  struct Node { long long val; Node *next; };
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int k;
+      cin >> k;
+
+      Node *head = nullptr;
+      Node *tail = nullptr;
+      for (int i = 0; i < k; ++i) {
+          long long v;
+          cin >> v;
+          Node *node = new Node{v, nullptr};
+          if (!head) {
+              head = tail = node;
+          } else {
+              tail->next = node;
+              tail = node;
+          }
+      }
+
+      // Three pointers: `prev` trails, `cur` advances, `nxt` saves the
+      // rest of the list before the link is cut. Without `nxt` the
+      // remainder of the list is unreachable the moment cur->next is
+      // overwritten.
+      Node *prev = nullptr;
+      Node *cur = head;
+      while (cur) {
+          Node *nxt = cur->next;
+          cur->next = prev;
+          prev = cur;
+          cur = nxt;
+      }
+      head = prev;
+
+      bool first = true;
+      for (Node *p = head; p; p = p->next) {
+          if (!first) cout << ' ';
+          cout << p->val;
+          first = false;
+      }
+      cout << endl;
+
+      for (Node *p = head; p;) {
+          Node *nxt = p->next;
+          delete p;
+          p = nxt;
+      }
+      return 0;
+  }
+eval_notes: |
+  本题的输出与"倒着打印数组"完全一致，因此**所有关于指针操作
+  的错误在本题数据下都不可观测**——这正是一个诚实的题目需要
+  说明的地方。它考的是过程，但判题只能看到结果。
+
+  第一类错误是**反转循环里只用了两个指针**：`cur->next = prev;
+  prev = cur; cur = cur->next;`。第三行读到的 `cur->next` 已经
+  被上一行改成了 `prev`，于是指针原地打转，程序要么死循环
+  要么只反转了第一个节点。这类错误的表现是**TLE 或输出长度不对**，
+  是链表反转最常见的一处。错因标签：uninitialized_state /
+  wrong_traversal。
+
+  第二类错误是**忘记保存原来的头节点作为新尾巴**，反转后
+  `head->next` 仍指向第二个节点，形成环。遍历输出时会无限循环。
+  错因标签：missing_case。
+
+  第三类错误是**忘记在处理前把原头节点的 `next` 置空**，
+  与第二类同源。正确做法是在循环中让 `prev` 从 `nullptr` 起步，
+  第一个节点的 `next` 自然被改成空。错因标签：initialization。
+
+  第四类错误是**$k = 0$ 时访问空指针**（`head->val`）。用例 3
+  专门覆盖空链表。错因标签：boundary_condition。
+
+  第五类错误是**输出分隔符处理不当**：多一个尾随空格，或
+  空链表时输出了 `\n\n`。错因标签：io_format_error。
+
+  第六类错误是**反转后遍历输出时用了 `while (head)` 并修改
+  `head` 本身**，导致释放阶段拿不到链表起点。若释放写成递归，
+  在 $10^5$ 个节点上还会爆栈。错因标签：stack_overflow。

@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import auth as auth_api
+from app.assistance import DEFAULT_ASSISTANCE_LEVEL, policy_for, policy_to_dict
 from app.auth import create_user, issue_session
 from app.main import app
 from app.models.base import Base
@@ -164,3 +165,142 @@ def test_逐请求provider对学生可用且不动全局(
     assert fake_llm["provider"] == "ollama"
     # 但进程级默认值纹丝未动（P0-2 的根因：换自己不该牵动别人）。
     assert model_catalog.active_provider() == before
+
+
+# ---------------------------------------------------------------------------
+# GET / PUT /assistance/level（阶段 5 补）
+#
+# 读档位要能匿名用：学生在没登录时翻题目也该看到老师设的强度，否则面板会显示
+# 一个错的值 —— 那正是"老师设 5 却显示 3"这个 bug 的形态。写档位反过来必须
+# 是登录用户，否则任何人都能改别人的意愿。
+# ---------------------------------------------------------------------------
+
+def _make_assignment(session: Session, level: int, title: str = "t") -> int:
+    from app.models.assignment import Assignment
+
+    row = Assignment(title=title, description="d", assistance_level=level)
+    session.add(row)
+    session.commit()
+    return row.id
+
+
+def test_匿名也能读档位且拿到老师设的上限(client: TestClient, session: Session) -> None:
+    asg = _make_assignment(session, 5)
+    resp = client.get(f"/api/v1/assistance/level?assignment_id={asg}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ceiling"] == 5
+    assert body["level"] == 5  # 没登录就没有个人意愿，等于上限
+    assert body["preference"] is None
+    assert body["has_assignment"] is True
+
+
+def test_没有作业id时回落到默认档且标记为自由练习(
+    client: TestClient, session: Session
+) -> None:
+    resp = client.get("/api/v1/assistance/level")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["has_assignment"] is False
+    assert body["level"] == DEFAULT_ASSISTANCE_LEVEL
+    assert body["ceiling"] == DEFAULT_ASSISTANCE_LEVEL
+
+
+def test_匿名写档位返回401(client: TestClient, session: Session) -> None:
+    asg = _make_assignment(session, 5)
+    resp = client.put("/api/v1/assistance/level", json={"assignment_id": asg, "level": 2})
+    assert resp.status_code == 401
+
+
+def test_学生写档位后读到的生效值就是它(client: TestClient, session: Session) -> None:
+    asg = _make_assignment(session, 5)
+    token = _login(client, session, "stu", ROLE_STUDENT)
+    auth = {"Authorization": f"Bearer {token}"}
+
+    resp = client.put(
+        "/api/v1/assistance/level",
+        json={"assignment_id": asg, "level": 2},
+        headers=auth,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["level"] == 2
+    assert resp.json()["preference"] == 2
+    assert resp.json()["ceiling"] == 5
+
+    # 再读一次（另一个请求），确认是落库了而不是只改了响应。
+    again = client.get(f"/api/v1/assistance/level?assignment_id={asg}", headers=auth)
+    assert again.json()["level"] == 2
+
+
+def test_学生写超过上限的值会被压到上限(client: TestClient, session: Session) -> None:
+    """安全不变量在 HTTP 层的表现。压不到就等于学生给自己提权。"""
+    asg = _make_assignment(session, 2)
+    token = _login(client, session, "stu", ROLE_STUDENT)
+    auth = {"Authorization": f"Bearer {token}"}
+
+    resp = client.put(
+        "/api/v1/assistance/level",
+        json={"assignment_id": asg, "level": 5},
+        headers=auth,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ceiling"] == 2
+    assert resp.json()["level"] == 2
+    assert resp.json()["preference"] == 2
+
+
+def test_学生清除意愿后回到上限(client: TestClient, session: Session) -> None:
+    asg = _make_assignment(session, 5)
+    token = _login(client, session, "stu", ROLE_STUDENT)
+    auth = {"Authorization": f"Bearer {token}"}
+
+    client.put(
+        "/api/v1/assistance/level",
+        json={"assignment_id": asg, "level": 1},
+        headers=auth,
+    )
+    resp = client.put(
+        "/api/v1/assistance/level",
+        json={"assignment_id": asg, "level": None},
+        headers=auth,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["preference"] is None
+    assert resp.json()["level"] == 5
+
+
+def test_两个学生的意愿互不干扰(client: TestClient, session: Session) -> None:
+    """共用一张表，串味的后果是 A 把 B 的强度改了，而两人都不会察觉。"""
+    asg = _make_assignment(session, 5)
+    t1 = _login(client, session, "s1", ROLE_STUDENT)
+    t2 = _login(client, session, "s2", ROLE_STUDENT)
+
+    client.put(
+        "/api/v1/assistance/level",
+        json={"assignment_id": asg, "level": 1},
+        headers={"Authorization": f"Bearer {t1}"},
+    )
+    client.put(
+        "/api/v1/assistance/level",
+        json={"assignment_id": asg, "level": 4},
+        headers={"Authorization": f"Bearer {t2}"},
+    )
+
+    r1 = client.get(
+        f"/api/v1/assistance/level?assignment_id={asg}",
+        headers={"Authorization": f"Bearer {t1}"},
+    )
+    r2 = client.get(
+        f"/api/v1/assistance/level?assignment_id={asg}",
+        headers={"Authorization": f"Bearer {t2}"},
+    )
+    assert r1.json()["level"] == 1
+    assert r2.json()["level"] == 4
+
+
+def test_读档位返回的策略内容与档位号自洽(client: TestClient, session: Session) -> None:
+    """前端拿 ``policy`` 直接渲染文案，错位会让界面描述别的档位。"""
+    asg = _make_assignment(session, 3)
+    body = client.get(f"/api/v1/assistance/level?assignment_id={asg}").json()
+    assert body["policy"]["level"] == 3
+    assert policy_to_dict(policy_for(3)) == body["policy"]

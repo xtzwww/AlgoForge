@@ -61,7 +61,15 @@ export default defineConfig(({ mode }) => {
       outDir: resolve('dist-web'),
       emptyOutDir: true,
       rollupOptions: {
-        input: { index: resolve('src/renderer/index.web.html') }
+        input: {
+          // The web split (2026-09-25): one entry per side, sharing the
+          // same renderer bundle. `src/main.ts` picks the side from the
+          // entry file name (runtime/mode.ts), so the student address
+          // resolves only student routes and the teacher address only
+          // teacher routes.
+          index: resolve('src/renderer/index.web.html'),
+          teacher: resolve('src/renderer/teacher.web.html')
+        }
       }
     },
     server: {

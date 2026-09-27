@@ -1,0 +1,127 @@
+id: p088-subsets
+title: 子集（按大小与字典序输出）
+knowledge_tags:
+  - 回溯
+  - 枚举
+  - 递归
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个**不含重复元素**的整数序列，请输出它的所有子集
+  （包括空集和它自己）。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数，以空格分隔（保证互不相同）。
+
+  **输出格式**
+
+  输出所有子集，**每行一个**子集，同一行内的数用空格分隔。
+  输出顺序为：**先按子集大小从小到大**，大小相同时**按字典序**。
+  **空集输出一个空行**。
+
+  **数据范围**
+
+  $1 \le n \le 18$，$-10^9 \le a_i \le 10^9$
+
+  **提示**
+
+  由于 $n$ 最大 18，子集总数为 $2^{18} = 262144$，请避免把所有
+  子集先存起来再排序——应当**按序遍历直接输出**。
+input_format: 第一行 n，第二行 n 个互不相同的整数。
+output_format: 每行一个子集（空集为空行），按大小再按字典序。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\n1 2 3\n"
+    expected_output: "\n1\n2\n3\n1 2\n1 3\n2 3\n1 2 3\n"
+    is_sample: true
+  - input: "1\n5\n"
+    expected_output: "\n5\n"
+    is_sample: true
+  - input: "2\n1 2\n"
+    expected_output: "\n1\n2\n1 2\n"
+  - input: "3\n3 1 2\n"
+    expected_output: "\n1\n2\n3\n1 2\n1 3\n2 3\n1 2 3\n"
+  - input: "2\n-1 -2\n"
+    expected_output: "\n-2\n-1\n-2 -1\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  int n;
+  vector<long long> a;
+  vector<long long> cur;
+
+  // Emit subsets of exactly `len` elements, choosing from a[start..].
+  // Fixing the length in the outer loop and walking `start` upward is
+  // what yields "by size, then lexicographic" without ever storing or
+  // sorting the results.
+  void dfs(int start, int len) {
+      if ((int)cur.size() == len) {
+          for (int i = 0; i < len; ++i) {
+              if (i) cout << ' ';
+              cout << cur[i];
+          }
+          cout << '\n';
+          return;
+      }
+      // Pruning: if not enough elements remain to fill the subset, stop.
+      int need = len - (int)cur.size();
+      for (int i = start; i + need <= n; ++i) {
+          cur.push_back(a[i]);
+          dfs(i + 1, len);
+          cur.pop_back();
+      }
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      cin >> n;
+      a.resize(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      sort(a.begin(), a.end());
+      cout << '\n';  // the empty set
+      for (int len = 1; len <= n; ++len) dfs(0, len);
+      return 0;
+  }
+eval_notes: |
+  这题的考点是**不存储、按顺序直接输出**——$2^{18}$ 个子集
+  先存再排序会同时爆内存和超时。
+
+  第一类错误是**漏掉空集**。题目要求包含空集，输出的第一行
+  必须是空行。样例 2（$n=1$）的正确输出是两行：空行和 `5`，
+  只输出 `5` 是错的。这是本题最常漏的一处。错因标签：
+  missing_case。
+
+  第二类错误是**没有先排序**就按输入顺序枚举。样例 4
+  （输入 `3 1 2`）会输出以 `3` 打头的子集在前，字典序不符。
+  注意**子集集合本身是对的**，只有顺序错——必须严格比对输出
+  才能发现。错因标签：wrong_algorithm（顺序层面）。
+
+  第三类错误是**"选/不选"式 DFS 但输出顺序不满足"按大小"**。
+  经典写法（对每个元素决定选或不选）产生的顺序是
+  `[] [3] [2] [2,3] [1] [1,3] [1,2] [1,2,3]`，大小是交错的，
+  与本题要求的"按大小递增"不一致。这仍然枚举出了全部子集，
+  只是顺序不对。错因标签：wrong_algorithm（顺序层面）。
+
+  第四类错误是**把所有子集存进 `vector<vector<long long>>`
+  再排序输出**。$n=18$ 时共有 $2^{18}$ 个子集、约 $18\times 2^{18}$
+  个元素，内存与时间都吃紧；而且排序的键是"大小 + 字典序"，
+  比较器容易写错。错因标签：wrong_complexity。
+
+  第五类错误是**递归里 `start` 传的是 `start + 1` 而不是 `i + 1`**。
+  这样每层只前进一格，会**重复选同一个元素**，产生 `[1,1]` 之类
+  非法子集。错因标签：off_by_one。
+
+  第六类错误是**剪枝条件写错**（`i + need <= n` 写成
+  `i + need < n`）。会少枚举一批末尾的子集，样例 1 中
+  `[2,3]` 或 `[1,2,3]` 可能被漏掉。错因标签：boundary_condition。
+
+  第七类错误是**同一行内输出顺序按"选取的逆序"**（因为
+  `push_back` 后没有正确处理），导致行内是降序。样例 1 中
+  `1 2` 会输出成 `2 1`。错因标签：wrong_traversal。

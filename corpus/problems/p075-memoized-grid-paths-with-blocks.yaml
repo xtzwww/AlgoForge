@@ -1,0 +1,122 @@
+id: p075-memoized-grid-paths-with-blocks
+title: 带障碍的网格路径数（记忆化搜索）
+knowledge_tags:
+  - 记忆化搜索
+  - 动态规划
+  - 二维网格
+  - 递归
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个 $m \times n$ 的网格，其中某些格子有障碍、不能通过。
+  一个人从左上角 $(0,0)$ 出发，每次只能向**右**或向**下**移动
+  一格，求到达右下角 $(m-1, n-1)$ 的不同路径数。
+
+  **输入格式**
+
+  第一行两个整数 $m$、$n$。
+  接下来 $m$ 行，每行一个长度为 $n$ 的字符串，由 `.` 和 `#`
+  组成。`.` 表示可通行，`#` 表示障碍。
+
+  **输出格式**
+
+  一行，一个整数，表示路径数。
+
+  **数据范围**
+
+  $1 \le m, n \le 100$，路径数保证不超过 $2^{63}-1$，
+  **起点与终点保证不是障碍**
+
+  **提示**
+
+  若起点被障碍围死，答案可能是 $0$。
+input_format: 第一行 m n，接下来 m 行每行一个长度为 n 的字符串。
+output_format: 一行一个整数，路径数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 3\n...\n...\n...\n"
+    expected_output: "6\n"
+    is_sample: true
+  - input: "3 3\n...\n.#.\n...\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "1 1\n.\n"
+    expected_output: "1\n"
+  - input: "2 2\n.#\n#.\n"
+    expected_output: "0\n"
+  - input: "3 3\n..#\n...\n#..\n"
+    expected_output: "4\n"
+  - input: "2 3\n...\n...\n"
+    expected_output: "3\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  int m, n;
+  vector<string> g;
+  // memo[i][j] = number of paths from (i,j) to the goal.
+  // -1 means "not computed yet" — 0 is a legitimate answer, so it cannot
+  // double as the sentinel.
+  vector<vector<long long>> memo;
+
+  long long solve(int i, int j) {
+      if (i >= m || j >= n) return 0;
+      if (g[i][j] == '#') return 0;
+      if (i == m - 1 && j == n - 1) return 1;
+      long long &res = memo[i][j];
+      if (res != -1) return res;
+      res = solve(i + 1, j) + solve(i, j + 1);
+      return res;
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      cin >> m >> n;
+      g.resize(m);
+      for (int i = 0; i < m; ++i) cin >> g[i];
+      memo.assign(m, vector<long long>(n, -1));
+      cout << solve(0, 0) << endl;
+      return 0;
+  }
+eval_notes: |
+  这道题的难点不在转移方程，而在"哪些状态该被记忆、什么值
+  能做哨兵"。
+
+  第一类错误是**完全不记忆，纯递归**。$100 \times 100$ 的网格上
+  路径数是指数级的，同一格子会被重复访问天文数字次，直接 TLE。
+  错因标签：wrong_complexity。
+
+  第二类错误是**用 `0` 作"未计算"哨兵**（`memo` 初始化为 0，
+  `if (memo[i][j]) return memo[i][j];`）。看起来一样，但
+  "从该格子出发有 0 条路"（被障碍挡住）与"还没算过"无法区分，
+  于是被挡死的格子会被反复重算。在障碍密集的网格上退化成
+  指数级。这是本题最隐蔽的一处：小样例仍能通过。错因标签：
+  uninitialized_state。
+
+  第三类错误是**漏掉"障碍物不贡献路径"的判断**，只在
+  边界处拦截。于是 `#` 会被当成普通格子，把不该存在的路径
+  也算进去。以样例 2 为例会输出 6 而不是 2。错因标签：
+  missing_case。
+
+  第四类错误是**终点判断与越界判断顺序颠倒**（先判终点再判
+  越界），在 $m$ 或 $n$ 为 1 时可能访问到网格外再判终点，
+  表现为 RE 或把 `1 \times 1` 的答案算成 2。错因标签：
+  boundary_condition。
+
+  第五类错误是**答案用 `int` 承接**。$100\times100$ 的走廊
+  （无任何障碍）路径数是 $\binom{198}{99} \approx 2.3\times10^{58}$，
+  远超 64 位。题目已声明"路径数不超过 $2^{63}-1$"，所以本题
+  **不会溢出**——这是有意封住的坑，不构成可观测错误。错因标签：
+  overflow（认知层面）。
+
+  第六类错误是**把"向右或向下"写成"向右下"**（一步走对角）。
+  这会改变组合结构，在 $3\times3$ 全通网格上输出 3 而不是 6。
+  错因标签：misread_problem。
+
+  第七类错误是**输入按字符读而不是按行读**，于是把行末换行
+  当成网格内容，行列错位。表现为所有输入都返回 0 或 1。
+  错因标签：io_format_error。

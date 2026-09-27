@@ -1,0 +1,111 @@
+id: p028-max-subarray-sum
+title: 最大子段和
+knowledge_tags:
+  - 动态规划
+  - 数组
+  - 贪心
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数数组 $a$，请找出一段**连续**的子数组
+  $a_l, a_{l+1}, \dots, a_r$（$1 \le l \le r \le n$），
+  使得这段元素的和最大，输出这个最大和。
+
+  注意：子数组必须**非空**，即至少要包含一个元素。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最大子段和。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$|a_i| \le 10^9$
+
+  **提示**
+
+  答案最大可达 $10^{14}$（长约 $10^5$ 的一段全为 $10^9$），
+  请使用 `long long`。
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，最大子段和。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5\n1 -2 3 10 -4\n"
+    expected_output: "13\n"
+    is_sample: true
+  - input: "3\n-1 -2 -3\n"
+    expected_output: "-1\n"
+    is_sample: true
+  - input: "1\n-1000000000\n"
+    expected_output: "-1000000000\n"
+  - input: "4\n5 -10 6 7\n"
+    expected_output: "13\n"
+  - input: "6\n-2 -3 -1 -5 -4 -6\n"
+    expected_output: "-1\n"
+  - input: "5\n0 0 0 0 0\n"
+    expected_output: "0\n"
+  - input: "4\n1000000000 1000000000 -1 1000000000\n"
+    expected_output: "2999999999\n"
+  - input: "7\n2 -1 2 -1 2 -1 2\n"
+    expected_output: "5\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      long long cur = 0;
+      // "Best so far" is seeded from the first element rather than from
+      // zero: the subarray must be non-empty, so a negative answer has
+      // to be representable.
+      long long best = LLONG_MIN;
+      for (int i = 0; i < n; ++i) {
+          long long x;
+          cin >> x;
+          cur = max(x, cur + x);
+          best = max(best, cur);
+      }
+      cout << best << endl;
+      return 0;
+  }
+eval_notes: |
+  本题有两个互相独立、且各自都能通过样例的错误点，因此它比
+  "一眼看出来的 DP" 更值得放进题库。
+
+  第一类错误是**把答案初始化为 0**：`long long best = 0;`。
+  当数组中所有元素都为负数时，正确的最大子段和是一个负数，
+  而 0 永远比它大，于是程序会输出 0——一个数组中根本不存在的和。
+  `3 / -1 -2 -3` 与 `6 / -2 -3 -1 -5 -4 -6` 两组用例专门覆盖它。
+  错因标签：uninitialized_state / initialization。
+
+  第二类错误是递推写成 `cur = max(0LL, cur + x);` 而不是
+  `cur = max(x, cur + x);`。这两者在数组含有负数时会分道扬镳：
+  前者允许"从零重新开始"，实际求的是"允许空段的最大和"，
+  在含有负数段的数据上会给出偏大的结果。样例 1
+  （`1 -2 3 10 -4`）两种写法都得 13，看不出差别；
+  `3 / -1 -2 -3` 才会暴露（前者给 0、后者给 -1）。
+  错因标签：boundary_condition / missing_case。
+
+  凡把 `best` 与中间和的初值都设成 0 的写法，两类错误会叠加，
+  使程序在"最大值恰为负"的数据上稳定地错，而在其余数据上完全正确。
+
+  第三类错误是把 `cur` 与 `best` 声明成 `int`：数组元素可达 $10^9$、
+  长度可达 $10^5$，前缀和会迅速溢出。隐藏用例
+  `1000000000 1000000000 -1 1000000000` 的正确答案是
+  $2999999999$，超出 32 位有符号范围，用 `int` 会得到负数。
+  错因标签：overflow。
+
+  第四类错误是把"连续子数组"误解为"子序列"（可以不连续），
+  于是改成了求所有正数之和。这类错误在样例 1 上就会暴露
+  （子序列会得到 14，正确答案是 13）。错因标签：misread_problem。

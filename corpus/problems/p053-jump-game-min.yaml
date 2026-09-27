@@ -1,0 +1,127 @@
+id: p053-jump-game-min
+title: 跳跃游戏（最少步数）
+knowledge_tags:
+  - 贪心
+  - 数组
+  - 动态规划
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的非负整数数组 $a$，你从下标 1 出发。
+
+  在下标 $i$ 处，你可以跳到 $i + 1, i + 2, \dots, i + a_i$
+  中的**任意一个**下标（不能跳出数组）。
+
+  求到达最后一个下标 $n$ 所需的**最少跳跃次数**。
+  保证一定可以到达。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最少跳跃次数。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$0 \le a_i \le 10^5$
+
+  **说明**
+
+  当 $n = 1$ 时，你已经站在最后一个下标上，不需要跳跃，
+  最少步数为 0。
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行一个整数，最少跳跃次数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5\n2 3 1 1 4\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "1\n0\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "2\n1 0\n"
+    expected_output: "1\n"
+  - input: "5\n1 1 1 1 1\n"
+    expected_output: "4\n"
+  - input: "4\n3 1 1 1\n"
+    expected_output: "1\n"
+  - input: "6\n2 5 1 1 1 1\n"
+    expected_output: "2\n"
+  - input: "5\n2 0 2 0 1\n"
+    expected_output: "2\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<int> a(n + 1);
+      for (int i = 1; i <= n; ++i) cin >> a[i];
+
+      // n == 1 is the case where the answer is 0, not 1: the greedy
+      // loop below would count a jump that is never taken.
+      if (n == 1) {
+          cout << 0 << endl;
+          return 0;
+      }
+
+      int jumps = 0;
+      int curEnd = 1;        // last index reachable with `jumps` jumps
+      int farthest = 1;      // farthest index reachable with one more
+      for (int i = 1; i < n; ++i) {
+          farthest = max(farthest, i + a[i]);
+          if (i == curEnd) {
+              // Only now is the current "layer" exhausted, so one more
+              // jump is unavoidable.
+              ++jumps;
+              curEnd = farthest;
+              if (curEnd >= n) break;
+          }
+      }
+      cout << jumps << endl;
+      return 0;
+  }
+eval_notes: |
+  本题是"贪心边界"这类错误的典型：`curEnd` 与 `farthest`
+  两个变量的用途相近，用混之后程序仍然跑得出一个数。
+
+  第一类错误是**在循环里对每个 `i` 都判断一次
+  `if (i == curEnd)`**，但把 `curEnd` 更新写在了
+  `farthest` 更新之前，于是每一轮 `curEnd` 都被拉到
+  `farthest`，`jumps` 从第一轮起就不断累加，答案偏大。
+  错因标签：wrong_traversal。
+
+  第二类错误是**用 `a[i]` 直接贪心（每次跳最远）**。
+  这等价于"只看当前一步能跳多远"，对 `2 3 1 1 4` 会得出 3
+  而不是 2。错因标签：greedy_wrong。
+
+  第三类错误是**漏掉 $n = 1$ 的特判**：循环 `for (i = 1; i < 1; ...)`
+  不执行，`jumps` 保持 0——恰好正确；但如果实现把 $n = 1$
+  当作"必须跳一次"，就会输出 1。用例 2 专门覆盖它。
+  错因标签：boundary_condition。
+
+  第四类错误是**把"到达最后一个下标"写成"越过最后一个下标"**：
+  判断写成 `curEnd > n` 而不是 `curEnd >= n`，多算一跳。
+  用例 4（`1 1 1 1 1`，正确答案 4）会暴露。错因标签：
+  off_by_one。
+
+  第五类错误是**用 DP `dp[i] = min(dp[j] + 1)` 但内层循环
+  枚举所有可达来源**：$n = 10^5$ 且 $a_i$ 很大时是 $O(n^2)$，
+  会超时。错因标签：wrong_complexity。
+
+  第六类错误是**BFS 按位置建图但把边数算成 $n^2$**：
+  同样超时。错因标签：wrong_complexity。
+
+  第七类错误是**数组下标 1 起始与 0 起始混用**：
+  读入用 `a[i]`（从 1 开始）但访问 `a[i]` 时按 0 起始理解，
+  导致每步的可达范围整体错位一格。错因标签：off_by_one。

@@ -34,9 +34,20 @@
 
 import { onMounted, onUnmounted, ref } from 'vue'
 import { RouterView } from 'vue-router'
+import { NConfigProvider, NMessageProvider, NDialogProvider } from 'naive-ui'
 import AppSidebar from './components/AppSidebar.vue'
 import AppTopbar from './components/AppTopbar.vue'
 import { useSidecarStatus } from './composables/useSidecarStatus'
+import { useNaiveTheme } from './components/naive-theme'
+
+/**
+ * 主题三件套（2026-09-26）：把 `--af-*` 那三套调色板翻成 Naive UI 能吃的
+ * 配置，喂给 `NConfigProvider`。**必须挂在根上**——Naive 的主题是
+ * `provide` 下去的，包在页面上不生效。
+ *
+ * 这是这次引入组件库唯一必须改壳的地方，其余都是各页面自己换控件。
+ */
+const { theme: naiveTheme, themeOverrides } = useNaiveTheme()
 
 /**
  * Whether the off-canvas drawer is open. Only meaningful below 1024px —
@@ -71,6 +82,16 @@ onUnmounted(() => {
 
 <template>
   <!--
+    `NConfigProvider` 是 Naive UI 的主题入口：`theme` 决定底座（深色用
+    `darkTheme`，浅色给 null），`themeOverrides` 才是本项目的三套配色。
+    没有它，Naive 的组件会用自己那套蓝白配色，和页面其余部分（`--af-*`）
+    在同一个屏幕上并存两套颜色——正是这次升级要消掉的问题。
+
+    `NMessageProvider` / `NDialogProvider` 是**命令式** API 的宿主
+    （`useMessage()` 弹提示、`useDialog()` 弹确认框）。它们必须包在
+    任何调用 `useMessage()` 的组件之上，所以放在这里；单个页面自己包
+    一份的话，提示会跟着该页面一起被卸载。
+
     No background on the root (2026-09-25). This element used to carry
     `bg-af-canvas`, an opaque fill across the entire viewport — which
     would have covered the canvas glow and grid painted on `body` and
@@ -78,7 +99,10 @@ onUnmounted(() => {
     canvas belongs to `body` (see tokens.css); the shell's job is to not
     paint over it.
   -->
-  <div class="flex h-screen flex-col overflow-hidden">
+  <NConfigProvider :theme="naiveTheme" :theme-overrides="themeOverrides">
+    <NMessageProvider>
+      <NDialogProvider>
+        <div class="flex h-screen flex-col overflow-hidden">
     <AppTopbar :drawer-open="drawerOpen" @toggle-drawer="drawerOpen = !drawerOpen" />
 
     <div class="flex min-h-0 flex-1">
@@ -164,5 +188,8 @@ onUnmounted(() => {
         </RouterView>
       </main>
     </div>
-  </div>
+        </div>
+      </NDialogProvider>
+    </NMessageProvider>
+  </NConfigProvider>
 </template>

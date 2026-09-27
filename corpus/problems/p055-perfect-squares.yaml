@@ -1,0 +1,106 @@
+id: p055-perfect-squares
+title: 完全平方数
+knowledge_tags:
+  - 动态规划
+  - 数论
+  - 枚举
+difficulty: easy
+source: 经典算法题
+description: |
+  给定一个正整数 $n$，求**最少**用几个完全平方数（$1, 4, 9, 16, \dots$）
+  的和来表示 $n$。
+
+  完全平方数是指某个整数的平方。同一平方数可以使用多次。
+
+  **输入格式**
+
+  一行，一个正整数 $n$。
+
+  **输出格式**
+
+  一行，一个整数，表示所需的最少个数。
+
+  **数据范围**
+
+  $1 \le n \le 10^4$
+input_format: 一行一个正整数 n。
+output_format: 一行一个整数，最少个数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "12\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "13\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "1\n"
+    expected_output: "1\n"
+  - input: "2\n"
+    expected_output: "2\n"
+  - input: "4\n"
+    expected_output: "1\n"
+  - input: "10000\n"
+    expected_output: "1\n"
+  - input: "7\n"
+    expected_output: "4\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<int> dp(n + 1, n + 1);
+      // The empty sum represents 0, which is why dp[0] must be 0 and
+      // not a large number.
+      dp[0] = 0;
+      for (int i = 1; i <= n; ++i) {
+          for (int j = 1; j * j <= i; ++j) {
+              dp[i] = min(dp[i], dp[i - j * j] + 1);
+          }
+      }
+      cout << dp[n] << endl;
+      return 0;
+  }
+eval_notes: |
+  本题是"递归式 DP 与状态边界"的入门载体，错误集中在
+  `dp[0]` 与初值上，而这些都是"差 1"类型的错误。
+
+  第一类错误是**忘记设 `dp[0] = 0`**（保留成 `n + 1` 或
+  `INT_MAX`）。这样任何用到 `dp[i - j*j]` 且 `i == j*j` 的
+  转移都会得到 `初值 + 1`，也就是一个非常大的数，结果恒为
+  初值附近的数。数组容器里 `dp[0]` 默认是 0，所以**只有把
+  初值统一初始化为大数时才会暴露**——这正是"初始化顺序"
+  造成的隐蔽错误。错因标签：uninitialized_state。
+
+  第二类错误是**初值设成 0**：`dp[i]` 全 0 时 `min` 永远选 0，
+  最终输出 0。错因标签：uninitialized_state。
+
+  第三类错误是**外层枚举平方数、内层枚举 $i$**（背包式写法）
+  但内层写成**从大到小**遍历容量：本题每种平方数可以无限次使用
+  （完全背包），从大到小会让每个平方数最多用一次，答案偏大。
+  例如 $n = 12$ 正确答案是 3（$4 + 4 + 4$），错误实现会给出
+  更大的值。错因标签：wrong_traversal / loop_direction。
+
+  第四类错误是**只考虑了 $2$ 个或 $3$ 个平方数**（受
+  "四平方和定理"启发猜成"答案不超过 3"）。$n = 7$ 必须用
+  $4 + 1 + 1 + 1$ 共 4 个，用例 7 专门覆盖它。错因标签：
+  missing_case / misread_problem。
+
+  第五类错误是**把 $j$ 的循环上界写成 `j <= i / 2`**，
+  漏掉 $j$ 接近 $i$ 的情形（例如 $n = 10000$ 时应为 1 个
+  $100^2$），答案偏大。用例 6 覆盖它。错因标签：
+  boundary_condition。
+
+  第六类错误是**用贪心（每次取不超过剩余数的最大平方数）**：
+  $n = 12$ 时会得到 $9 + 1 + 1 + 1 = 4$ 个，而最优是
+  $4 + 4 + 4 = 3$ 个。错因标签：greedy_wrong。
+
+  第七类错误是**递归求解但不记忆化**，$n = 10^4$ 时
+  递归调用次数指数级增长，超时。错因标签：wrong_complexity。

@@ -14,13 +14,24 @@ can sign up without a teacher first creating their account. This module
 is where the consequences of that decision are handled, so they are not
 scattered through the route:
 
-1. **Role is not a parameter.** :func:`registration_role` takes no
-   argument and returns ``ROLE_STUDENT``. There is deliberately no way
-   for a request to influence it. Self-registration that could produce a
-   teacher account would hand the whole teacher console — every class's
-   roster, every student's submissions — to anyone who could reach the
-   endpoint. This is the one line that must never grow a parameter, and
-   ``tests/test_registration.py`` pins it.
+1. **Role is a whitelisted parameter, not a trusted one.**
+   :func:`registration_role` accepts what the client *asks* for, but the
+   only request that can produce a teacher account is the literal
+   ``"teacher"`` (case- and space-insensitive), and it is honoured only
+   while :func:`teacher_registration_enabled` is true. Everything else —
+   including roles this product does not have, and any spelling that is
+   not exactly ``teacher`` — falls back to a student account. A request
+   can never mint a role this product does not have, and it can never
+   mint a teacher while the deployment has switched that off.
+
+   Why the boundary changed from the original "no parameter at all":
+   the teacher web entry's sign-up page (2026-09-25) is a deliberate
+   product feature — a teacher sets up shop from the teacher address.
+   The risk has not gone away: a teacher account commands the whole
+   console, every class's roster and every student's submission. It is
+   now bounded by a switch, not by an absent parameter. The switch is
+   the thing that must never grow a default to ``false``, and
+   ``tests/test_registration.py`` pins both sides of it.
 
 2. **The door has a switch.** ``ALLOW_OPEN_REGISTRATION`` defaults to
    on, because that is the product decision. A deployment that wants the
@@ -58,7 +69,7 @@ from collections import defaultdict, deque
 from typing import Optional
 
 from app.config import settings
-from app.models.user import ROLE_STUDENT
+from app.models.user import ROLE_STUDENT, ROLE_TEACHER
 
 logger = logging.getLogger(__name__)
 
@@ -96,13 +107,45 @@ class RegistrationError(ValueError):
         self.status_code = status_code
 
 
-def registration_role() -> str:
-    """The role a self-registered account gets. Always a student.
+def teacher_registration_enabled() -> bool:
+    """Whether a self-registered account may ask for the teacher role.
 
-    Exists as a function rather than a literal at the call site so the
-    constraint has one place to be asserted, and so a future reader who
-    is tempted to add a ``role`` parameter sees this docstring first.
+    ``false`` means a request for a teacher account is refused (403), not
+    silently downgraded to a student one — the client is told the
+    capability is off rather than left wondering why it got a student
+    account.
     """
+    return bool(settings.allow_teacher_registration)
+
+
+def registration_role(role: str = ROLE_STUDENT) -> str:
+    """The role a self-registered account gets.
+
+    The product decision (2026-09-25) is that the *teacher web entry's*
+    sign-up page creates a teacher account — that is the only caller that
+    sends ``"teacher"``. This function is the whole of the boundary
+    between "the page said so" and "a teacher exists", so it is strict in
+    both directions:
+
+    * only the literal ``"teacher"`` (case- and space-insensitive) can
+      produce ``ROLE_TEACHER``, and only while
+      :func:`teacher_registration_enabled` is true;
+    * anything else — a missing field, ``"admin"``, ``"teacher!"``, a
+      role this product does not have — produces ``ROLE_STUDENT``. There
+      is no path from a request to a role outside the whitelist.
+
+    A request for a teacher account while the switch is off raises
+    :class:`RegistrationError` (403), so the client is told the door is
+    shut rather than handed a student account it did not ask for.
+    """
+    requested = (role or "").strip().lower()
+    if requested == ROLE_TEACHER:
+        if not teacher_registration_enabled():
+            raise RegistrationError(
+                "本机已关闭教师自助注册，请联系管理员创建教师账号",
+                status_code=403,
+            )
+        return ROLE_TEACHER
     return ROLE_STUDENT
 
 

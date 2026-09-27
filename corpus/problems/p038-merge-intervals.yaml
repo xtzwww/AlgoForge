@@ -1,0 +1,114 @@
+id: p038-merge-intervals
+title: 合并区间
+knowledge_tags:
+  - 排序
+  - 区间
+  - 数组
+difficulty: medium
+source: 经典算法题
+description: |
+  给定 $n$ 个闭区间 $[l_i, r_i]$，请把所有**重叠或相接**的区间
+  合并成一个区间。
+
+  两个区间相互重叠或相接，当且仅当
+  $l_2 \le r_1$（在按左端点排好序后）。
+
+  输出合并后的区间列表，按左端点从小到大排列。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  接下来 $n$ 行，每行两个整数 $l_i$ 和 $r_i$。
+
+  **输出格式**
+
+  第一行一个整数 $k$，表示合并后的区间个数。
+  接下来 $k$ 行，每行两个整数，表示一个合并后的区间，
+  按左端点升序排列。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$0 \le l_i \le r_i \le 10^9$
+input_format: 第一行 n，接下来 n 行每行 l 和 r。
+output_format: 第一行 k，接下来 k 行每行一个合并后的区间。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4\n1 3\n2 6\n8 10\n15 18\n"
+    expected_output: "3\n1 6\n8 10\n15 18\n"
+    is_sample: true
+  - input: "2\n1 4\n4 5\n"
+    expected_output: "1\n1 5\n"
+    is_sample: true
+  - input: "3\n1 2\n3 4\n5 6\n"
+    expected_output: "3\n1 2\n3 4\n5 6\n"
+  - input: "1\n7 9\n"
+    expected_output: "1\n7 9\n"
+  - input: "3\n1 10\n2 3\n4 5\n"
+    expected_output: "1\n1 10\n"
+  - input: "5\n5 6\n1 2\n3 4\n7 8\n0 0\n"
+    expected_output: "5\n0 0\n1 2\n3 4\n5 6\n7 8\n"
+  - input: "3\n1 9\n2 10\n100 200\n"
+    expected_output: "2\n1 10\n100 200\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<pair<long long, long long>> segs(n);
+      for (int i = 0; i < n; ++i) cin >> segs[i].first >> segs[i].second;
+      sort(segs.begin(), segs.end());
+
+      vector<pair<long long, long long>> merged;
+      for (auto &s : segs) {
+          if (!merged.empty() && s.first <= merged.back().second) {
+              // "<= not <": an interval that merely touches the current
+              // one still merges into it.
+              merged.back().second = max(merged.back().second, s.second);
+          } else {
+              merged.push_back(s);
+          }
+      }
+
+      cout << merged.size() << '\n';
+      for (auto &s : merged) cout << s.first << ' ' << s.second << '\n';
+      return 0;
+  }
+eval_notes: |
+  本题由两条独立规则组成：**"相接也算重叠"** 和
+  **"合并后右端点要取最大值"**，两条都容易写错，而且错的症状不同。
+
+  第一类错误是把重叠判断写成严格小于 `s.first < merged.back().second`。
+  这样只有**真正接触**的区间才会被合并：$[1,4]$ 与 $[4,5]$ 会
+  输出成两段而不是 `1 5`。样例 2 专门覆盖这一点。
+  错因标签：boundary_condition / inverted_condition。
+
+  第二类错误是合并时把右端点**直接赋值**成新区间的右端点
+  （`merged.back().second = s.second;`）而不是取最大值。
+  本题恰好保证 $l_i \le r_i$ 且已按左端点排序，所以当出现
+  "被完整包含"的区间（如 $[1,10]$ 与 $[2,3]$）时，直接赋值会把
+  右端点从 10 缩小到 3。用例 `3 / 1 10 / 2 3 / 4 5` 专门覆盖它。
+  错因标签：missing_case。
+
+  第三类错误是**忘记按左端点排序**，直接在原顺序上合并。
+  这会让不相邻但实际重叠的区间漏合并，合并后的段数偏多。
+  错因标签：wrong_traversal。
+
+  第四类错误是**按右端点排序**（与区间调度的排序键混淆）。
+  按右端点排序时，只要有一个左端点很小的长区间排在后面，
+  前面已合并的部分就无法再吸收它，输出会多出若干段。
+  错因标签：wrong_algorithm。
+
+  第五类错误是输出格式：漏掉第一行的 $k$，或把区间输出成
+  `[1,6]` 这种带括号的形式。错因标签：io_format_error。
+
+  第六类错误是把 $l_i, r_i$ 存成 `int`：本题上界 $10^9$ 单个数仍在
+  `int` 内，比较与赋值都安全，所以**不暴露**；只有在需要计算
+  长度或求和时才会溢出。错因标签：overflow。

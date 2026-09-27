@@ -1,0 +1,128 @@
+id: p042-prime-factorization
+title: 质因数分解
+knowledge_tags:
+  - 数论
+  - 素数筛
+  - 循环
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个整数 $n$（$n \ge 2$），请把它分解为质因数的乘积，
+  并按**质因数从小到大**的顺序输出。
+
+  输出格式：若干个形如 `p^e` 的项，用 ` * `（空格、星号、空格）
+  连接。指数 $e = 1$ 时**也要写出** `^1`。
+
+  例如 $n = 360 = 2^3 \times 3^2 \times 5$，
+  输出为 `2^3 * 3^2 * 5^1`。
+
+  **输入格式**
+
+  一行，一个整数 $n$。
+
+  **输出格式**
+
+  一行，按上述格式输出分解结果。
+
+  **数据范围**
+
+  $2 \le n \le 10^{12}$
+input_format: 一行一个整数 n。
+output_format: 一行形如 p^e * p^e 的分解结果。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "12\n"
+    expected_output: "2^2 * 3^1\n"
+    is_sample: true
+  - input: "7\n"
+    expected_output: "7^1\n"
+    is_sample: true
+  - input: "1\n"
+    expected_output: "1\n"
+  - input: "2\n"
+    expected_output: "2^1\n"
+  - input: "1024\n"
+    expected_output: "2^10\n"
+  - input: "999999999989\n"
+    expected_output: "999999999989^1\n"
+  - input: "360\n"
+    expected_output: "2^3 * 3^2 * 5^1\n"
+  - input: "999983\n"
+    expected_output: "999983^1\n"
+
+correct_reference: |
+  #include <iostream>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      long long n;
+      cin >> n;
+
+      if (n == 1) {
+          // The only input with no prime factor at all; without this the
+          // loop below prints nothing.
+          cout << 1 << endl;
+          return 0;
+      }
+
+      bool first = true;
+      for (long long p = 2; p * p <= n; ++p) {
+          if (n % p != 0) continue;
+          int e = 0;
+          while (n % p == 0) {
+              n /= p;
+              ++e;
+          }
+          if (!first) cout << " * ";
+          cout << p << '^' << e;
+          first = false;
+      }
+      // Whatever is left after the loop is a prime larger than sqrt(n)
+      // (or 1, when n was a perfect power such as 1024 = 2^10).
+      if (n > 1) {
+          if (!first) cout << " * ";
+          cout << n << "^1";
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的核心考点是**循环结束后剩余的那个因子**，它有三种情况，
+  而漏掉其中任何一种都会得到"格式正确、内容不全"的输出。
+
+  第一类错误是**循环结束后忘记输出剩余的 $n$**。
+  试除循环最多除到 $\sqrt{n}$，如果一个质因数大于 $\sqrt{n}$
+  （例如 $n = 2 \times 999999999989$ 中的大素数），
+  它不会被循环取到，只能靠循环后的判断补上。漏掉时输出会
+  缺最后一项。用例 `999999999989`（本身是大素数）
+  会输出空行。错因标签：missing_case。
+
+  第二类错误是**循环条件写成 `p * p < n`**（少一个等号）：
+  当 $n$ 是完全平方数且平方根是素数时（例如 $n = 9$、
+  $n = 49$），最后那个因子会被当成"剩余的大素数"处理，
+  输出成 `3^1` 缺一次方——$n = 9$ 会输出 `3^1` 而不是 `3^2`。
+  错因标签：off_by_one / boundary_condition。
+
+  第三类错误是**把 $n = 1$ 的输出漏掉**：循环不执行、
+  剩余判断也不成立，输出空行。用例 `1` 专门覆盖它
+  （题面数据范围是 $n \ge 2$，但隐藏用例保留 1 以检验鲁棒性）。
+  错因标签：missing_case。
+
+  第四类错误是**指数 $e = 1$ 时省略了 `^1`**：输出 `7` 而不是
+  `7^1`。这是最常见的格式错误，样例 2 立刻暴露。错因标签：
+  io_format_error。
+
+  第五类错误是**分隔符处理不当**：在每一项后面都输出 ` * `，
+  末尾多出一个 ` * `；或者第一项前面多一个空格。
+  错因标签：io_format_error。
+
+  第六类错误是**没有把 $n$ 声明为 `long long`**（用 `int` 接收
+  $10^{12}$），读入时就已溢出成一个负数，`p * p <= n`
+  立即为假，输出只剩一个负数因子。错因标签：wrong_data_type。
+
+  第七类错误是**试除上界写成 `p <= n / 2`** 而不是
+  `p * p <= n`。$n = 10^{12}$ 时循环到 $5 \times 10^{11}$，
+  超时。错因标签：wrong_complexity。

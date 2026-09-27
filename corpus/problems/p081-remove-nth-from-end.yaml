@@ -1,0 +1,119 @@
+id: p081-remove-nth-from-end
+title: 删除链表倒数第 k 个节点
+knowledge_tags:
+  - 链表
+  - 双指针
+  - 边界处理
+difficulty: easy
+source: 经典算法题
+description: |
+  给定一个**单链表**，请删除**倒数第 $k$ 个**节点，并输出删除后链表中
+  剩余节点的值（按从头到尾的顺序）。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $k$。
+  第二行 $n$ 个整数，表示链表从头到尾每个节点的值。
+
+  **输出格式**
+
+  一行 $n - 1$ 个整数，表示删除后链表从头到尾的值，以空格分隔。
+
+  **数据范围**
+
+  $2 \le n \le 10^5$，$1 \le k \le n$（保证 $k$ 合法），
+  $-10^9 \le a_i \le 10^9$
+
+  **提示**
+
+  虽然本题用序列给出节点值，但请**按单链表的结构来思考**：
+  链表上无法直接知道长度，也不能随机访问下标。所谓"倒数第 $k$ 个"
+  需要用**两个相距 $k$ 的指针**一次性走出来，或者先走一遍统计长度。
+
+  用数组下标直接算 `n - k` 也能得到同样输出——**本题在判题上
+  无法区分"真的用了链表指针"和"用数组下标"**，这是输入输出形式
+  带来的不可观测性，写在此处以示说明。
+input_format: 第一行 n k，第二行 n 个整数表示链表节点值。
+output_format: 一行 n-1 个整数，删除后的链表值序列。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 2\n1 2 3 4 5\n"
+    expected_output: "1 2 3 5\n"
+    is_sample: true
+  - input: "5 5\n1 2 3 4 5\n"
+    expected_output: "2 3 4 5\n"
+    is_sample: true
+  - input: "5 1\n1 2 3 4 5\n"
+    expected_output: "1 2 3 4\n"
+  - input: "3 2\n1 2 3\n"
+    expected_output: "1 3\n"
+  - input: "2 1\n7 8\n"
+    expected_output: "7\n"
+  - input: "4 3\n1 2 3 4\n"
+    expected_output: "1 3 4\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, k;
+      cin >> n >> k;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+
+      // The node to drop is at index n - k. A linked list has no indices,
+      // so the two-pointer form is: advance `fast` k steps ahead of
+      // `slow`, then move both until `fast` runs off the end — `slow` is
+      // then exactly on the victim.
+      int victim = n - k;
+
+      bool first = true;
+      for (int i = 0; i < n; ++i) {
+          if (i == victim) continue;
+          if (!first) cout << ' ';
+          cout << a[i];
+          first = false;
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  这道题的经典解法是"快慢指针相距 $k$ 同时走"，它的全部难点在于
+  **删除的是头节点时没有前驱**这个边界。
+
+  第一类错误是**倒数第 $k$ 个的下标算成 `k`**（从前往后数了）。
+  样例 2（`5 5`）本应删掉第 1 个（`1`），错成删掉第 5 个（`5`），
+  输出 `1 2 3 4` 而不是 `2 3 4 5`。错因标签：off_by_one。
+
+  第二类错误是**下标算成 `n - k + 1`**。这比正确值多 1，删掉的是
+  倒数第 $k$ 个**后面**那个。样例 1（`5 2`，正确删 `4`）会删掉 `5`，
+  输出 `1 2 3 4`。错因标签：off_by_one。
+
+  第三类错误是**删除头节点（$k = n$）时崩溃**。链表写法里若要访问
+  "前驱节点"再改 `next`，头节点没有前驱，`prev->next` 解引用空指针
+  直接 RE。标准修法是加一个**哑节点（dummy head）**让它也有前驱。
+  样例 2（`k = n = 5`）专门覆盖这个。这是本题最重要的一处边界。
+  错因标签：boundary_condition。
+
+  第四类错误是**快指针先走 $k$ 步而不是 $k$ 步后停在与慢指针相距
+  $k$ 的位置**。若写成"快指针先走 $k-1$ 步"，两个指针间距少 1，
+  慢指针会停在待删节点的**后一个**。样例 3（`5 1`，应删 `5`）
+  会停在末尾之外，什么都没删，输出 `1 2 3 4 5`。错因标签：
+  off_by_one。
+
+  第五类错误是**输出时把被删节点也输出了**，或**少输出一个分隔符**。
+  前者长度变成 $n$，后者长度对但粘连。样例 5（`2 1`，输出单个数）
+  能区分"末尾多一个空格"的情形。错因标签：io_format_error。
+
+  第六类错误是**先遍历一次数长度、再遍历一次删节点**（两次遍历）。
+  答案完全正确，只是比一次遍历多走一趟；输出与快慢指针写法
+  **完全一致**，本题无法区分。属等价解法。错因标签：
+  wrong_complexity（认知层面，不构成判错）。
+
+  第七类错误是**用 `vector::erase` 按迭代器删除**。结果正确、
+  写法更短，但没有体现链表结构；本题输出一致，无法区分。
+  同样属等价解法。

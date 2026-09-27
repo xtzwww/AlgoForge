@@ -1,0 +1,122 @@
+id: p064-monotonic-stack-next-greater
+title: 下一个更大元素
+knowledge_tags:
+  - 栈
+  - 单调栈
+  - 数组
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的整数数组 $a$，对每个位置 $i$，
+  请找出它**右侧第一个比它大的元素**的值。
+
+  如果不存在这样的元素，输出 `-1`。
+
+  "右侧第一个比它大的元素"是指：满足 $j > i$ 且 $a_j > a_i$
+  的**最小**的 $j$ 所对应的 $a_j$。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行 $n$ 个整数，以空格分隔。第 $i$ 个数表示 $a_i$ 右侧
+  第一个比它大的元素；不存在则输出 `-1`。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$|a_i| \le 10^9$
+input_format: 第一行 n，第二行 n 个整数。
+output_format: 一行 n 个整数，以空格分隔。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4\n2 1 3 4\n"
+    expected_output: "3 3 4 -1\n"
+    is_sample: true
+  - input: "5\n5 4 3 2 1\n"
+    expected_output: "-1 -1 -1 -1 -1\n"
+    is_sample: true
+  - input: "1\n7\n"
+    expected_output: "-1\n"
+  - input: "4\n1 2 3 4\n"
+    expected_output: "2 3 4 -1\n"
+  - input: "5\n3 3 3 3 3\n"
+    expected_output: "-1 -1 -1 -1 -1\n"
+  - input: "6\n2 5 1 4 3 6\n"
+    expected_output: "5 6 4 6 6 -1\n"
+  - input: "3\n-1 0 -2\n"
+    expected_output: "0 -1 -1\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<long long> a(n + 1);
+      for (int i = 1; i <= n; ++i) cin >> a[i];
+
+      vector<long long> ans(n + 1, -1);
+      vector<int> stk;      // indices with strictly decreasing values
+      stk.reserve(n);
+
+      for (int i = 1; i <= n; ++i) {
+          // Strict ">": an equal value is NOT a "greater element", so
+          // equal elements stay on the stack and get popped later.
+          while (!stk.empty() && a[stk.back()] < a[i]) {
+              ans[stk.back()] = a[i];
+              stk.pop_back();
+          }
+          stk.push_back(i);
+      }
+
+      for (int i = 1; i <= n; ++i) {
+          if (i > 1) cout << ' ';
+          cout << ans[i];
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  单调栈的骨架只有五行，但"用 `<` 还是 `<=`"这一个符号决定了
+  相等元素是否被当成"更大"，而它在没有重复值的样例上完全不可见。
+
+  第一类错误是**弹出条件写成 `a[stk.back()] <= a[i]`**。
+  这会让相等的元素被当成"更大元素"：`3 3 3 3 3` 会输出
+  `3 3 3 3 -1` 而不是正确的 `-1 -1 -1 -1 -1`。
+  样例 1（`2 1 3 4`）与样例 2（严格递减）都**无法暴露**它——
+  这是本题刻意留下的陷阱。错因标签：inverted_condition。
+
+  第二类错误是**单调栈方向写反**（存递增序列而不是递减序列），
+  这样栈顶是当前最小值，永远匹配不到正确答案。错因标签：
+  wrong_traversal。
+
+  第三类错误是**在弹出时把答案记成 `a[stk.back()]`**
+  （记的是被弹出的元素本身而不是当前的 `a[i]`），
+  输出的是一个恒等于输入的值序列。错因标签：wrong_traversal。
+
+  第四类错误是**忘记把当前下标压栈**：所有元素都得不到答案，
+  输出全是 `-1`。错因标签：missing_case。
+
+  第五类错误是**双重循环暴力查找**：答案完全正确，
+  但严格递减的输入（样例 2）对每个位置都要扫到末尾，
+  总操作数 $n(n-1)/2$，$n = 10^5$ 时超时。
+  样例 2 恰好是这种最坏输入，而它同时也是"正确答案全是 -1"
+  的最简单情形——**错在这里的人会以为自己的暴力解很快**。
+  错因标签：wrong_complexity。
+
+  第六类错误是**输出 `-1` 时漏掉某些位置**（例如只在栈清空后
+  统一补 -1，但中途 break 掉了）。错因标签：boundary_condition。
+
+  第七类错误是**把 `ans` 初始化为 0 而不是 -1**，
+  于是"不存在"被打印成 0，与"答案是 0"无法区分。
+  用例 7 `-1 0 -2` 中第二个位置的真实答案是 `-1`，
+  与哨兵值撞车——这类"哨兵值恰好是合法值"的问题必须靠
+  初始化成不可能的值来避免。错因标签：uninitialized_state。

@@ -1,0 +1,123 @@
+id: p036-min-stack
+title: 常数时间取最小值
+knowledge_tags:
+  - 栈
+  - 数据结构
+  - 模拟
+difficulty: medium
+source: 经典算法题
+description: |
+  请实现一个支持以下操作的栈：
+
+  - `push x` —— 把整数 $x$ 压入栈顶；
+  - `pop` —— 弹出栈顶元素（题目保证此时栈非空）；
+  - `top` —— 输出栈顶元素（不弹出，保证栈非空）；
+  - `min` —— 输出当前栈中的最小元素（不弹出，保证栈非空）。
+
+  操作序列以 $q$ 条指令的形式给出，按顺序执行。
+  每当指令是 `top` 或 `min` 时，输出一行结果。
+
+  **输入格式**
+
+  第一行一个整数 $q$。
+  接下来 $q$ 行，每行一条指令，形如上面四种之一。
+
+  **输出格式**
+
+  按出现顺序，为每条 `top` 或 `min` 指令输出一行结果。
+
+  **数据范围**
+
+  $1 \le q \le 10^5$，$|x| \le 10^9$，
+  保证所有 `pop` / `top` / `min` 指令执行时栈非空
+input_format: 第一行 q，接下来 q 行每条指令。
+output_format: 按顺序为每条 top / min 指令输出一行。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "8\npush 3\npush 1\nmin\ntop\npop\nmin\ntop\npush 0\n"
+    expected_output: "1\n1\n3\n3\n"
+    is_sample: true
+  - input: "3\npush -5\nmin\ntop\n"
+    expected_output: "-5\n-5\n"
+    is_sample: true
+  - input: "4\npush 2\npush 2\nmin\npop\n"
+    expected_output: "2\n"
+  - input: "5\npush -1\npush -1\nmin\npop\nmin\n"
+    expected_output: "-1\n-1\n"
+  - input: "7\npush 5\npush 3\npush 4\nmin\npop\nmin\npush 9\n"
+    expected_output: "3\n3\n"
+  - input: "2\npush 0\nmin\n"
+    expected_output: "0\n"
+  - input: "4\npush 1\npush -2\npush -3\nmin\n"
+    expected_output: "-3\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <stack>
+  #include <string>
+  #include <algorithm>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int q;
+      cin >> q;
+      stack<long long> st;
+      // Parallel stack of "smallest value from the bottom up to here".
+      // Pushing min(x, minStack.top()) keeps the running minimum correct
+      // even when x is larger than everything below it.
+      stack<long long> minSt;
+      while (q--) {
+          string op;
+          cin >> op;
+          if (op == "push") {
+              long long x;
+              cin >> x;
+              st.push(x);
+              minSt.push(minSt.empty() ? x : min(x, minSt.top()));
+          } else if (op == "pop") {
+              st.pop();
+              minSt.pop();
+          } else if (op == "top") {
+              cout << st.top() << '\n';
+          } else {
+              cout << minSt.top() << '\n';
+          }
+      }
+      return 0;
+  }
+eval_notes: |
+  本题把"辅助结构要跟着主结构同步进退"这件事讲清楚了，也是
+  "重复元素"这类边界最容易被忽视的地方。
+
+  第一类错误是**只在 `x` 小于当前最小值时才压入辅助栈**。
+  这是本题最经典的错误：当栈中最小值被 `pop` 掉之后，辅助栈顶
+  是**更早的那个最小值**，但如果最小元素在栈里出现了多次，
+  辅助栈里只有一份记录，`pop` 之后 `min` 会返回一个错误的值。
+  用例 `push -1 / push -1 / min / pop / min` 专门覆盖它：
+  正确答案两次都是 -1，错误实现第二次会输出空栈或未定义值。
+  错因标签：missing_case / duplicate_handling。
+
+  第二类错误是 `push` 时**无条件压入 `x` 但 `min` 直接读
+  `minSt.top()`**，也就是把辅助栈当成了普通栈——`min` 返回的
+  是最后压入的数而不是最小值。错因标签：wrong_algorithm。
+
+  第三类错误是**每次 `min` 都遍历整个栈求最小值**。答案完全
+  正确，只是 $q = 10^5$、栈深 $10^5$ 时总操作数达到 $10^{10}$，
+  会超时。这类错误的特点是"小数据全对、大数据 TLE"。
+  错因标签：wrong_complexity。
+
+  第四类错误是**把 `pop` 写成了 `top` + `pop` 两次**，
+  或反过来漏掉一次弹出，使主栈与辅助栈深度不再同步：
+  之后每一轮的 `top` / `min` 都全体错位一格。错因标签：
+  uninitialized_state / off_by_one。
+
+  第五类错误是**初始化最小值写成 0 或 INT_MAX**：若把 0 当
+  初始最小值，`push 1` 之后 `min` 会输出 0（一个不在栈里的值）。
+  空栈时把哨兵值当答案是本题的隐藏陷阱之一，正确做法是用
+  第一个压入的元素初始化。错因标签：uninitialized_state。
+
+  第六类错误是读指令用 `cin >> op` 之后按字符比较（`op[0] == 'p'`），
+  使 `push` 与 `pop` 混淆。错因标签：io_format_error。

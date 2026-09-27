@@ -1,0 +1,145 @@
+id: p090-word-search
+title: 单词搜索（网格中找路径）
+knowledge_tags:
+  - 二维网格
+  - 深度优先搜索
+  - 回溯
+  - 递归
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个 $n \times m$ 的字符网格和一个单词，请判断该单词能否在
+  网格中通过**相邻单元格**连接而成。
+
+  规则：
+
+  - 从任意一个单元格出发，每一步只能走到**上下左右**相邻的单元格；
+  - 路径上的字符依次连起来必须恰好等于该单词；
+  - **同一个单元格在一条路径中不能重复使用**。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$。
+  接下来 $n$ 行，每行一个长度为 $m$ 的**不含空格**的字符串。
+  最后一行是要查找的单词（只含字母，不含空格）。
+
+  **输出格式**
+
+  一行，若存在这样的路径输出 `1`，否则输出 `0`。
+
+  **数据范围**
+
+  $1 \le n, m \le 6$，单词长度 $\le 36$，字符只含大小写英文字母
+input_format: 第一行 n m，接下来 n 行网格，最后一行单词。
+output_format: 一行输出 1（存在）或 0（不存在）。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 4\nABCE\nSFCS\nADEE\nABCCED\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "3 4\nABCE\nSFCS\nADEE\nABCB\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "3 4\nABCE\nSFCS\nADEE\nSEE\n"
+    expected_output: "1\n"
+  - input: "1 1\nA\nA\n"
+    expected_output: "1\n"
+  - input: "1 1\nA\nB\n"
+    expected_output: "0\n"
+  - input: "2 2\nAB\nBA\nABA\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  int n, m;
+  vector<string> g;
+  string w;
+  // Marks cells belonging to the path currently being explored. A separate
+  // visited array (rather than overwriting g with ' ') is what makes the
+  // un-marking on the way out unambiguous.
+  vector<vector<int>> vis;
+
+  int dr[4] = {-1, 1, 0, 0};
+  int dc[4] = {0, 0, -1, 1};
+
+  bool dfs(int r, int c, int k) {
+      if (k == (int)w.size()) return true;
+      for (int d = 0; d < 4; ++d) {
+          int nr = r + dr[d], nc = c + dc[d];
+          if (nr < 0 || nr >= n || nc < 0 || nc >= m) continue;
+          if (vis[nr][nc]) continue;
+          if (g[nr][nc] != w[k]) continue;
+          vis[nr][nc] = 1;
+          if (dfs(nr, nc, k + 1)) return true;
+          vis[nr][nc] = 0;  // backtrack: the cell is free for other paths
+      }
+      return false;
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      cin >> n >> m;
+      g.resize(n);
+      for (int i = 0; i < n; ++i) cin >> g[i];
+      cin >> w;
+
+      vis.assign(n, vector<int>(m, 0));
+      for (int r = 0; r < n; ++r) {
+          for (int c = 0; c < m; ++c) {
+              if (g[r][c] != w[0]) continue;
+              // Seed with the first character; dfs matches from index 1.
+              vis[r][c] = 1;
+              if (dfs(r, c, 1)) {
+                  cout << 1 << endl;
+                  return 0;
+              }
+              vis[r][c] = 0;
+          }
+      }
+      cout << 0 << endl;
+      return 0;
+  }
+eval_notes: |
+  这题的错误集中在"访问标记"的处理上——它是回溯，不是普通 DFS。
+
+  第一类错误是**忘记回溯时取消标记**（`vis[nr][nc] = 0` 没写）。
+  一条路径走不通后，它经过的格子仍被标记为已访问，于是**后续的
+  起点无法再经过这些格子**，大量本应存在的路径被判为不存在。
+  样例 3（`SEE`）专门覆盖这个：从 `S` 出发的一条失败路径会把
+  格子占住，导致另一条正确路径走不通。这是本题最核心的一处。
+  错因标签：uninitialized_state（状态未回滚）。
+
+  第二类错误是**边界判断放在数组访问之后**（先 `g[nr][nc]` 再判
+  越界）。在 C++ 中这是未定义行为，通常表现为 RE 或读到垃圾值。
+  样例 5（`1 1` 网格找 `B`）会在第一步就越界。错因标签：
+  boundary_condition。
+
+  第三类错误是**把"不能重复使用"这条规则漏掉**（没有 `vis`）。
+  于是在网格里可以来回走，同一个格子用多次。样例 2（`ABCB`）
+  本应输出 0（走到 `C` 后需要再回 `B`，但 `B` 已用过），
+  没有 `vis` 时会错成 1。样例 2 专门覆盖这个。错因标签：
+  missing_case。
+
+  第四类错误是**起点没有标记就进入 DFS**。第一个格子会被
+  DFS 的邻居遍历再次访问到（因为它也是某个邻居的邻居），
+  于是单词的前两个字符可能取自同一个格子。样例 4
+  （`1 1` 网格 `A` 找 `A`）侥幸通过（长度 1，直接返回 true），
+  但样例 6（`2 2` 网格找 `ABA`）会出错。错因标签：
+  uninitialized_state。
+
+  第五类错误是**找到即返回时没有提前退出主循环**（`dfs` 返回
+  true 但主循环继续，最后输出被覆盖）。表现为"存在却输出 0"。
+  样例 1 会错。错因标签：wrong_traversal。
+
+  第六类错误是**把 `vis` 复用成"是否搜索过"而不是"是否在当前
+  路径上"**。前者会永久标记，等价于第一类错误；
+  后者才是回溯要求的语义。错因标签：wrong_algorithm。
+
+  第七类错误是**单词长度为 0 时崩溃**。题目保证单词非空
+  （长度 $\ge 1$），所以**不会发生**——这是约束有意封住的坑。
+  错因标签：missing_case（认知层面）。

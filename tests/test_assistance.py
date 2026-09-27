@@ -13,7 +13,12 @@
 
 from __future__ import annotations
 
+from typing import Iterator
+
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.assistance import (
     DEFAULT_ASSISTANCE_LEVEL,
@@ -36,6 +41,30 @@ from app.models.assistance_usage import (
     ACTION_FULL_SOLUTION,
     ACTION_INSERT,
 )
+from app.models.base import Base
+
+
+@pytest.fixture
+def engine():
+    """内存库。StudentPreference 是全局表，建表用同一套 metadata。"""
+    eng = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(eng)
+    yield eng
+    eng.dispose()
+
+
+@pytest.fixture
+def asg_session(engine) -> Iterator[Session]:
+    SessionLocal = sessionmaker(engine, expire_on_commit=False)
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def test_合法档位原样返回():
@@ -229,3 +258,146 @@ def test_描述不为空_两端要显示同一句话():
 @pytest.mark.parametrize("level", [1, 2, 3, 4, 5])
 def test_每一档都能取出策略且不会异常(level: int):
     assert policy_for(level).level == level
+
+
+# ---------------------------------------------------------------------------
+# 学生意愿 × 老师上限（阶段 5 补）
+#
+# ``effective_level`` 是全项目唯一的安全不变量所在：学生只能收紧、不能放宽。
+# 弄错的后果是**静默提权**——学生在老师压到"只给提示"的题目上拿到完整解法，
+# 而界面上显示的档位是对的，日志里也没有异常。所以这一组必须直接钉住
+# min() 语义，而不是靠接口间接观察。
+# ---------------------------------------------------------------------------
+
+def _make_assignment(session: Session, level: int) -> int:
+    from app.models.assignment import Assignment
+
+    row = Assignment(title="t", description="d", assistance_level=level)
+    session.add(row)
+    session.commit()
+    return row.id
+
+
+def test_没选过意愿时生效档位就是老师上限(asg_session: Session):
+    from app.assistance_service import effective_level, student_preference
+
+    asg = _make_assignment(asg_session, 4)
+    # None 与"选了某一档"是两种状态，不能混。
+    assert student_preference(asg_session, 1, asg) is None
+    assert effective_level(asg_session, 1, asg) == 4
+
+
+def test_学生往下调立刻生效(asg_session: Session):
+    from app.assistance_service import effective_level, set_student_preference
+
+    asg = _make_assignment(asg_session, 5)
+    assert set_student_preference(asg_session, 1, asg, 2) == 2
+    assert effective_level(asg_session, 1, asg) == 2
+
+
+def test_学生想往上调会被老师上限压住(asg_session: Session):
+    """安全不变量：学生永远拿不到高于老师上限的档位。
+
+    注意存下去的是**夹过之后**的值，所以这条同时钉住了"写入时就夹"。
+    """
+    from app.assistance_service import effective_level, student_preference, set_student_preference
+
+    asg = _make_assignment(asg_session, 2)
+    set_student_preference(asg_session, 1, asg, 5)
+    assert student_preference(asg_session, 1, asg) == 2
+    assert effective_level(asg_session, 1, asg) == 2
+
+
+def test_越界意愿落到默认档而不是钳到边界(asg_session: Session):
+    """与 normalize_level 同一条规则：0 不该变 1、99 不该变 5。"""
+    from app.assistance_service import effective_level, set_student_preference
+
+    asg = _make_assignment(asg_session, 5)
+    set_student_preference(asg_session, 1, asg, 99)
+    assert effective_level(asg_session, 1, asg) == DEFAULT_ASSISTANCE_LEVEL
+    set_student_preference(asg_session, 1, asg, 0)
+    assert effective_level(asg_session, 1, asg) == DEFAULT_ASSISTANCE_LEVEL
+
+
+def test_清除意愿回到老师上限(asg_session: Session):
+    from app.assistance_service import effective_level, student_preference, set_student_preference
+
+    asg = _make_assignment(asg_session, 5)
+    set_student_preference(asg_session, 1, asg, 2)
+    assert set_student_preference(asg_session, 1, asg, None) is None
+    assert student_preference(asg_session, 1, asg) is None
+    assert effective_level(asg_session, 1, asg) == 5
+
+
+def test_老师后来压低上限时旧的意愿不会把它顶回去(asg_session: Session):
+    """这是"写入时夹"的真正理由。
+
+    若读取时才夹，学生存的 5 在老师从 5 降到 2 之后仍会算出 min(2,5)=2 —— 这条
+    恰好也对。真正的差别在下一条：老师**抬高**上限时，学生没表态的题目应当
+    跟着放开，而学生明确表过态的题目不该被静默放宽。
+    """
+    from app.assistance_service import effective_level, set_student_preference
+
+    asg = _make_assignment(asg_session, 5)
+    set_student_preference(asg_session, 1, asg, 2)
+    # 老师把上限从 5 压到 1
+    from app.models.assignment import Assignment
+
+    asg_session.get(Assignment, asg).assistance_level = 1
+    asg_session.commit()
+    assert effective_level(asg_session, 1, asg) == 1
+
+
+def test_两个学生互不影响(asg_session: Session):
+    from app.assistance_service import effective_level, set_student_preference
+
+    asg = _make_assignment(asg_session, 5)
+    set_student_preference(asg_session, 1, asg, 1)
+    set_student_preference(asg_session, 2, asg, 4)
+    assert effective_level(asg_session, 1, asg) == 1
+    assert effective_level(asg_session, 2, asg) == 4
+
+
+def test_重复写同一格是更新不是插入(asg_session: Session):
+    """唯一约束在 (student_id, assignment_id)。撞约束的话接口会 500。"""
+    from app.assistance_service import effective_level, set_student_preference
+
+    asg = _make_assignment(asg_session, 5)
+    for level in (4, 3, 2, 1, 3):
+        set_student_preference(asg_session, 1, asg, level)
+    assert effective_level(asg_session, 1, asg) == 3
+
+
+def test_自由练习走NULL作业且与具体作业互不串味(asg_session: Session):
+    """自由练习的 assignment_id 是 NULL，必须用 .is_(None) 比，不能用 == None。
+
+    自由练习**没有老师授权**，所以上限是服务端默认档（3），而不是"无上限"。
+    于是学生即使存了 4，生效值也只到 3 —— 这不是 bug，是"没人批准过更高的
+    强度"的正确表现。这条同时证明了 NULL 行确实被读到了（若被忽略，生效值
+    会退回 3 也恰好相等），所以先断言**存下去的值**是 3 而不是 4。
+    """
+    from app.assistance_service import (
+        effective_level,
+        set_student_preference,
+        student_preference,
+    )
+
+    asg = _make_assignment(asg_session, 5)
+    set_student_preference(asg_session, 1, asg, 1)
+    set_student_preference(asg_session, 1, None, 4)
+    # 具体作业上是 1
+    assert effective_level(asg_session, 1, asg) == 1
+    # 自由练习：写入时被夹到自由练习的上限 3
+    assert student_preference(asg_session, 1, None) == 3
+    assert effective_level(asg_session, 1, None) == 3
+
+
+def test_自由练习的下调是有效的(asg_session: Session):
+    """上一条只证明了"被夹"，这条证明 NULL 那一行真的参与裁决。"""
+    from app.assistance_service import effective_level, set_student_preference
+
+    asg = _make_assignment(asg_session, 5)
+    set_student_preference(asg_session, 1, None, 1)
+    assert effective_level(asg_session, 1, None) == 1
+    # 而具体作业仍然走它自己的上限（默认 5，没存过意愿）
+    assert effective_level(asg_session, 1, asg) == 5

@@ -1,0 +1,117 @@
+id: p077-binary-search-lower-bound
+title: 二分查找左边界（第一个不小于 x 的位置）
+knowledge_tags:
+  - 二分
+  - 数组
+  - 边界处理
+difficulty: easy
+source: 经典算法题
+description: |
+  给定一个**升序排列**（允许重复）的整数数组和一个值 $x$，请找出数组中
+  **第一个大于或等于 $x$** 的元素下标（下标从 $0$ 开始）。
+
+  如果所有元素都小于 $x$，输出 $n$（即"应当插入的位置"）。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数，已按升序排列，以空格分隔。
+  第三行一个整数 $x$。
+
+  **输出格式**
+
+  一行，一个整数，表示第一个 $\ge x$ 的元素下标。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$-10^9 \le a_i, x \le 10^9$
+
+  **提示**
+
+  注意与"找某个值的下标"区分：本题即使数组里**有**等于 $x$ 的元素，
+  要的也是**最左边那个**；如果**没有**等于 $x$ 的元素，要的是插入位置，
+  而不是 `-1`。
+input_format: 第一行 n，第二行 n 个升序整数，第三行 x。
+output_format: 一行一个整数，第一个 >= x 的下标，或 n。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "6\n1 2 2 2 3 4\n2\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "6\n1 2 2 2 3 4\n5\n"
+    expected_output: "6\n"
+    is_sample: true
+  - input: "6\n1 2 2 2 3 4\n1\n"
+    expected_output: "0\n"
+  - input: "3\n1 1 1\n1\n"
+    expected_output: "0\n"
+  - input: "3\n1 1 1\n2\n"
+    expected_output: "3\n"
+  - input: "5\n2 4 6 8 10\n7\n"
+    expected_output: "3\n"
+  - input: "4\n-10 -5 0 5\n-100\n"
+    expected_output: "0\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      long long x;
+      cin >> x;
+
+      // Half-open invariant: the answer is always in [lo, hi]. hi starts
+      // at n — a value the answer may legitimately take (x greater than
+      // every element) — so it must be reachable, unlike in a plain
+      // "does x exist" search where hi is n - 1.
+      int lo = 0, hi = n;
+      while (lo < hi) {
+          int mid = lo + (hi - lo) / 2;
+          if (a[mid] >= x) hi = mid;
+          else lo = mid + 1;
+      }
+      // lo == hi here, and that value is the lower bound.
+      cout << lo << endl;
+      return 0;
+  }
+eval_notes: |
+  这道题和标准二分的差别只在"找到等于 $x$ 时不停止，而是继续往左挤"，
+  所以错误几乎全部来自把上一题的写法直接搬过来。
+
+  第一类错误是**右端点初始化为 `n - 1`**。这样答案 $n$（所有元素都
+  小于 $x$）永远取不到：循环收敛到 `n - 1`，输出 $n-1$ 而不是 $n$。
+  样例 2（`1 2 2 2 3 4` 找 `5`）专门覆盖这个。这是本题最典型的错。
+  错因标签：boundary_condition。
+
+  第二类错误是**循环条件写成 `while (lo <= hi)`**（沿用闭区间写法）。
+  配合 `hi = mid` 会死循环：当 `lo == hi` 时 `mid == lo`，若
+  `a[mid] >= x` 则 `hi = mid` 不变，无限循环。表现为 TLE。错因标签：
+  boundary_condition。
+
+  第三类错误是**判断条件写成 `a[mid] > x`**（严格大于）。这找的是
+  "第一个严格大于 $x$ 的位置"而不是"第一个 $\ge x$ 的位置"，
+  于是数组中**存在**等于 $x$ 的元素时会跳过它。样例 1（找 `2`，
+  正确答案是下标 1）会输出 4。错因标签：inverted_condition。
+
+  第四类错误是**输出 `hi` 而不是 `lo`**。循环结束时两者相等，所以
+  **输出哪个都一样**——这是等价写法，不构成错误。有人误以为有区别
+  是没想清楚不变式。
+
+  第五类错误是**把 `lo = mid + 1` 写成 `lo = mid`**。当 `mid == lo`
+  且 `a[mid] < x` 时 `lo` 不变，死循环。表现为 TLE。错因标签：
+  wrong_traversal。
+
+  第六类错误是**用线性扫描找第一个 $\ge x$ 的位置**。答案正确、
+  $O(n)$，本题 $n = 10^5$ 不会超时，属等价解法而非错误。错因标签：
+  wrong_complexity（认知层面，不构成判错）。
+
+  第七类错误是**误以为答案一定是数组中真实存在的下标**，于是在输出
+  $n$ 时额外做"找不到就输出 -1"的处理。题目明确要求输出 $n$。
+  错因标签：misread_problem。

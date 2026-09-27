@@ -1,0 +1,157 @@
+id: p065-binary-search-answer
+title: 分割数组的最大值最小化
+knowledge_tags:
+  - 二分
+  - 贪心
+  - 复杂度分析
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个长度为 $n$ 的**非负**整数数组 $a$ 和一个整数 $m$，
+  请把数组**按原顺序**分成 $m$ 个**非空**连续段，
+  使得这 $m$ 段各自的元素和之中，**最大值尽可能小**。
+
+  输出这个最小的最大段和。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$，以空格分隔。
+  第二行 $n$ 个整数 $a_1, a_2, \dots, a_n$，以空格分隔。
+
+  **输出格式**
+
+  一行，一个整数，表示最小的最大段和。
+
+  **数据范围**
+
+  $1 \le m \le n \le 10^5$，$0 \le a_i \le 10^9$
+
+  **提示**
+
+  答案一定不小于数组中的**最大单个元素**（那一段至少要包含它），
+  也不大于**数组总和**。
+
+  答案最大可达 $10^{14}$，请使用 `long long`。
+input_format: 第一行 n 和 m，第二行 n 个整数。
+output_format: 一行一个整数，最小的最大段和。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 2\n7 2 5 10 8\n"
+    expected_output: "18\n"
+    is_sample: true
+  - input: "5 1\n1 2 3 4 5\n"
+    expected_output: "15\n"
+    is_sample: true
+  - input: "1 1\n9\n"
+    expected_output: "9\n"
+  - input: "4 4\n1 2 3 4\n"
+    expected_output: "4\n"
+  - input: "5 3\n0 0 0 0 0\n"
+    expected_output: "0\n"
+  - input: "6 3\n1 4 4 4 4 1\n"
+    expected_output: "8\n"
+  - input: "3 2\n1000000000 1000000000 1000000000\n"
+    expected_output: "2000000000\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <algorithm>
+  using namespace std;
+
+  // Can we split the array into at most `m` segments so that no segment
+  // exceeds `limit`? Greedy: keep adding to the current segment until
+  // adding the next element would exceed `limit`, then cut.
+  bool feasible(const vector<long long> &a, long long m, long long limit) {
+      long long segments = 1;
+      long long cur = 0;
+      for (long long x : a) {
+          if (cur + x <= limit) {
+              cur += x;
+          } else {
+              ++segments;
+              cur = x;
+          }
+      }
+      return segments <= m;
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      long long m;
+      cin >> n >> m;
+      vector<long long> a(n);
+      long long lo = 0, hi = 0;
+      for (int i = 0; i < n; ++i) {
+          cin >> a[i];
+          lo = max(lo, a[i]);   // a single element cannot be split
+          hi += a[i];
+      }
+
+      // Binary search on the ANSWER, not on an index. `lo` is feasible
+      // by construction (m >= 2 lets every over-limit element stand
+      // alone), so the search shrinks [lo, hi] toward the first
+      // feasible value.
+      while (lo < hi) {
+          long long mid = lo + (hi - lo) / 2;
+          if (feasible(a, m, mid)) {
+              hi = mid;
+          } else {
+              lo = mid + 1;
+          }
+      }
+      cout << lo << endl;
+      return 0;
+  }
+eval_notes: |
+  本题是"二分答案"的教科书样本：答案不来自数组下标，
+  而是来自一个**单调可判定的性质**。它的错误也集中在
+  "二分的边界"和"判定函数"两侧。
+
+  第一类错误是**下界 `lo` 设成 0 或 `hi` 设成最大值**。
+  `lo` 必须至少是**最大单个元素**——那一段无论如何都包含它，
+  不可能更小。若 `lo = 0`，二分可能收敛到一个不可行的值，
+  输出偏小。错因标签：boundary_condition / initialization。
+
+  第二类错误是**判定函数用"分段数恰好等于 $m$"而不是
+  "不超过 $m$"**。贪心得到的段数总是不超过 $m$
+  （段数多说明限制更严），用"恰好等于"会让真实可行的
+  判定被误判为不可行，输出偏大。
+  用例 `6 3 / 1 4 4 4 4 1` 的正确答案是 **8**：
+  限制 5、6、7 都无法用 3 段装下（总和 18，三段平均 6，
+  但 `4 4` 这种组合会超），只有 8 可行 —— `1 4 / 4 4 / 4 1`。
+  错因标签：inverted_condition。
+
+  关于用例 `5 1 / 1 2 3 4 5`：$m = 1$ 时只能分成一整段，
+  答案是总和 15。这组数据同时检验了"上界应当是总和"这一点
+  ——若把上界设成最大值 5，二分永远不会收敛到 15。
+
+  第三类错误是**判定函数的贪心里写成 `cur + x < limit`**
+  （严格小于）。这会把"恰好等于上限"也判成需要切段，
+  段数偏多，同样让结果偏大。错因标签：inverted_condition。
+
+  第四类错误是**二分写法把区间更新搞错**：`lo = mid` 而不是
+  `lo = mid + 1`，在 `lo + 1 == hi` 时 `mid == lo`，循环永不终止。
+  错因标签：infinite_loop / off_by_one。
+
+  第五类错误是**返回 `hi` 而不是 `lo`**。循环结束时两者相等，
+  本题中无害；但若循环条件写成 `while (lo <= hi)` 并
+  各自收缩，返回哪个就要看具体写法。属于"靠巧合正确"。
+  错因标签：wrong_traversal。
+
+  第六类错误是**用 DP `dp[i][j]` 表示前 $i$ 个数分 $j$ 段**。
+  答案正确，但状态数是 $n \times m = 10^{10}$，内存与时间都爆掉。
+  错因标签：wrong_complexity。
+
+  第七类错误是**`lo`、`hi`、`mid`、段和都声明成 `int`**：
+  $n = 10^5$、$a_i = 10^9$ 时总和达 $10^{14}$，严重溢出。
+  用例 7 的三个 $10^9$ 就会让 `int` 版本出错。错因标签：overflow。
+
+  第八类错误是**忽略负数**：本题保证 $a_i \ge 0$，
+  贪心判定才成立（负数会让"越加越小"，前缀和不单调）。
+  若实现里假设了单调性却没意识到这个前提，遇到允许负数的
+  变体就会失效。错因标签：misread_problem。

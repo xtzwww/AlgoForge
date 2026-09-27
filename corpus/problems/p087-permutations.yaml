@@ -1,0 +1,130 @@
+id: p087-permutations
+title: 全排列（按字典序输出）
+knowledge_tags:
+  - 回溯
+  - 深度优先搜索
+  - 枚举
+  - 递归
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个**不含重复元素**的整数序列，请输出它的所有排列。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数，以空格分隔（保证互不相同）。
+
+  **输出格式**
+
+  输出所有排列，**每行一个**排列，同一行内的数用空格分隔。
+  排列之间要求按**字典序**排列（逐位比较，小的在前）。
+
+  **数据范围**
+
+  $1 \le n \le 8$，$-10^9 \le a_i \le 10^9$
+
+  **提示**
+
+  字典序由**输入序列排序后**的次序决定：先把输入的数从小到大排序，
+  再按"每一位从小到大尝试"的顺序生成，得到的就是字典序。
+input_format: 第一行 n，第二行 n 个互不相同的整数。
+output_format: 每行一个排列，按字典序输出。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3\n1 2 3\n"
+    expected_output: "1 2 3\n1 3 2\n2 1 3\n2 3 1\n3 1 2\n3 2 1\n"
+    is_sample: true
+  - input: "1\n5\n"
+    expected_output: "5\n"
+    is_sample: true
+  - input: "2\n1 2\n"
+    expected_output: "1 2\n2 1\n"
+  - input: "3\n3 1 2\n"
+    expected_output: "1 2 3\n1 3 2\n2 1 3\n2 3 1\n3 1 2\n3 2 1\n"
+  - input: "2\n9 -3\n"
+    expected_output: "-3 9\n9 -3\n"
+  - input: "3\n-1 -2 -3\n"
+    expected_output: "-3 -2 -1\n-3 -1 -2\n-2 -3 -1\n-2 -1 -3\n-1 -3 -2\n-1 -2 -3\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  int n;
+  vector<long long> a;
+  vector<int> used;
+  vector<long long> cur;
+
+  void dfs() {
+      if ((int)cur.size() == n) {
+          for (int i = 0; i < n; ++i) {
+              if (i) cout << ' ';
+              cout << cur[i];
+          }
+          cout << '\n';
+          return;
+      }
+      // Trying candidates in sorted order is what produces lexicographic
+      // output for free — no explicit sort of the results is needed.
+      for (int i = 0; i < n; ++i) {
+          if (used[i]) continue;
+          used[i] = 1;
+          cur.push_back(a[i]);
+          dfs();
+          cur.pop_back();
+          used[i] = 0;  // the undo that makes this backtracking, not
+      }                 // merely recursion
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      cin >> n;
+      a.resize(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      // Sorting the input first is what makes "try in index order" equal
+      // to "try in ascending order".
+      sort(a.begin(), a.end());
+      used.assign(n, 0);
+      dfs();
+      return 0;
+  }
+eval_notes: |
+  回溯的两个动作——**做选择**和**撤销选择**——必须成对出现。
+  这题的错误几乎全是撤销没写对。
+
+  第一类错误是**忘记撤销 `used[i] = 0`**。第一个排列能生成，
+  之后所有位置都被标记为已用，DFS 无法继续，最终**只输出一个
+  排列**。样例 1 会只输出 `1 2 3`。这是最典型的一处。
+  错因标签：uninitialized_state（状态未回滚）。
+
+  第二类错误是**忘记 `cur.pop_back()`**。路径只增不减，
+  `cur.size()` 永远达不到 $n$ 的正确终止判断会在错误时机触发，
+  输出长度混乱或崩溃。错因标签：wrong_traversal。
+
+  第三类错误是**没有先排序**就按输入顺序生成。样例 4
+  （输入 `3 1 2`）会输出以 `3` 开头的排列在前，与要求的字典序
+  不符。注意此时**排列的集合是对的**，只是顺序不对——这类错误
+  只能通过严格比对输出顺序发现。错因标签：wrong_algorithm
+  （顺序层面）。
+
+  第四类错误是**用 `swap` 的原地排列法但不还原**。`swap` 之后
+  递归返回时没有换回来，数组状态被破坏，后续分支重复或遗漏。
+  错因标签：uninitialized_state。
+
+  第五类错误是**用 `next_permutation` 循环**。这**完全正确**
+  且同样需要先排序，输出与手写回溯一致，本题无法区分。
+  属等价解法。错因标签：无（不构成错误）。
+
+  第六类错误是**终止条件写成 `cur.size() == n - 1`**。
+  每个排列少一位，样例 2（$n=1$）会输出**空行**而不是 `5`。
+  错因标签：off_by_one。
+
+  第七类错误是**认为"不含重复元素"所以不需要 `used` 数组，
+  改用"当前排列里有没有这个数"来判断**。答案仍然正确，
+  只是每次判断是 $O(n)$，总复杂度多一个 $n$ 因子；本题
+  $n \le 8$ 完全不会超时，属等价解法。错因标签：
+  wrong_complexity（认知层面，不构成判错）。

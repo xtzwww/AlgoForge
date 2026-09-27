@@ -1,0 +1,121 @@
+id: p073-kmp-substring-count
+title: 子串出现次数（KMP）
+knowledge_tags:
+  - 字符串
+  - KMP
+  - 双指针
+  - 复杂度分析
+difficulty: hard
+source: 经典算法题
+description: |
+  给定两个字符串 $s$ 和 $p$，请统计 $p$ 在 $s$ 中作为**连续子串**
+  出现了多少次（允许重叠）。
+
+  **输入格式**
+
+  第一行一个字符串 $s$。
+  第二行一个字符串 $p$。
+
+  两个字符串都只含小写英文字母，长度不超过 $10^5$。
+
+  **输出格式**
+
+  一行，一个整数，表示出现次数。
+
+  **数据范围**
+
+  $1 \le |p| \le |s| \le 10^5$
+
+  **提示**
+
+  **允许重叠**。例如 $s = $ `aaa`、$p = $ `aa` 时，出现 2 次
+  （下标 0 和下标 1 各一次）。
+input_format: 第一行字符串 s，第二行字符串 p。
+output_format: 一行一个整数，出现次数。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "hello\nll\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "aaa\naa\n"
+    expected_output: "2\n"
+    is_sample: true
+  - input: "abc\nabc\n"
+    expected_output: "1\n"
+  - input: "abc\nabcd\n"
+    expected_output: "0\n"
+  - input: "abababa\naba\n"
+    expected_output: "3\n"
+  - input: "aaaaaaa\naa\n"
+    expected_output: "6\n"
+  - input: "xyzxyzxyz\nxy\n"
+    expected_output: "3\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      string s, p;
+      cin >> s >> p;
+
+      int m = (int)p.size();
+      // Build the prefix function: pi[i] is the length of the longest
+      // proper prefix of p[0..i] that is also a suffix of p[0..i].
+      vector<int> pi(m, 0);
+      for (int i = 1; i < m; ++i) {
+          int j = pi[i - 1];
+          while (j > 0 && p[i] != p[j]) j = pi[j - 1];
+          if (p[i] == p[j]) ++j;
+          pi[i] = j;
+      }
+
+      int count = 0, j = 0;
+      for (int i = 0; i < (int)s.size(); ++i) {
+          while (j > 0 && s[i] != p[j]) j = pi[j - 1];
+          if (s[i] == p[j]) ++j;
+          if (j == m) {
+              ++count;
+              // Fall back so that overlapping matches are found too.
+              // Setting j = 0 instead would miss every overlap.
+              j = pi[j - 1];
+          }
+      }
+      cout << count << endl;
+      return 0;
+  }
+eval_notes: |
+  这道题的两条分支（匹配成功后回退、匹配失败后回退）用的是
+  同一个数组，但取值时机不同，这是最容易写错的地方。
+
+  第一类错误是**朴素逐位置比较**。正确性没问题，但最坏
+  $O(|s||p|)$，输入 `aaaa...a` 配 `aaa...a` 之类会让
+  $10^5$ 直接超时。这是本题最主要的 TLE 来源。错因标签：
+  wrong_complexity。
+
+  第二类错误是**匹配成功后把 `j` 置为 0**（`j = 0;` 而不是
+  `j = pi[j-1];`）。这会让所有重叠匹配全部丢失。以样例 2
+  （`aaa` / `aa`）为例只会输出 1 而不是 2；`aaaaaaa` / `aa`
+  会输出 3 而不是 6——差值恰好是一半，很像是"漏了一半"。
+  错因标签：wrong_algorithm。
+
+  第三类错误是**匹配成功后 `j` 不回退**（既不置 0 也不取
+  `pi[j-1]`）。此时 `j == m` 之后继续用 `s[i+1]` 和 `p[m]`
+  比较，越界，通常表现为 RE 或乱码输出。错因标签：
+  wrong_traversal。
+
+  第四类错误是**前缀函数构建时用 `j = pi[i-1]` 的上一轮值但写成
+  `pi[i]`**（自我引用、初值未定）。表现为 `pi` 数组全 0 或
+  部分为 0，匹配阶段仍能跑完但会在 `abababa` / `aba` 上输出 2
+  而不是 3。错因标签：initialization。
+
+  第五类错误是**题目要求"允许重叠"但实现按"不重叠"计数**
+  （匹配成功后 `i += m; j = 0;`）。这是把题意读窄了。以
+  `aaaaaaa` / `aa` 为例输出 3 而不是 6。错因标签：misread_problem。
+
+  第六类错误是**当 $|p| > |s|$ 时直接数组越界**。本题保证
+  $|p| \le |s|$，所以这类错误**不会暴露**——这是题目约束
+  有意封住的一个坑。错因标签：missing_case（认知层面）。

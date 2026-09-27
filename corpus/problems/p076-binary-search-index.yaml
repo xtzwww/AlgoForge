@@ -1,0 +1,118 @@
+id: p076-binary-search-index
+title: 二分查找（目标值下标）
+knowledge_tags:
+  - 二分
+  - 数组
+  - 边界处理
+difficulty: easy
+source: 经典算法题
+description: |
+  给定一个**升序排列**的整数数组和一个目标值 $x$，请找出 $x$ 在数组中的
+  下标（下标从 $0$ 开始）。如果数组中不存在 $x$，输出 `-1`。
+
+  **输入格式**
+
+  第一行一个整数 $n$。
+  第二行 $n$ 个整数，已按升序排列，以空格分隔。
+  第三行一个整数 $x$。
+
+  **输出格式**
+
+  一行，一个整数，表示 $x$ 的下标；不存在则输出 `-1`。
+
+  **数据范围**
+
+  $1 \le n \le 10^5$，$-10^9 \le a_i, x \le 10^9$，数组元素**可以重复**
+
+  **提示**
+
+  数组中可能有重复元素。存在多个等于 $x$ 的元素时，输出**任意一个**
+  下标都算正确（因此请用标准二分，不要刻意找左/右边界）。
+input_format: 第一行 n，第二行 n 个升序整数，第三行目标值 x。
+output_format: 一行一个整数，下标或 -1。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "6\n1 3 5 7 9 11\n7\n"
+    expected_output: "3\n"
+    is_sample: true
+  - input: "1\n5\n5\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "1\n5\n3\n"
+    expected_output: "-1\n"
+  - input: "5\n1 2 3 4 5\n1\n"
+    expected_output: "0\n"
+  - input: "5\n1 2 3 4 5\n5\n"
+    expected_output: "4\n"
+  - input: "3\n2 4 6\n3\n"
+    expected_output: "-1\n"
+  - input: "4\n-5 -3 0 8\n-3\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n;
+      cin >> n;
+      vector<long long> a(n);
+      for (int i = 0; i < n; ++i) cin >> a[i];
+      long long x;
+      cin >> x;
+
+      // Standard "search a value" binary search. The loop invariant is
+      // that the answer, if it exists, lies in [lo, hi]. hi is n - 1
+      // (a valid index), never n — using n here would read out of bounds.
+      int lo = 0, hi = n - 1;
+      while (lo <= hi) {
+          // Written as lo + (hi - lo) / 2 rather than (lo + hi) / 2: the
+          // latter can overflow when both bounds are near 2^31.
+          int mid = lo + (hi - lo) / 2;
+          if (a[mid] == x) {
+              cout << mid << endl;
+              return 0;
+          }
+          if (a[mid] < x) lo = mid + 1;
+          else hi = mid - 1;
+      }
+      cout << -1 << endl;
+      return 0;
+  }
+eval_notes: |
+  二分查找是"人人都写过、但写对的没几个"的算法，错误全在边界上。
+
+  第一类错误是**区间右端点取 `n` 而不是 `n - 1`**（写成"前闭后开"
+  却仍用 `while (lo <= hi)`）。于是 `a[n]` 被访问，是越界读。
+  在本题 $n \le 10^5$ 的小数组上，越界读到的多半不是 $x$，于是表现为
+  "某些查询返回 -1"；也可能读到恰好等于 $x$ 的垃圾值而返回错下标。
+  错因标签：off_by_one。
+
+  第二类错误是**循环条件与区间定义不匹配**。若用"前闭后开"
+  `[lo, hi)`，正确条件是 `while (lo < hi)`、`hi = mid`、`lo = mid + 1`；
+  若用"两端都闭"`[lo, hi]`，正确条件是 `while (lo <= hi)`、
+  `hi = mid - 1`、`lo = mid + 1`。**两套混用**（闭区间配 `hi = mid`）
+  在 $x$ 恰为最后一个元素时死循环或漏掉答案。错因标签：boundary_condition。
+
+  第三类错误是**中点写成 `(lo + hi) / 2`**。本题值域 $10^9$ 不会溢出，
+  所以**不会暴露**——这是有意留的一个"看起来危险其实安全"的点。
+  但若下标上界提到 $2^{31}$ 就会真溢出成负数并越界。错因标签：
+  overflow（认知层面）。
+
+  第四类错误是**漏掉"不存在"的输出**。找到就 `return`，循环结束应当
+  输出 `-1`；有些实现什么都不输出，或者输出 `lo`（一个看似合理的
+  下标，实际是插入位置）。本题样例 3（`1 / 5 / 3`）专门覆盖这个。
+  错因标签：missing_case。
+
+  第五类错误是**先判断 `a[mid] < x` 再判断相等**，或者比较方向写反
+  （`a[mid] > x` 时 `lo = mid + 1`）。方向反了在有序数组上会一路走反，
+  最后必然输出 -1，而样例 1（找 `7`）会立刻暴露。错因标签：
+  inverted_condition。
+
+  第六类错误是**用线性扫描代替二分**。答案完全正确，只是 $O(n)$；
+  本题 $n = 10^5$ 仍能在 2 秒内跑完，**不会 TLE**。所以这是等价解法
+  而非错误，只在复杂度层面有区别。错因标签：wrong_complexity
+  （认知层面，不构成判错）。

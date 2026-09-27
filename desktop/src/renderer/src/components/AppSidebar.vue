@@ -56,7 +56,8 @@ export type NavItem = {
 
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { navRoutes } from '../router'
+import { navSectionsFor } from '../router'
+import { appMode } from '../runtime/mode'
 import { useSidecarStatus } from '../composables/useSidecarStatus'
 
 defineProps<{
@@ -77,18 +78,37 @@ const ICONS: Record<string, string> = {
     'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z',
   profile: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
   plan: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
-  // A rostrum: three bars over a baseline. Chosen over a "people" glyph
-  // so it does not read as a class list — this is the aggregate view.
+
+  // --- 教师端五个面板（2026-09-26 拆分后）---
+  //
+  // 一个讲台：三条柱子立在一条基线上。刻意**不**画成人形，免得被读成
+  // 一份班级名单——这一页是聚合视图。
   teacher: 'M4 20h16M7 20V9M12 20V4M17 20v-7',
-  // Two figures, for the roster itself — the counterpart to the icon
-  // above, which is deliberately *not* this shape.
-  'teacher-classes':
+  // 一个往下钻的放大镜／分层：班级 → 学生 → 个例。用三层递减的横线
+  // 表示"从整体往个别看"。
+  'teacher-analysis': 'M3 6h18M6 12h12M9 18h6',
+  // 一叠作业纸。
+  'teacher-work':
+    'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M9 13h6M9 17h6',
+  // 一只眼睛：复核是"看一眼再下判断"，不是判定。
+  'teacher-review':
+    'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  // 两个人形，对名册。
+  'teacher-roster':
     'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75'
 }
 
-const items = computed<NavItem[]>(() =>
-  navRoutes.map((r) => ({ name: r.name, label: r.title, path: ICONS[r.name] ?? '' }))
-)
+/**
+ * The nav, as sections (2026-09-26).
+ *
+ * 拆成五个面板之后，"这几项是一类"必须被画出来——一个平铺的八项列表
+ * 就是原来那个杂乱感的来源，只是换到了侧边栏上。分组从路由表的
+ * `meta.group` 推出来，理由见 `router/index.ts` 的 `navRoutesFor`。
+ *
+ * 学生端没有 `group`，会得到一个不带标题的 section，渲染结果和拆分前
+ * 完全一样。
+ */
+const sections = computed(() => navSectionsFor(appMode))
 
 const { phase, errorMessage, retry } = useSidecarStatus()
 
@@ -143,30 +163,42 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
       <span class="brand-name">智能学情反馈</span>
     </div>
 
-    <ul class="nav-list af-stagger">
-      <li v-for="item in items" :key="item.name">
-        <RouterLink
-          class="nav-item"
-          :to="{ name: item.name }"
-          :title="item.label"
-          @click="emit('navigate')"
-        >
-          <svg
-            class="nav-icon"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path :d="item.path" />
-          </svg>
-          <span class="nav-label">{{ item.label }}</span>
-        </RouterLink>
-      </li>
-    </ul>
+    <!--
+      分组导航（2026-09-26）。学生端只有一个不带标题的 section，
+      渲染结果和拆分前完全一样；教师端四组。
+    -->
+    <div class="nav-scroll">
+      <section v-for="section in sections" :key="section.key" class="nav-section af-stagger">
+        <!-- 没有标题的 section 是学生端：它的六个页面是对等的，
+             给它们加标题只会安上一个并不存在的层次。 -->
+        <h2 v-if="section.label" class="nav-section-title">{{ section.label }}</h2>
+
+        <ul class="nav-list">
+          <li v-for="item in section.items" :key="item.name">
+            <RouterLink
+              class="nav-item"
+              :to="{ name: item.name }"
+              :title="item.title"
+              @click="emit('navigate')"
+            >
+              <svg
+                class="nav-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path :d="ICONS[item.name] ?? ''" />
+              </svg>
+              <span class="nav-label">{{ item.title }}</span>
+            </RouterLink>
+          </li>
+        </ul>
+      </section>
+    </div>
 
     <!--
       The environment footer PU-6's flex column was left room for. It reads
@@ -181,11 +213,7 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
         pulses forever in the corner of the screen stops being an
         indicator and becomes an alarm the user learns to ignore.
       -->
-      <span
-        class="status-dot"
-        :class="{ 'af-pulse': status.tone === 'ok' }"
-        aria-hidden="true"
-      />
+      <span class="status-dot" :class="{ 'af-pulse': status.tone === 'ok' }" aria-hidden="true" />
       <span class="status-label">{{ status.label }}</span>
       <button v-if="canRetry" class="status-retry af-press" type="button" @click="retry">
         重试
@@ -252,10 +280,40 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
   white-space: nowrap;
 }
 
+/* The nav takes the leftover height and scrolls on its own, so the status
+ * footer stays pinned to the bottom however many panels there are.
+ * 拆成五个面板之后这一条才有用：原来只有两项，永远不滚。 */
+.nav-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.nav-section + .nav-section {
+  margin-top: 6px;
+}
+
+/* 组标题。静态、极小、全大写——它是一条分隔线，不是一个可点的东西。
+ * 没有 title 的 section 不渲染它（学生端）。 */
+.nav-section-title {
+  margin: 10px 0 4px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--af-text-muted);
+}
+
+/* 第一个组的标题不要上面那 10px——它紧挨着品牌行的分隔线。 */
+.nav-section:first-child .nav-section-title {
+  margin-top: 2px;
+}
+
 .nav-list {
   list-style: none;
   margin: 0;
-  padding: 8px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -315,7 +373,9 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
 /* The active row keeps its halo on hover rather than losing it to the
  * plain hover rule above, which would otherwise win on source order. */
 .nav-item.router-link-active:hover {
-  box-shadow: var(--af-glow-accent-soft), inset 0 0 0 1px var(--af-border-strong);
+  box-shadow:
+    var(--af-glow-accent-soft),
+    inset 0 0 0 1px var(--af-border-strong);
 }
 
 .nav-icon {
@@ -414,6 +474,25 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
     display: none;
   }
 
+  /* 收起态没有横向空间写分组名。但分组结构不能凭空消失，否则教师端
+   * 在 1024–1280px 下就退回成了一个平铺的八项列表——正是这次重构要
+   * 消掉的东西。所以留一条极细的横向分隔线把组隔开。 */
+  .nav-section-title {
+    margin: 8px 10px 4px;
+    padding: 0;
+    height: 1px;
+    font-size: 0;
+    background: var(--af-border);
+  }
+
+  .nav-section:first-child .nav-section-title {
+    display: none;
+  }
+
+  .nav-scroll {
+    padding: 8px 6px;
+  }
+
   /* The dot alone is the indicator at this width; the tooltip keeps the
    * text reachable. */
   .status {
@@ -462,6 +541,19 @@ const canRetry = computed<boolean>(() => phase.value === 'failed')
   }
 
   .nav-label {
+    display: block;
+  }
+
+  /* 抽屉里恢复正常的组标题。 */
+  .nav-section-title {
+    margin: 10px 0 4px;
+    padding: 0 12px;
+    height: auto;
+    font-size: 11px;
+    background: none;
+  }
+
+  .nav-section:first-child .nav-section-title {
     display: block;
   }
 

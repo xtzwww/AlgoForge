@@ -1,0 +1,115 @@
+id: p086-valid-perfect-square
+title: 有效的完全平方数
+knowledge_tags:
+  - 二分
+  - 数值计算
+  - 数学建模
+difficulty: easy
+source: 经典算法题
+description: |
+  给定一个非负整数 $n$，请判断它是否是某个整数的平方（即是否存在
+  整数 $x$ 使得 $x^2 = n$）。
+
+  **输入格式**
+
+  一行一个非负整数 $n$。
+
+  **输出格式**
+
+  一行，若是完全平方数输出 `1`，否则输出 `0`。
+
+  **数据范围**
+
+  $0 \le n \le 2^{31} - 1$
+
+  **提示**
+
+  $0$ 是完全平方数（$0 = 0^2$）。
+
+  请不要使用 `sqrt` 之类的库函数直接判断——浮点精度在大数上
+  不可靠，请用**二分查找**或等价的整数方法。
+input_format: 一行一个非负整数 n。
+output_format: 一行输出 1（是完全平方数）或 0（不是）。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "16\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "14\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "0\n"
+    expected_output: "1\n"
+  - input: "1\n"
+    expected_output: "1\n"
+  - input: "2147483647\n"
+    expected_output: "0\n"
+  - input: "2147395600\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      long long n;
+      cin >> n;
+
+      // Search x in [0, 46340] — 46341^2 exceeds INT_MAX, so no larger
+      // root can be valid for the stated range. The multiplication is
+      // done in long long so it cannot overflow int.
+      long long lo = 0, hi = 46340;
+      while (lo <= hi) {
+          long long mid = lo + (hi - lo) / 2;
+          long long sq = mid * mid;
+          if (sq == n) {
+              cout << 1 << endl;
+              return 0;
+          }
+          if (sq < n) lo = mid + 1;
+          else hi = mid - 1;
+      }
+      cout << 0 << endl;
+      return 0;
+  }
+eval_notes: |
+  这题的陷阱几乎全在**整数类型的范围**上，而不是二分本身。
+
+  第一类错误是**用 `sqrt(n)` 再判断 `x * x == n`**。
+  对 $n$ 接近 $2^{31}$，`double` 的精度（53 位有效位）其实
+  足够表示，四舍五入后通常正确，所以**本题侥幸不会错**——
+  但这是不可靠的做法：一旦 $n$ 超过 $2^{53}$，`sqrt` 的结果
+  会丢失低位，判断必然出错。题目明确要求用整数方法。
+  错因标签：wrong_data_type（认知层面）。
+
+  第二类错误是**`mid * mid` 用 `int` 计算**。$46341^2 \approx 2.1\times10^9$
+  超过 `INT_MAX`（$2.147\times10^9$），会**溢出成负数**，
+  于是比较 `sq < n` 的方向全反，二分走错路。这是本题最隐蔽的
+  一处：小数据全对，只有 $n$ 很大时才错。样例 5
+  （$2147483647$）专门覆盖这个。错因标签：overflow。
+
+  第三类错误是**二分上界取 `n`**（`hi = n`）。$n$ 可达 $2\times10^9$，
+  循环约 31 次，其实也不会超时；但 `mid * mid` 用 `long long`
+  时 $mid$ 最大 $10^9$，平方 $10^{18}$ 仍在 `long long` 范围内，
+  **不会溢出**。所以这只是多走几次循环，不构成错误。
+  错因标签：wrong_complexity（认知层面）。
+
+  第四类错误是**漏掉 $n = 0$**。$0 = 0^2$ 是完全平方数；
+  若实现里写了 `if (n <= 0) return 0;` 会把 0 判成非平方数。
+  样例 3 专门覆盖这个。错因标签：boundary_condition。
+
+  第五类错误是**循环条件写成 `while (lo < hi)`** 却仍用
+  `hi = mid - 1`。当 $n$ 是完全平方数且根恰好在边界时会漏掉。
+  以 $n = 1$ 为例：正确应输出 1，这种写法可能输出 0。
+  样例 4 专门覆盖这个。错因标签：boundary_condition。
+
+  第六类错误是**用"从 1 遍历到 $\sqrt{n}$"逐个试平方**（$O(\sqrt{n})$）。
+  $n = 2\times10^9$ 时约 46340 次，完全不会超时，答案也正确。
+  属等价解法，本题无法区分。错因标签：wrong_complexity
+  （认知层面，不构成判错）。
+
+  第七类错误是**把输出写成 `true`/`false` 或 `Yes`/`No`**。
+  题面明确要求输出 `1` 或 `0`。错因标签：io_format_error。

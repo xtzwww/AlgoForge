@@ -1,0 +1,117 @@
+id: p032-grid-island-perimeter
+title: 岛屿的周长
+knowledge_tags:
+  - 数组
+  - 二维网格
+  - 枚举
+difficulty: medium
+source: 经典算法题
+description: |
+  给定一个 $n \times m$ 的网格，`1` 表示陆地，`0` 表示水域。
+
+  网格中只有**一座**岛屿（所有 `1` 上下左右连通成一块），
+  也可以没有任何陆地。
+
+  请计算这座岛屿的周长：岛屿与水域或网格边界相接的边的总长度。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$。
+  接下来 $n$ 行，每行 $m$ 个字符，由 `0` 和 `1` 组成。
+
+  **输出格式**
+
+  一行，一个整数，表示岛屿的周长。
+
+  **数据范围**
+
+  $1 \le n, m \le 100$
+input_format: 第一行 n 和 m，接下来 n 行每行 m 个 0/1 字符。
+output_format: 一行一个整数，岛屿周长。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "4 4\n0110\n1111\n1111\n0110\n"
+    expected_output: "16\n"
+    is_sample: true
+  - input: "1 1\n1\n"
+    expected_output: "4\n"
+    is_sample: true
+  - input: "1 3\n010\n"
+    expected_output: "4\n"
+  - input: "2 2\n11\n11\n"
+    expected_output: "8\n"
+  - input: "3 3\n111\n111\n111\n"
+    expected_output: "12\n"
+  - input: "3 3\n000\n000\n000\n"
+    expected_output: "0\n"
+  - input: "1 1\n0\n"
+    expected_output: "0\n"
+  - input: "2 3\n101\n010\n"
+    expected_output: "12\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  #include <string>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, m;
+      cin >> n >> m;
+      vector<string> g(n);
+      for (int i = 0; i < n; ++i) cin >> g[i];
+
+      int perimeter = 0;
+      int dr[4] = {-1, 1, 0, 0};
+      int dc[4] = {0, 0, -1, 1};
+      for (int i = 0; i < n; ++i) {
+          for (int j = 0; j < m; ++j) {
+              if (g[i][j] != '1') continue;
+              // Every land cell contributes 1 for each of its four
+              // sides that is not shared with another land cell.
+              for (int d = 0; d < 4; ++d) {
+                  int ni = i + dr[d];
+                  int nj = j + dc[d];
+                  // Bounds FIRST: reaching into the neighbour before
+                  // checking it can read past the grid's edge.
+                  if (ni < 0 || ni >= n || nj < 0 || nj >= m) {
+                      ++perimeter;
+                  } else if (g[ni][nj] != '1') {
+                      ++perimeter;
+                  }
+              }
+          }
+      }
+      cout << perimeter << endl;
+      return 0;
+  }
+eval_notes: |
+  本题的标准解法只有十行，但"把四个方向都算进来却不重复计数"
+  这件事上集中了好几种典型错误。
+
+  第一类错误是**越界检查写成 `if (g[ni][nj] != '1') ++perimeter;`
+  而不先做边界判断**。邻格在网格之外时直接下标访问，是越界读取；
+  在某些实现里越界位置恰好多为 `\0`（不等于 `'1'`），于是
+  "碰巧"算对了——但在边界行/列的最后一个元素上就可能读到别的
+  内存，结果随编译器与数据变化。错因标签：boundary_condition。
+
+  第二类错误是把周长算成 **$4 \times$ 陆地格数再减去相邻对数**，
+  却把相邻对**重复减了两次**（每个陆地格都去检查右/下邻格，
+  同时另一个方向也检查了一次）。$2 \times 2$ 全为 `1` 时正确
+  答案是 8，这类实现会给出 $16 - 8 = 8$ 或 $16 - 16 = 0$，
+  取决于重复的方向。错因标签：off_by_one / misread_problem。
+
+  第三类错误是**把斜角相邻也算作相邻**，于是 $2 \times 3$ 的
+  `101 / 010`（两块对角相连的陆地）被当成了一座岛，
+  周长从 16 变成 12。题面明确只算上下左右。错因标签：misread_problem。
+
+  第四类错误是**用 BFS/DFS 搜索连通块时只搜到一个方向**，
+  或者把 `visited` 数组写成网格大小但按一维访问，导致部分陆地
+  没被访问到，周长偏小。错因标签：wrong_traversal。
+
+  第五类错误是直接对每个相邻对计数 `if (g[i][j]=='1' &&
+  g[i+1][j]=='1') --;`，减去的应该是**每对共享边 2 条**，
+  只减 1 会让周长偏大 $2 \times$ 相邻对数。错因标签：off_by_one。

@@ -1,0 +1,153 @@
+id: p096-bellman-ford-negative-cycle
+title: 负环检测（Bellman-Ford）
+knowledge_tags:
+  - 最短路
+  - 图论
+  - 负权边
+  - 遍历
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个**有向带权图**（边权可以为负），请判断图中是否存在
+  **从顶点 1 出发能够到达的负权环**。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $m$。
+  接下来 $m$ 行，每行三个整数 $u$、$v$、$w$，表示一条从 $u$ 指向
+  $v$、权值为 $w$ 的**有向边**。
+
+  **输出格式**
+
+  一行，若存在从顶点 1 可达的负环输出 `1`，否则输出 `0`。
+
+  **数据范围**
+
+  $1 \le n \le 500$，$0 \le m \le 5000$，$-10^6 \le w \le 10^6$
+
+  **提示**
+
+  边权可以为负，因此 Dijkstra **不适用**。请使用 Bellman-Ford
+  或其队列优化形式（SPFA）。
+
+  注意：只有**从顶点 1 可达**的负环才算。与顶点 1 不连通的
+  负环不算。
+input_format: 第一行 n m，接下来 m 行有向边 u v w。
+output_format: 一行输出 1（有可达负环）或 0（没有）。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "3 3\n1 2 1\n2 3 -2\n3 2 -2\n"
+    expected_output: "1\n"
+    is_sample: true
+  - input: "3 2\n1 2 1\n2 3 2\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "1 1\n1 1 -5\n"
+    expected_output: "1\n"
+  - input: "4 4\n1 2 3\n2 3 4\n3 4 5\n1 4 100\n"
+    expected_output: "0\n"
+  - input: "5 5\n1 2 1\n2 3 1\n3 4 1\n4 2 -5\n1 5 1\n"
+    expected_output: "1\n"
+  - input: "3 3\n2 3 -1\n3 2 -1\n1 2 1\n"
+    expected_output: "1\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  struct Edge {
+      int u, v;
+      long long w;
+  };
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, m;
+      cin >> n >> m;
+      vector<Edge> edges;
+      for (int i = 0; i < m; ++i) {
+          int u, v;
+          long long w;
+          cin >> u >> v >> w;
+          edges.push_back({u, v, w});
+      }
+
+      // INF large enough that n * |w| cannot overflow it: n <= 500 and
+      // |w| <= 1e6, so any path is within 5e8.
+      const long long INF = (1LL << 60);
+      vector<long long> dist(n + 1, INF);
+      dist[1] = 0;
+
+      // Relax every edge n-1 times, then try once more. A change on the
+      // n-th pass means some shortest path has more than n-1 edges, which
+      // can only happen by going around a negative cycle.
+      bool negCycle = false;
+      for (int i = 1; i <= n; ++i) {
+          bool changed = false;
+          for (const auto &e : edges) {
+              if (dist[e.u] == INF) continue;  // only paths from 1 matter
+              if (dist[e.u] + e.w < dist[e.v]) {
+                  dist[e.v] = dist[e.u] + e.w;
+                  changed = true;
+                  if (i == n) {
+                      negCycle = true;
+                      break;
+                  }
+              }
+          }
+          if (negCycle || !changed) break;
+      }
+      cout << (negCycle ? 1 : 0) << endl;
+      return 0;
+  }
+eval_notes: |
+  这题的考点是**松弛轮数与顶点数的关系**，以及"只统计从 1 可达
+  的负环"这个限定。
+
+  第一类错误是**只松弛 $n-1$ 轮就结束，没有第 $n$ 轮检测**。
+  这样永远检测不到负环（第 $n-1$ 轮之后所有可达的负环都还在
+  持续降低距离，但已经不再检查）。样例 1 会输出 0 而不是 1。
+  这是本题最核心的一处。错因标签：off_by_one。
+
+  第二类错误是**松弛轮数写成固定一个小值**（例如 2 轮或
+  `n/2` 轮）。在没有负环的图上能收敛（提前退出），
+  但一旦有负环，轮数不够就不会触发检测。样例 5
+  （负环在 $2\to3\to4\to2$，需要多轮传播）会漏检。
+  错因标签：boundary_condition。
+
+  第三类错误是**没有跳过 `dist[u] == INF` 的边**（从不可达点
+  出发的松弛）。若用 0 代替 INF 初始化全部点，那么从 1 不可达
+  的子图里的负环也会被检测到，违反了"只算从 1 可达"的要求。
+  样例 6 的负环 $2\leftrightarrow3$ **是从 1 可达的**（$1\to2$），
+  所以正确答案仍是 1；要暴露这个错误需要一个与 1 完全不连通
+  的负环，本题未构造这样的数据——这是题目设计上接受的一处
+  不可观测性。错因标签：missing_case（认知层面）。
+
+  第四类错误是**用 Dijkstra**。边权有负，Dijkstra 的
+  "已确定最短距离的点不再更新"前提不成立，会给出错误结果
+  **且不报错**。样例 1 会输出 0。这是选型错误而非小 bug。
+  错因标签：wrong_algorithm。
+
+  第五类错误是**用 `int` 存距离且 INF 取 `INT_MAX`**。
+  `dist[u] + w` 在 `dist[u]` 为 INF 时会溢出成负数，
+  于是"不可达点"被当成距离极小的点继续松弛，
+  产生完全错误的传播。必须先判断 `dist[u] == INF` 再相加。
+  错因标签：overflow。
+
+  第六类错误是**只检测"第 $n$ 轮有变化"却没在检测到后
+  立即退出**，而是继续跑完所有边。结果相同，只是多花时间；
+  本题规模小，无法区分。属等价写法。错因标签：
+  wrong_complexity（认知层面，不影响输出）。
+
+  第七类错误是**没有提前退出**（`!changed` 时 break）。
+  在无负环的图上多跑几轮，结果一样，只是慢。
+  同样不影响输出。错因标签：wrong_complexity（认知层面）。
+
+  第八类错误是**把自环 $1\to1$ 且权为负判成负环，但认为它
+  "从 1 可达"所以应输出 1**——这其实是**正确的**，
+  样例 3（$n=1$，边 $1\to1$ 权 $-5$）确实是负环，
+  正确输出 1。若实现里忽略了自环会输出 0。错因标签：
+  missing_case。

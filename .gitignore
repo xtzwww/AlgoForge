@@ -126,3 +126,10 @@ sidecar/packaging/*.spec
 # tools/index_knowledge_base.py 从 corpus/knowledge_cards/ 重建，不是数据源。
 # 进版本库只会让二进制文件冲突，且换过 embedding 模型后它必须重建。
 sidecar/data/
+
+# 教师端/主题检查用的临时构建产物（不是源码，重建即可）
+desktop/src/renderer/dist-theme-check/
+desktop/src/renderer/dist-web-check/
+
+# 辅助面板改版时留下的对比草稿（AssistPanel.vue 已取代它）
+desktop/src/renderer/src/components/AssistPanel.vue.new

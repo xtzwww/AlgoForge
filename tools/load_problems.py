@@ -23,9 +23,10 @@ Usage:
 
 ``--replace`` deletes catalogue rows (and their cases) before inserting.
 It is opt-in because it destroys data: submissions reference problems by
-foreign key, so replaced problems get new ids and old submissions stop
-resolving. Off by default, and refused outright if submissions exist —
-see :func:`_check_replace_is_safe`.
+foreign key, and assignments reference them by id inside a JSON column,
+so replaced problems get new ids and both stop resolving. Off by
+default, and refused outright when either kind of row points at the
+catalogue — see :func:`_check_replace_is_safe`.
 """
 
 from __future__ import annotations
@@ -117,27 +118,115 @@ def _sample_count(problem: CatalogueProblem) -> int:
     return sum(1 for tc in problem.test_cases if tc.is_sample)
 
 
-def _check_replace_is_safe(session: object) -> None:
-    """Refuse ``--replace`` when submissions would be orphaned.
+def _clear_sandbox_scratch() -> None:
+    """Remove leftover ``judge_*`` scratch directories.
 
-    Deleting problems re-assigns ids on insert, so any submission
-    pointing at an old id stops resolving. Once the user has run code
-    against the catalogue, silently breaking that history is worse than
-    refusing — they can clear the submissions table deliberately if that
-    is really what they want.
+    Every ``judge()`` call creates a scratch directory under
+    :func:`sandbox_tmp_base`, and it is created with
+    ``ignore_cleanup_errors=True`` — so on Windows a directory whose binary
+    was still held open when the context manager unwound is left behind
+    instead of raising. Verifying a large corpus (75 problems, hundreds of
+    cases) therefore leaks one directory per compile.
+
+    Left unchecked that is not merely untidy: the local safe-delete hook
+    refuses any deletion once a turn has seen more than its bulk threshold
+    of targets, and the accumulated directories push the judge's own
+    cleanup over that line — the verification run then dies mid-loop with
+    ``SAFE_DELETE_BULK_CONFIRM_REQUIRED`` and no partial output, which
+    reads exactly like a corpus problem but is not one.
+
+    Clearing between problems keeps the directory count bounded. Errors are
+    ignored on purpose: a directory still held by a dying process is
+    expected here, and it will be cleared on a later pass.
+    """
+    import shutil
+
+    from app.sandbox.compiler import sandbox_tmp_base
+
+    base = sandbox_tmp_base()
+    if not base.is_dir():
+        return
+    for entry in base.iterdir():
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink()
+        except OSError:
+            pass
+
+
+def _check_replace_is_safe(session: object) -> None:
+    """Refuse ``--replace`` when submissions or assignments would be orphaned.
+
+    Deleting problems re-assigns ids on insert, so any row that points at
+    an old id stops resolving. Once the user has run code against the
+    catalogue, silently breaking that history is worse than refusing —
+    they can clear the tables deliberately if that is really what they
+    want.
+
+    Two kinds of row can be orphaned, and the second was added after it
+    bit us in practice:
+
+    * **Submissions** carry ``problem_id`` as a real foreign key, so the
+      database would eventually refuse the delete — or, worse, the
+      ``ondelete`` behaviour would quietly erase work.
+    * **Assignments** carry ``problem_ids`` as a JSON list. JSON has no
+      foreign key, so nothing stops the delete, nothing complains, and
+      the damage only shows up later as a student clicking "开始做题" and
+      getting a 404 on a problem the teacher did publish. That is exactly
+      what happened: a reload moved the catalogue to fresh ids and every
+      id in the one existing assignment went dangling.
+
+    The module docstring already promised "old submissions stop
+    resolving" as the reason ``--replace`` is opt-in; assignments were
+    simply missing from the check that is supposed to enforce it.
+
+    Only rows that actually *point* at a problem count. ``problem_id`` is
+    nullable on purpose: a free run ("just compile and run this snippet")
+    has none. Counting those would refuse every replace on any database
+    where someone has ever used the scratch runner, even though nothing
+    they own is at risk. An assignment with an empty ``problem_ids`` is
+    the same story.
     """
     from sqlalchemy import func, select
 
+    from app.models.assignment import Assignment
     from app.models.submission import Submission
 
     count = session.execute(  # type: ignore[attr-defined]
-        select(func.count()).select_from(Submission)
+        select(func.count())
+        .select_from(Submission)
+        .where(Submission.problem_id.is_not(None))
     ).scalar_one()
     if count:
         raise SystemExit(
             f"refusing --replace: {count} submission(s) reference the "
             f"catalogue, and replacing would orphan them.\n"
             f"Clear the submissions table first if this is intended."
+        )
+
+    # Assignments are loaded whole rather than counted in SQL: the ids
+    # live inside a JSON column and this module must not be the first
+    # place that tries to query inside it (see the Assignment model
+    # docstring). A term of homework is a few dozen rows, so reading
+    # them all is cheap and keeps the JSON rule intact.
+    dangling_owners = [
+        row
+        for row in session.execute(select(Assignment)).scalars().all()  # type: ignore[attr-defined]
+        if row.problem_ids
+    ]
+    if dangling_owners:
+        # Name them, because "some assignment" is not actionable and the
+        # operator needs to know what to re-publish.
+        titles = ", ".join(f"#{row.id} {row.title!r}" for row in dangling_owners)
+        raise SystemExit(
+            f"refusing --replace: {len(dangling_owners)} assignment(s) "
+            f"reference the catalogue by id, and replacing would leave "
+            f"their problem sets dangling (students would get 404s).\n"
+            f"  affected: {titles}\n"
+            f"Delete or re-publish those assignments first if this is "
+            f"intended."
         )
 
 
@@ -223,7 +312,12 @@ def main(argv: list[str] | None = None) -> int:
 
     failures = 0
     total_cases = 0
-    for entry in problems:
+    for index, entry in enumerate(problems):
+        # Judge leaves one scratch directory per compile behind. Clear them
+        # between problems so a long verification run does not trip the
+        # safe-delete bulk threshold and abort (see _clear_sandbox_scratch).
+        if index:
+            _clear_sandbox_scratch()
         issues = verify(entry)
         label = f"{entry.problem_id} [{entry.difficulty}] {entry.title}"
         sample_count = _sample_count(entry)

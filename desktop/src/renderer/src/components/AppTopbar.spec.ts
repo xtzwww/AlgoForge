@@ -149,6 +149,13 @@ vi.mock('vue-router', async () => {
   }
 })
 
+vi.mock('../runtime/mode', () => ({
+  // 本文件测的是「环境能力」而不是端名；`appMode` 在真实构建里是加载时
+  // 常量（runtime/mode.ts），mock 成 both 让端名徽标不参与这里的断言，
+  // 端名本身的逻辑由 AppSidebar.spec.ts 的可见路由用例覆盖。
+  appMode: 'both'
+}))
+
 vi.mock('../runtime', () => ({
   // getter 而不是固定值：用例改了 `env` 之后，重新挂载就能读到新值。
   runtime: {

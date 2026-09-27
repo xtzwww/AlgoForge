@@ -1,0 +1,196 @@
+id: p050-lca-tree
+title: 树上最近公共祖先
+knowledge_tags:
+  - 树
+  - 深度优先搜索
+  - 倍增
+  - 图论
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一棵以节点 $1$ 为根的树，共有 $n$ 个节点。
+  有 $q$ 次询问，每次给出两个节点 $u$ 和 $v$，
+  求它们的**最近公共祖先**（LCA），即同时是 $u$ 与 $v$
+  的祖先、且深度最大的那个节点。节点自己算自己的祖先。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $q$，以空格分隔。
+  接下来 $n - 1$ 行，每行两个整数 $a$ 和 $b$，
+  表示节点 $a$ 与节点 $b$ 之间有一条边。
+  接下来 $q$ 行，每行两个整数 $u$ 和 $v$，表示一次询问。
+
+  **输出格式**
+
+  共 $q$ 行，每行一个整数，表示对应询问的最近公共祖先编号。
+
+  **数据范围**
+
+  $1 \le n, q \le 10^5$
+input_format: 第一行 n 和 q，接下来 n-1 行每行 a 和 b，随后 q 行每行 u 和 v。
+output_format: 共 q 行，每行一个整数的 LCA 编号。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 3\n1 2\n1 3\n3 4\n3 5\n2 4\n4 5\n3 3\n"
+    expected_output: "1\n3\n3\n"
+    is_sample: true
+  - input: "2 2\n1 2\n1 2\n2 2\n"
+    expected_output: "1\n2\n"
+    is_sample: true
+  - input: "1 1\n\n1 1\n"
+    expected_output: "1\n"
+  - input: "4 3\n1 2\n2 3\n3 4\n1 4\n2 3\n4 4\n"
+    expected_output: "1\n2\n4\n"
+  - input: "6 4\n1 2\n1 3\n2 4\n2 5\n5 6\n4 5\n6 2\n3 2\n5 6\n"
+    expected_output: "2\n2\n1\n5\n"
+  - input: "3 2\n1 2\n1 3\n2 2\n3 3\n"
+    expected_output: "2\n3\n"
+
+correct_reference: |
+  #include <iostream>
+  #include <vector>
+  using namespace std;
+  const int LOG = 17;  // 2^17 = 131072 > 1e5
+
+  static int up[LOG][100005];
+  static int adjHead[100005];
+  static int adjNext[200005];
+  static int adjTo[200005];
+  static int edgeCnt = 0;
+  static int depthArr[100005];
+  static int stackNodes[100005];
+  static int stackIter[100005];
+
+  void addEdge(int u, int v) {
+      adjTo[edgeCnt] = v;
+      adjNext[edgeCnt] = adjHead[u];
+      adjHead[u] = edgeCnt++;
+  }
+
+  // Iterative DFS on an explicit stack. A recursive version would need
+  // depth up to n = 1e5, which overflows the default call stack and
+  // shows up as a runtime error on chain-shaped trees.
+  void buildTree(int n) {
+      int sp = 0;
+      stackNodes[sp] = 1;
+      stackIter[sp] = adjHead[1];
+      depthArr[1] = 0;
+      up[0][1] = 0;
+      while (sp >= 0) {
+          int u = stackNodes[sp];
+          int &it = stackIter[sp];
+          if (it == -1) {
+              --sp;
+              continue;
+          }
+          int v = adjTo[it];
+          it = adjNext[it];
+          if (v == up[0][u]) continue;
+          up[0][v] = u;
+          depthArr[v] = depthArr[u] + 1;
+          ++sp;
+          stackNodes[sp] = v;
+          stackIter[sp] = adjHead[v];
+      }
+  }
+
+  int lca(int u, int v) {
+      if (depthArr[u] < depthArr[v]) swap(u, v);
+      // Lift the deeper node to the same depth first.
+      int diff = depthArr[u] - depthArr[v];
+      for (int j = 0; j < LOG; ++j) {
+          if ((diff >> j) & 1) u = up[j][u];
+      }
+      if (u == v) return u;
+      // Then lift both together, from the largest jump down; the answer
+      // is the parent of where they first meet.
+      for (int j = LOG - 1; j >= 0; --j) {
+          if (up[j][u] != up[j][v]) {
+              u = up[j][u];
+              v = up[j][v];
+          }
+      }
+      return up[0][u];
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, q;
+      cin >> n >> q;
+      for (int i = 1; i <= n; ++i) adjHead[i] = -1;
+      for (int i = 0; i < n - 1; ++i) {
+          int a, b;
+          cin >> a >> b;
+          addEdge(a, b);
+          addEdge(b, a);
+      }
+
+      for (int j = 0; j < LOG; ++j)
+          for (int i = 0; i <= n; ++i) up[j][i] = 0;
+
+      buildTree(n);
+      // Fill the jump table bottom-up: up[j][x] depends on up[j-1][*].
+      for (int j = 1; j < LOG; ++j)
+          for (int i = 1; i <= n; ++i) up[j][i] = up[j - 1][up[j - 1][i]];
+
+      while (q--) {
+          int u, v;
+          cin >> u >> v;
+          cout << lca(u, v) << '\n';
+      }
+      return 0;
+  }
+eval_notes: |
+  本题的结构决定了它有一类"答案对但会超时"的写法，
+  和一类"跑得动但答案错"的写法，两者的症状截然不同。
+
+  第一类错误是**每次询问都暴力向上爬**（两个节点轮流上移直到
+  相遇）。$q = 10^5$ 而树可能退化成链（深度 $10^5$），
+  总操作数达 $10^{10}$，必然超时。错因标签：wrong_complexity。
+
+  第二类错误是**先上移较深的节点时不先判断两点是否已经重合**。
+  当 $u$ 是 $v$ 的祖先时，把 $u$ 上移到与 $v$ 同层后
+  $u = v$ 已成立，但如果实现跳过了这一判断继续做"一起上移"
+  的循环，最终返回的会是**答案的父亲**。用例 3
+  （`1 4` 与 `2 3`，正确答案分别是 1 和 2）会暴露。
+  错因标签：boundary_condition。
+
+  第三类错误是**第二阶段的循环从 `j = 0` 升到 `LOG-1`**。
+  倍增必须**从大跳开始**，从小到大跳会让两个节点先被
+  抬到同一个节点上，之后再无法区分。答案通常仍是某个祖先，
+  但往往**不是最近**的那一个。用例 5 会暴露。错因标签：
+  wrong_traversal。
+
+  第四类错误是**根节点的父亲没有保持为哨兵 0**，
+  或者 `up[j][0]` 被写入了其他值，导致上跳时越界到未定义的
+  内存。样例 1 与用例 4 都会用到上跳到根的路径。
+  错因标签：uninitialized_state。
+
+  第五类错误是**把 $10^5 \times 17$ 的跳跃表放在栈上**（写成函数内
+  的局部数组）。这份数据结构有约 170 万个 `int`，约 7 MB，
+  超过默认 1 MB 的栈空间，表现为运行时错误而不是答案错误。
+  正确做法是放到全局或堆上。错因标签：wrong_data_type /
+  stack_overflow。
+
+  第八类错误是**DFS 用递归实现**。本题没有限制树的形状，
+  一条 $10^5$ 个节点的链会让递归深度达到 $10^5$，
+  直接爆栈。数据规模大的树上，建树必须用显式栈迭代。
+  错因标签：stack_overflow。
+
+  第九类错误是**跳过倍增表的推导**：只填了 `up[0]` 就直接查
+  `up[j]`。答案会随数据剧烈变化（未填的表项为 0，
+  上跳时直接落到哨兵上），且 $n$ 小时可能"碰巧"正确。
+  错因标签：uninitialized_state。
+
+  第六类错误是**把树当成有根图单向建边**（只 `adj[a].push_back(b)`），
+  DFS 无法到达所有节点，未被访问节点的深度为 0，
+  与根同层，LCA 结果全乱。用例 4（一条链）会暴露。
+  错因标签：misread_problem。
+
+  第七类错误是**只实现了"求两点深度差"**而没有实现
+  "一起上跳找分叉点"，返回的是两点中较浅的那个，
+  在 $u$ 是 $v$ 祖先时恰好正确，容易被样例掩盖。
+  错因标签：misread_problem。

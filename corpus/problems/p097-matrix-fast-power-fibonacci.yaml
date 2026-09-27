@@ -1,0 +1,146 @@
+id: p097-matrix-fast-power-fibonacci
+title: 矩阵快速幂求斐波那契第 n 项
+knowledge_tags:
+  - 矩阵
+  - 快速幂
+  - 数论
+  - 分治
+difficulty: hard
+source: 经典算法题
+description: |
+  定义斐波那契数列：$F_0 = 0$，$F_1 = 1$，$F_n = F_{n-1} + F_{n-2}$
+  （$n \ge 2$）。
+
+  请计算 $F_n$ 对 $10^9 + 7$ 取模的结果。
+
+  **输入格式**
+
+  一行一个整数 $n$。
+
+  **输出格式**
+
+  一行，一个整数，表示 $F_n \bmod (10^9+7)$。
+
+  **数据范围**
+
+  $0 \le n \le 10^{18}$
+
+  **提示**
+
+  $n$ 可达 $10^{18}$，**逐项递推必定超时**。请使用矩阵快速幂，
+  把复杂度降到 $O(\log n)$。
+input_format: 一行一个整数 n。
+output_format: 一行一个整数，F_n mod (10^9+7)。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "10\n"
+    expected_output: "55\n"
+    is_sample: true
+  - input: "0\n"
+    expected_output: "0\n"
+    is_sample: true
+  - input: "1\n"
+    expected_output: "1\n"
+  - input: "2\n"
+    expected_output: "1\n"
+  - input: "90\n"
+    expected_output: "210345902\n"
+  - input: "1000000000000000000\n"
+    expected_output: "209783453\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+
+  using int64 = long long;
+  const int64 MOD = 1000000007LL;
+
+  struct Mat {
+      int64 a[2][2];
+      Mat() { memset(a, 0, sizeof(a)); }
+  };
+
+  // One entry fits in 1e9+7; a product sums two of them, ~2e9, which
+  // exceeds INT_MAX — hence long long throughout, not int.
+  Mat mul(const Mat &x, const Mat &y) {
+      Mat r;
+      for (int i = 0; i < 2; ++i)
+          for (int k = 0; k < 2; ++k)
+              if (x.a[i][k])
+                  for (int j = 0; j < 2; ++j)
+                      r.a[i][j] = (r.a[i][j] + x.a[i][k] * y.a[k][j]) % MOD;
+      return r;
+  }
+
+  Mat mpow(Mat base, unsigned long long e) {
+      Mat r;
+      r.a[0][0] = r.a[1][1] = 1;  // identity
+      while (e) {
+          if (e & 1) r = mul(r, base);
+          base = mul(base, base);
+          e >>= 1;
+      }
+      return r;
+  }
+
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      unsigned long long n;
+      cin >> n;
+
+      // [F(n+1) F(n)]^T = base^n * [F(1) F(0)]^T, so F(n) is the [1][0]
+      // entry of base^n (for n >= 1); n == 0 is handled by that entry
+      // being 0 for the identity, which is base^0.
+      Mat base;
+      base.a[0][0] = 1; base.a[0][1] = 1;
+      base.a[1][0] = 1; base.a[1][1] = 0;
+      Mat p = mpow(base, n);
+      cout << p.a[1][0] << endl;
+      return 0;
+  }
+eval_notes: |
+  这题同时考"矩阵乘法"、"快速幂"和"取模时机"，三处各有典型错法。
+
+  第一类错误是**用 `int` 做矩阵乘法**。模数是 $10^9+7$，
+  两个这样的数相乘约 $10^{18}$，**远超 `int`**，
+  必须用 `long long`。注意取模后的答案本身在 `int`
+  范围内（样例 5 的 $F_{90} \bmod (10^9+7) = 210345902$），
+  所以"用 int 存最终答案"不会出错——**出错的是乘法中间值**，
+  这一点容易搞反。错因标签：overflow。
+
+  第二类错误是**只在最后取一次模，而不是每步取模**。
+  $n=10^{18}$ 时中间值早就溢出任何整数类型，结果完全错乱。
+  必须在每次乘加后立即 `% MOD`。错因标签：overflow。
+
+  第三类错误是**快速幂的指数为 0 时返回未初始化的矩阵**。
+  单位矩阵必须显式设为 `a[0][0] = a[1][1] = 1`；
+  若漏掉，`n = 0` 时得到全 0 矩阵，正确答案是 0，
+  样例 2 **侥幸正确**（$F_0 = 0$，而全 0 矩阵的
+  `[1][0]` 也是 0）——这是题目设计上接受的一处不可观测性，
+  但 $n=1$ 时会错（正确答案是 1，全 0 矩阵给出 0）。
+  样例 3 专门覆盖这个。错因标签：initialization。
+
+  第四类错误是**矩阵乘法结果没有清零**（`Mat r;` 的构造函数
+  没 `memset`，或使用了未初始化的局部数组）。结果累加到
+  垃圾值上。错因标签：uninitialized_state。
+
+  第五类错误是**把 $F_n$ 取成 `p.a[0][0]` 或 `p.a[0][1]`
+  而不是 `p.a[1][0]`**。这会给出 $F_{n+1}$ 而不是 $F_n$。
+  样例 1（$n=10$，正确 55）会输出 $F_{11} = 89$。
+  错因标签：off_by_one。
+
+  第六类错误是**逐项递推**（$O(n)$ 循环）。答案在小 $n$ 上
+  正确，但 $n = 10^{18}$ 时永远跑不完，必然 TLE。
+  这是本题主要的超时来源。错因标签：wrong_complexity。
+
+  第七类错误是**用通项公式 + 浮点计算**。$\sqrt{5}$ 与浮点
+  幂在 $n=10^{18}$ 时精度完全不够，结果错得离谱**且不报错**。
+  错因标签：wrong_data_type。
+
+  第八类错误是**读入 $n$ 用 `int`**。$10^{18}$ 远超 `int`，
+  会被截断成一个看似随机的数。样例 6 专门覆盖这个。
+  必须用 `long long` 或 `unsigned long long`。
+  错因标签：wrong_data_type。

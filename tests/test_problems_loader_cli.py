@@ -302,6 +302,141 @@ def test_dry_run_reports_the_distributions(
     assert "skipping the database import" in out
 
 
+# --- _check_replace_is_safe: the two kinds of orphaned row -------------
+
+
+def _sqlite_session():
+    """A throwaway SQLite session with the full schema created.
+
+    StaticPool + ``:memory:`` so the same connection is handed back for
+    every checkout — an in-memory database lives and dies with its
+    connection, and the default pool would give the second query a
+    different, table-less one.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from sqlalchemy.pool import StaticPool
+
+    from app.models.base import Base
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return Session(engine), engine
+
+
+def test_replace_is_allowed_on_an_empty_database() -> None:
+    session, engine = _sqlite_session()
+    try:
+        load_problems._check_replace_is_safe(session)
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_replace_is_refused_when_an_assignment_references_the_catalogue() -> None:
+    """**The regression this guard exists for.**
+
+    A reload that reassigns ids leaves ``assignment.problem_ids``
+    pointing at nothing — JSON has no foreign key to stop it — and the
+    damage only shows up as a student's 404. Refusing up front is the
+    whole point.
+    """
+    from app.models.assignment import Assignment
+
+    session, engine = _sqlite_session()
+    try:
+        session.add(Assignment(title="第一次作业", problem_ids=[29, 35, 15, 75]))
+        session.commit()
+
+        with pytest.raises(SystemExit) as excinfo:
+            load_problems._check_replace_is_safe(session)
+
+        message = str(excinfo.value)
+        assert "assignment" in message
+        assert "第一次作业" in message, "the operator cannot act on an unnamed row"
+        assert "#1" in message
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_replace_is_refused_when_a_submission_references_the_catalogue() -> None:
+    from app.models.submission import Submission
+
+    session, engine = _sqlite_session()
+    try:
+        session.add(Submission(problem_id=29, status="WA", code="int main(){}"))
+        session.commit()
+
+        with pytest.raises(SystemExit) as excinfo:
+            load_problems._check_replace_is_safe(session)
+
+        assert "submission" in str(excinfo.value)
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_a_free_run_does_not_block_replace() -> None:
+    """A submission with no problem_id belongs to no assignment.
+
+    Counting it would refuse every replace on any database where someone
+    has ever used the scratch runner, which is the failure mode the
+    original submissions check was written to avoid.
+    """
+    from app.models.submission import Submission
+
+    session, engine = _sqlite_session()
+    try:
+        session.add(Submission(problem_id=None, status="AC", code="int main(){}"))
+        session.commit()
+
+        load_problems._check_replace_is_safe(session)
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_an_assignment_with_no_problems_does_not_block_replace() -> None:
+    from app.models.assignment import Assignment
+
+    session, engine = _sqlite_session()
+    try:
+        session.add(Assignment(title="空作业", problem_ids=[]))
+        session.commit()
+
+        load_problems._check_replace_is_safe(session)
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_replace_refuses_on_the_assignment_even_with_no_submissions() -> None:
+    """The two checks are independent, and this is the one that was missing.
+
+    Before the guard existed, a database with assignments but no
+    submissions sailed straight through and got its problem sets
+    silently broken — which is exactly the state the project was found
+    in.
+    """
+    from app.models.assignment import Assignment
+
+    session, engine = _sqlite_session()
+    try:
+        session.add(Assignment(title="只有作业没有提交", problem_ids=[1, 2, 3]))
+        session.commit()
+
+        with pytest.raises(SystemExit):
+            load_problems._check_replace_is_safe(session)
+    finally:
+        session.close()
+        engine.dispose()
+
+
 # --- The real corpus ---------------------------------------------------
 
 

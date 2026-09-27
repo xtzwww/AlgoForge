@@ -58,6 +58,7 @@
  * for the topbar's breadcrumb instead, via `usePageCrumb`.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useDialog } from 'naive-ui'
 import AssistPanel from '../components/AssistPanel.vue'
 import CodeEditor from '../components/CodeEditor.vue'
 import DebugPanel from '../components/DebugPanel.vue'
@@ -76,7 +77,9 @@ import {
 } from '../api/debug'
 import { runCases, submitCases, submitProblem, type JudgeEvent } from '../api/ws'
 import type { JudgeResponse, TestCaseIn, TestCaseOut } from '../api/judge'
-import { getProblem, getProblemTestCases, type ProblemDetail } from '../api/problems'
+import { describeRequestError, statusOf } from '../api/errors'
+import { getMyAssignments } from '../api/assignments'
+import { getProblem, getProblemTestCases, listProblems, type ProblemDetail } from '../api/problems'
 import { getLanguageOptions, pickDefaultLanguage, type LanguageOption } from '../api/languages'
 import { hasNativeHighlighting, type MonacoLanguageId } from '../monaco-theme'
 import { editTrace } from '../edit-trace'
@@ -104,7 +107,21 @@ const props = withDefaults(
   { problemId: null, assignmentId: null }
 )
 
-const emit = defineEmits<{ (e: 'exit'): void }>()
+const emit = defineEmits<{
+  (e: 'exit'): void
+  /** 用户点了「下一题」：跳到指定的题目 id（保持同一份作业的上下文）。 */
+  (e: 'go-next', problemId: number): void
+}>()
+
+/**
+ * Imperative confirmation dialogs.
+ *
+ * `window.confirm` is a project red line (AGENTS.md §二) — it blocks the
+ * renderer, its styling is outside the theme system, and it cannot be
+ * driven by a test. `useDialog()` returns a promise-based replacement;
+ * `App.vue` hosts the `NDialogProvider` it needs.
+ */
+const dialog = useDialog()
 
 // --- Free-run fallback problem (the pre-PU-14 built-in A + B) ---
 /**
@@ -144,7 +161,29 @@ const problem = ref<ProblemDetail | null>(null)
 /** Bumped per load so a slow fetch cannot overwrite a newer one. */
 let loadToken = 0
 const problemLoading = ref(false)
+/**
+ * Why the statement is missing, in words a student can act on.
+ *
+ * **Not `err.message`.** That renders `Request failed with status code
+ * 404`, which names neither what is missing nor what to do about it —
+ * and the 404 case has one overwhelmingly common cause worth stating:
+ * re-importing the corpus (`tools/load_problems.py --replace`) deletes
+ * and re-inserts every row, so auto-increment ids jump forward while
+ * assignments, the mistake book and browser history still hold the old
+ * ones. A link from an assignment then lands on a problem that is not
+ * there any more. See `api/errors.ts`.
+ */
 const problemError = ref('')
+/** Extra line under {@link problemError}: what the student can do next. */
+const problemErrorHint = ref('')
+/**
+ * True when the problem is *gone* rather than merely unreachable.
+ *
+ * Drives a different panel: "this problem no longer exists" plus a way
+ * back to the catalogue, instead of a retry button that can only fail
+ * again.
+ */
+const problemMissing = ref(false)
 
 /** Collapses the statement column to give the editor the full width. */
 const statementCollapsed = ref(false)
@@ -234,6 +273,123 @@ async function loadExpectedOutputs(problemId: number): Promise<void> {
   for (const c of list.test_cases) map.set(c.ordinal, c.expected_output)
   expectedByOrdinal.value = map
 }
+
+// --- 下一题 + 完成进度（2026-09-27）-------------------------------------
+//
+// 做题页过去是"一题到底"：做完了没有下一题，也没有"这轮做到哪了"的反馈。
+// 现在从数据源拉出顺序：
+//   - 作业模式：`getMyAssignments()` 里那份作业的 `problem_ids` 是老师排的
+//     顺序，`solved_problem_ids` 是已经做对的。下一题 = 当前题之后第一个
+//     没做对的；没有就从头找第一个没做对的（复习永远有路可走）；全对则
+//     显示"全部完成"。
+//   - 题库/自由练习：`listProblems()` 的目录顺序（一页最多 100 道），
+//     下一题就是目录里的下一道。不做"跳过已做对"的轮转 —— 题库顺序不是
+//     教学编排，按目录推进即可。
+
+/** 导航所需的顺序与进度。`null` = 拉不到（非阻塞降级，照常做题）。 */
+interface NavInfo {
+  ids: number[]
+  solvedIds: ReadonlySet<number>
+  total: number
+  solvedCount: number
+}
+
+const navInfo = ref<NavInfo | null>(null)
+
+async function loadNav(): Promise<void> {
+  if (props.problemId === null) {
+    navInfo.value = null
+    return
+  }
+  try {
+    if (props.assignmentId !== null) {
+      const all = await getMyAssignments()
+      const row = all.find((a) => a.id === props.assignmentId)
+      navInfo.value = row
+        ? {
+            ids: row.problem_ids,
+            solvedIds: new Set(row.solved_problem_ids),
+            total: row.problem_count,
+            solvedCount: row.solved
+          }
+        : null
+      return
+    }
+    const page = await listProblems({ page_size: 100 })
+    navInfo.value = {
+      ids: page.items.map((p) => p.id),
+      solvedIds: new Set(),
+      total: 0,
+      solvedCount: 0
+    }
+  } catch {
+    // 拉不到导航不阻塞做题：按钮隐藏，页面照常。错误不弹横幅 —— 这是
+    // 附属功能，判题才是主体。
+    navInfo.value = null
+  }
+}
+
+const currentNavIndex = computed<number>(() => {
+  const ids = navInfo.value?.ids ?? []
+  return props.problemId === null ? -1 : ids.indexOf(props.problemId)
+})
+
+/**
+ * 下一题的 id。null = 没有了（按钮禁用并换成"完成"文案）。
+ * 作业模式：优先当前题之后第一个没做对的，其次从头找第一个没做对的，
+ * 全对 → null。题库模式：目录顺序的下一道，没有就 null。
+ */
+const nextProblemId = computed<number | null>(() => {
+  const nav = navInfo.value
+  if (!nav || nav.ids.length === 0) return null
+  const idx = currentNavIndex.value
+  if (props.assignmentId !== null) {
+    for (let i = idx + 1; i < nav.ids.length; i++) {
+      if (!nav.solvedIds.has(nav.ids[i])) return nav.ids[i]
+    }
+    for (const id of nav.ids) {
+      if (!nav.solvedIds.has(id)) return id
+    }
+    return null
+  }
+  if (idx >= 0 && idx + 1 < nav.ids.length) return nav.ids[idx + 1]
+  return null
+})
+
+/** 作业模式的完成进度（0–100）。题库模式没有进度概念，不显示。 */
+const progressPercent = computed<number | null>(() => {
+  const nav = navInfo.value
+  if (props.assignmentId === null || !nav || nav.total === 0) return null
+  return Math.round((nav.solvedCount / nav.total) * 100)
+})
+
+/** 作业模式里的当前位置："第 2/5 题"。导航拉不到时不显示。 */
+const navPositionText = computed<string | null>(() => {
+  const nav = navInfo.value
+  if (props.assignmentId === null || !nav || nav.total === 0) return null
+  const idx = currentNavIndex.value
+  if (idx < 0) return null
+  return `第 ${idx + 1}/${nav.total} 题`
+})
+
+const nextButtonLabel = computed<string>(() => {
+  if (nextProblemId.value !== null) return '下一题'
+  return props.assignmentId !== null ? '全部完成' : '没有下一题'
+})
+
+/** 提交判为 AC 后刷新进度（做对一道，数字要动）。 */
+function refreshNavOnPass(): void {
+  if (props.assignmentId !== null) void loadNav()
+}
+
+// 换题 / 进入页面时重取导航数据。
+watch(
+  () => [props.problemId, props.assignmentId],
+  () => {
+    void loadNav()
+  },
+  { immediate: true }
+)
 
 // --- Editor state ---
 const code = ref<string>(`#include <iostream>
@@ -362,6 +518,53 @@ function insertAssistanceCode(snippet: string): void {
   const body = snippet.replace(/\s+$/, '')
   if (body === '') return
   code.value = `${code.value.replace(/\s+$/, '')}\n\n${body}\n`
+}
+
+/**
+ * Replace the whole buffer with AI-authored code (阶段 5, 五档).
+ *
+ * **This is the one path that overwrites the student's work**, and it is
+ * gated on purpose: 五档's "完整解法" means "give me the answer", so
+ * dropping the result at the end of the buffer (as 四档 does) would leave
+ * two programs welded together and neither of them runnable. Replacing is
+ * the only reading that matches the request.
+ *
+ * It still asks first. The panel emits an event and never touches `code` —
+ * so the confirmation cannot be skipped by anything inside the panel, and
+ * an accidental click during a long solve cannot silently destroy a
+ * half-written attempt. Skipped when the buffer is untouched (equal to
+ * `pristineCode`), because then there is nothing to lose and a prompt
+ * would be pure friction.
+ */
+async function replaceAssistanceCode(snippet: string): Promise<void> {
+  const body = snippet.replace(/\s+$/, '')
+  if (body === '') return
+
+  if (code.value !== pristineCode.value) {
+    const ok = await new Promise<boolean>((resolve) => {
+      dialog.warning({
+        title: '用 AI 的代码替换当前代码？',
+        content: '你在编辑器里写的代码会被整段替换，且无法撤销。原来的内容不会保留。',
+        positiveText: '替换',
+        negativeText: '取消',
+        // Every exit must settle the promise. Missing `onMaskClick` /
+        // `onClose` is the classic way a confirm dialog leaves an await
+        // hanging forever — the student clicks the mask and nothing moves.
+        onPositiveClick: () => resolve(true),
+        onNegativeClick: () => resolve(false),
+        onMaskClick: () => resolve(false),
+        onClose: () => resolve(false)
+      })
+    })
+    if (!ok) return
+  }
+
+  code.value = `${body}\n`
+  // The buffer now holds AI output rather than the student's edits, so the
+  // "has the user typed since we last set it" baseline moves with it —
+  // otherwise the next language switch would warn about changes the AI
+  // made, not the student.
+  pristineCode.value = code.value
 }
 
 // --- Judge state ---
@@ -533,7 +736,10 @@ async function toggleBreakpoint(line: number): Promise<void> {
   if (!debugSession.value) return
 
   try {
-    await putBreakpoints(debugSession.value.session_id, [...next].sort((a, b) => a - b))
+    await putBreakpoints(
+      debugSession.value.session_id,
+      [...next].sort((a, b) => a - b)
+    )
     debugError.value = ''
     debugNotice.value = '断点已保存，下次单步生效'
   } catch (err) {
@@ -695,6 +901,10 @@ async function loadProblem(): Promise<void> {
   errorMsg.value = ''
   expectedByOrdinal.value = new Map()
 
+  problemError.value = ''
+  problemErrorHint.value = ''
+  problemMissing.value = false
+
   if (problemId === null) {
     problem.value = null
     problemError.value = ''
@@ -703,7 +913,6 @@ async function loadProblem(): Promise<void> {
   }
 
   problemLoading.value = true
-  problemError.value = ''
   try {
     const [detail] = await Promise.all([getProblem(problemId), loadExpectedOutputs(problemId)])
     // A newer load started while this one was in flight; its result wins.
@@ -712,7 +921,13 @@ async function loadProblem(): Promise<void> {
   } catch (err) {
     if (token !== loadToken) return
     problem.value = null
-    problemError.value = (err as Error).message
+    const friendly = describeRequestError(err, `题目 #${problemId}`)
+    problemError.value = friendly.message
+    problemErrorHint.value = friendly.hint ?? ''
+    // Only 404 means the row is really absent. A timeout must not claim
+    // the problem is deleted — that would talk a student out of a problem
+    // that is still there.
+    problemMissing.value = statusOf(err) === 404
   } finally {
     if (token === loadToken) problemLoading.value = false
   }
@@ -735,15 +950,25 @@ function applyTemplate(option: LanguageOption): void {
  * the answer is no the control has to snap back to the language the app
  * is actually still using.
  */
-function onLanguageChange(event: Event): void {
+async function onLanguageChange(event: Event): Promise<void> {
   const select = event.target as HTMLSelectElement
   const option = languages.value.find((o) => o.id === select.value)
   if (!option || option.id === languageId.value) return
 
   if (code.value !== pristineCode.value) {
-    const confirmed = window.confirm(
-      `切换到 ${option.display_name} 会用起始模板替换当前代码，未保存的修改将丢失。继续吗？`
-    )
+    // `useDialog`, not `window.confirm` — see the note on `dialog` above.
+    const confirmed = await new Promise<boolean>((resolve) => {
+      dialog.warning({
+        title: `切换到 ${option.display_name}？`,
+        content: '当前代码会被该语言的起始模板替换，未保存的修改将丢失。',
+        positiveText: '替换',
+        negativeText: '取消',
+        onPositiveClick: () => resolve(true),
+        onNegativeClick: () => resolve(false),
+        onMaskClick: () => resolve(false),
+        onClose: () => resolve(false)
+      })
+    })
     if (!confirmed) {
       // `languageId` is unchanged, so Vue has no reason to re-render the
       // <select>; snap the DOM back by hand.
@@ -964,6 +1189,12 @@ async function start(kind: RunKind): Promise<void> {
       // the time the verdict arrives.
       if (ev.type === 'judge_done' || ev.type === 'judge_error') {
         applyVerdict(ev)
+        // 提交判 AC 后刷新作业进度：做对一道，工具栏的"已完成 X/N"要跟着
+        // 动。在流回调里判（而不是等 await 之后读 `result.value`）：事件
+        // 自带 status，不依赖对 ref 的收窄。
+        if (kind === 'submit' && ev.type === 'judge_done' && ev.status === 'AC') {
+          refreshNavOnPass()
+        }
       }
     })
 
@@ -1010,6 +1241,39 @@ function submit(): Promise<void> {
       </div>
 
       <div class="toolbar-right">
+        <!--
+          作业模式的完成进度：细进度条 + "已完成 X/N"。
+          题库/自由练习没有"进度"概念，只在作业模式下出现。
+        -->
+        <span
+          v-if="progressPercent !== null"
+          class="nav-progress"
+          title="已做对的题目数 / 这份作业的题目总数"
+        >
+          <span class="nav-progress-bar">
+            <span class="nav-progress-fill" :style="{ width: `${progressPercent}%` }"></span>
+          </span>
+          <span v-if="navPositionText" class="nav-position">{{ navPositionText }}</span>
+          已完成 {{ navInfo?.solvedCount ?? 0 }}/{{ navInfo?.total ?? 0 }}
+        </span>
+
+        <button
+          v-if="isProblemMode && (props.assignmentId === null || navInfo !== null)"
+          class="btn btn-secondary btn-sm"
+          type="button"
+          :disabled="nextProblemId === null || isRunning"
+          :title="
+            nextProblemId === null
+              ? props.assignmentId !== null
+                ? '这份作业的所有题目都已完成'
+                : '题库里没有下一道了'
+              : '跳到下一题（没做对的优先）'
+          "
+          @click="nextProblemId !== null && emit('go-next', nextProblemId)"
+        >
+          {{ nextButtonLabel }}
+        </button>
+
         <button v-if="isProblemMode" class="btn btn-text" type="button" @click="emit('exit')">
           退出到自由运行
         </button>
@@ -1099,8 +1363,28 @@ function submit(): Promise<void> {
 
         <div v-if="!statementCollapsed" class="panel-body">
           <div v-if="problemLoading" class="placeholder">加载题目中…</div>
+          <!--
+            A missing problem gets its own panel rather than the generic
+            error one: the useful action is different. Retrying cannot
+            bring back a deleted row, so the student is offered a way back
+            to the catalogue instead of a button that fails identically
+            every time.
+          -->
+          <div v-else-if="problemMissing" class="placeholder placeholder-error">
+            <p class="placeholder-title">找不到这道题</p>
+            <p class="placeholder-text">{{ problemError }}</p>
+            <p v-if="problemErrorHint" class="placeholder-text">{{ problemErrorHint }}</p>
+            <button class="btn btn-secondary btn-sm" type="button" @click="emit('exit')">
+              退出到自由运行
+            </button>
+          </div>
           <div v-else-if="problemError" class="placeholder placeholder-error">
-            无法加载题目 #{{ problemId }}：{{ problemError }}
+            <p class="placeholder-title">无法加载题目 #{{ problemId }}</p>
+            <p class="placeholder-text">{{ problemError }}</p>
+            <p v-if="problemErrorHint" class="placeholder-text">{{ problemErrorHint }}</p>
+            <button class="btn btn-secondary btn-sm" type="button" @click="loadProblem">
+              重试
+            </button>
           </div>
 
           <template v-else>
@@ -1190,9 +1474,7 @@ function submit(): Promise<void> {
               class="debug-start"
               :disabled="debugBusy || debugLoading || !debugAvailable || !code"
               :title="
-                !debugAvailable
-                  ? debugUnavailableReason
-                  : '编译你的代码并逐步运行，可以打断点'
+                !debugAvailable ? debugUnavailableReason : '编译你的代码并逐步运行，可以打断点'
               "
               @click="onDebugStart"
             >
@@ -1257,6 +1539,7 @@ function submit(): Promise<void> {
         :statement="problemDescription"
         :busy="judgeBusy"
         @insert="insertAssistanceCode"
+        @replace="replaceAssistanceCode"
       />
     </div>
   </div>
@@ -1297,6 +1580,47 @@ function submit(): Promise<void> {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* 作业进度：一根细能量条 + 数字。与 AI 强度轴同语言 —— 都是"往右更
+ * 多"的渐变填充，都用主题色做发光。 */
+.nav-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--af-text-muted);
+  background: var(--af-elevated);
+  border: 1px solid var(--af-border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.nav-position {
+  font-weight: 600;
+  color: var(--af-text-primary);
+}
+
+.nav-progress-bar {
+  width: 56px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--af-border);
+  overflow: hidden;
+}
+
+.nav-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--af-accent) 55%, transparent),
+    var(--af-accent)
+  );
+  box-shadow: 0 0 6px color-mix(in srgb, var(--af-accent) 60%, transparent);
+  transition: width 0.25s ease;
 }
 
 .problem-title {
@@ -1391,6 +1715,14 @@ function submit(): Promise<void> {
    * ~6.3:1. So this line is a contrast fix, not a cleanup. */
   color: var(--af-text-inverse);
   background: var(--af-accent);
+}
+
+/* The variant used inside the statement column's error panels: the
+ * toolbar's 13px/16px button is a full-width control's size, too heavy
+ * for a narrow side column. */
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 12px;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -1538,6 +1870,30 @@ function submit(): Promise<void> {
 
 .placeholder-error {
   color: var(--af-text-primary);
+}
+
+/*
+ * A missing/blocked problem is a small stack rather than one line: title,
+ * two lines of explanation, and a button. Laid out as a column so the
+ * button sits under the text instead of wrapping beside it, which is what
+ * a single block of prose would do at this column width.
+ */
+.placeholder-title {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--af-text-primary);
+}
+
+.placeholder-text {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--af-text-secondary);
+}
+
+.placeholder .btn {
+  margin-top: 4px;
 }
 
 /* --- editor + output --- */

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AlgoForge 教师端</title>
+    <!--
+      The teacher side of the web split (2026-09-25). Shares the same
+      renderer bundle as index.web.html — `src/main.ts` decides the side
+      from the entry file name (see runtime/mode.ts), which is also what
+      filters the route table down to the teacher pages.
+
+      Deliberately no Content-Security-Policy meta tag, for the same
+      reason as index.web.html: this build is served, so its CSP belongs
+      in the response headers of whatever serves it, and that is the only
+      place that can name the sidecar's real origin.
+    -->
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

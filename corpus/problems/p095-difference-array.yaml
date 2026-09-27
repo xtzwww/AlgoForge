@@ -1,0 +1,128 @@
+id: p095-difference-array
+title: 差分数组（区间加减与单点查询）
+knowledge_tags:
+  - 差分
+  - 前缀和
+  - 数组
+  - 数据结构
+difficulty: hard
+source: 经典算法题
+description: |
+  给定一个长度为 $n$、初始值全为 $0$ 的数组，需要处理 $q$ 次
+  区间加操作，最后输出数组的所有元素。
+
+  **输入格式**
+
+  第一行两个整数 $n$ 和 $q$。
+  接下来 $q$ 行，每行三个整数 $l$、$r$、$v$，表示把下标区间
+  $[l, r]$（**闭区间，下标从 1 开始**）内的每个数都加上 $v$。
+
+  **输出格式**
+
+  一行 $n$ 个整数，表示所有操作完成后的数组，以空格分隔。
+
+  **数据范围**
+
+  $1 \le n, q \le 2 \times 10^5$，$1 \le l \le r \le n$，
+  $-10^9 \le v \le 10^9$
+
+  **提示**
+
+  请尝试用**与 $n$、$q$ 成线性**的复杂度完成。直接对每个区间
+  逐个元素相加会超时。
+input_format: 第一行 n q，接下来 q 行 l r v。
+output_format: 一行 n 个整数，操作后的数组。
+time_limit: 2.0
+memory_limit: 256
+
+test_cases:
+  - input: "5 3\n1 3 2\n2 4 -1\n3 5 5\n"
+    expected_output: "2 1 6 4 5\n"
+    is_sample: true
+  - input: "3 1\n1 3 7\n"
+    expected_output: "7 7 7\n"
+    is_sample: true
+  - input: "1 1\n1 1 -3\n"
+    expected_output: "-3\n"
+  - input: "5 2\n1 1 10\n5 5 20\n"
+    expected_output: "10 0 0 0 20\n"
+  - input: "4 3\n1 4 1\n1 2 2\n3 4 3\n"
+    expected_output: "3 3 4 4\n"
+  - input: "3 2\n1 2 1000000000\n2 3 1000000000\n"
+    expected_output: "1000000000 2000000000 1000000000\n"
+
+correct_reference: |
+  #include <bits/stdc++.h>
+  using namespace std;
+  int main() {
+      ios::sync_with_stdio(false);
+      cin.tie(nullptr);
+      int n, q;
+      cin >> n >> q;
+
+      // diff[0] is unused; the array is 1-based. Adding v to [l, r] is
+      // expressed as +v at l and -v at r+1 — the prefix sum of diff
+      // "carries" the +v across exactly [l, r] and cancels afterwards.
+      vector<long long> diff(n + 2, 0);
+      for (int i = 0; i < q; ++i) {
+          int l, r;
+          long long v;
+          cin >> l >> r >> v;
+          diff[l] += v;
+          diff[r + 1] -= v;  // n + 2 slots so r == n is still in range
+      }
+
+      long long acc = 0;
+      for (int i = 1; i <= n; ++i) {
+          acc += diff[i];
+          if (i > 1) cout << ' ';
+          cout << acc;
+      }
+      cout << endl;
+      return 0;
+  }
+eval_notes: |
+  差分数组的全部内容就是"在 $l$ 处 $+v$、在 $r+1$ 处 $-v$"，
+  因此错误也集中在这两个下标上。
+
+  第一类错误是**把 $-v$ 加在 `r` 而不是 `r + 1`**。这样区间
+  变成半开 $[l, r)$，$r$ 这个位置**没有**被加上 $v$。样例 2
+  （`1 3 7`，正确输出 `7 7 7`）会输出 `7 7 0`。
+  这是最典型的一处。错因标签：off_by_one。
+
+  第二类错误是**数组只开 $n+1$ 个位置，却在 `diff[r+1]` 处
+  $r = n$ 时越界**。`r + 1 = n + 1`，若数组大小是 $n+1$，
+  合法下标是 $0..n$，访问 $n+1$ 越界。样例 2
+  （$n=3$、`1 3 7`）刚好会撞上。必须开 $n+2$。错因标签：
+  boundary_condition。
+
+  第三类错误是**用 0-based 下标但区间端点按 1-based 读入**，
+  没有转换。于是整个区间整体左移一格，`[1,3]` 变成了
+  数组下标 `[1,3]`（本意是 `[0,2]`）。样例 4
+  （`1 1 10` 和 `5 5 20`，正确输出 `10 0 0 0 20`）会输出
+  `0 10 0 0 0` 之类。错因标签：off_by_one。
+
+  第四类错误是**用 `int` 累加差分**。单个 $v$ 到 $10^9$、
+  $q$ 到 $2\times10^5$，某一点累计可达 $2\times10^{14}$，
+  `int` 必然溢出成看似随机的负数。样例 6 专门覆盖这个
+  （正确输出含 $2\times10^9$，已经超过 `int`）。错因标签：
+  overflow。
+
+  第五类错误是**最后没有做前缀和，直接输出 `diff`**。
+  输出的是"每个位置的变化量"而不是累计后的值。样例 1
+  会输出 `2 -1 5 -6 -5` 之类而不是 `2 1 6 4 5`。
+  错因标签：wrong_algorithm。
+
+  第六类错误是**对每个区间逐元素相加**（朴素 $O(nq)$）。
+  答案正确，但 $2\times10^5 \times 2\times10^5 = 4\times10^{10}$，
+  必然 TLE。这是本题主要的超时来源。错因标签：
+  wrong_complexity。
+
+  第七类错误是**用线段树/树状数组做区间加、单点查**。
+  这**完全正确**，输出一致，但常数比差分大得多。
+  属等价解法（只是杀鸡用牛刀）。错因标签：
+  wrong_complexity（认知层面，不构成判错）。
+
+  第八类错误是**输出时行末多一个空格**。多数评测忽略，
+  严格比对下 WA。样例 3（$n=1$，只有一个数）能暴露。
+  错因标签：io_format_error。
