@@ -51,6 +51,10 @@ vi.mock('../views/ProblemPracticeView.vue', () => ({
 }))
 vi.mock('../views/ProblemListView.vue', () => ({ default: { name: 'ProblemListViewStub' } }))
 vi.mock('../views/MistakesView.vue', () => ({ default: { name: 'MistakesViewStub' } }))
+// #5 变式题闭环：新增的练习页 import 链带 Monaco，这里一并挡掉。
+vi.mock('../views/VariantPracticeView.vue', () => ({
+  default: { name: 'VariantPracticeViewStub' }
+}))
 vi.mock('../views/ProfileView.vue', () => ({ default: { name: 'ProfileViewStub' } }))
 vi.mock('../views/PlanView.vue', () => ({ default: { name: 'PlanViewStub' } }))
 // 教师端 2026-09-26 拆成五个面板，逐条挡掉（`vi.mock` 必须静态提升，

@@ -36,6 +36,7 @@ import Practice from '../views/Practice.vue'
 import ProblemPracticeView from '../views/ProblemPracticeView.vue'
 import ProblemListView from '../views/ProblemListView.vue'
 import MistakesView from '../views/MistakesView.vue'
+import VariantPracticeView from '../views/VariantPracticeView.vue'
 import ProfileView from '../views/ProfileView.vue'
 import PlanView from '../views/PlanView.vue'
 import TeacherOverviewView from '../views/teacher/TeacherOverviewView.vue'
@@ -160,6 +161,15 @@ export const routes: RouteRecordRaw[] = [
     name: 'mistakes',
     component: MistakesView,
     meta: { title: '错题本', mode: 'student' }
+  },
+  {
+    // #5 变式题闭环：错题本里 S7 的变式题没有题目行、没有隐藏用例，
+    // 判题用它的样例走 inline 自测。entry / index 指向错题本里的哪条
+    // 变式题——它们必须在 mistakes 路由可达的上下文里才有意义。
+    path: '/practice/variant',
+    name: 'variant-practice',
+    component: VariantPracticeView,
+    meta: { title: '变式题练习', parent: 'mistakes', mode: 'student' }
   },
   {
     path: '/profile',

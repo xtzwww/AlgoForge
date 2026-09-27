@@ -22,12 +22,32 @@
  * mistake should not be handed today's spoiler by default.
  */
 import { ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import type { Variant } from '../api/mistake_book'
 
 const props = defineProps<{
   /** The variants to offer. An empty list renders nothing at all. */
   variants: Variant[]
+  /**
+   * The mistake-book entry these variants belong to.
+   *
+   * Absent when the block is shown outside the mistake book (e.g. on the
+   * judge's result panel), where there is no entry to practise against —
+   * and then the "practise this in the editor" door is not offered,
+   * because there would be nowhere for the verdict to land.
+   */
+  entryId?: number
 }>()
+
+const router = useRouter()
+
+function practise(variantIndex: number): void {
+  if (props.entryId === undefined) return
+  void router.push({
+    name: 'variant-practice',
+    query: { entry: props.entryId, index: variantIndex }
+  })
+}
 
 const expanded = ref(false)
 
@@ -100,6 +120,20 @@ function toggle(): void {
         <p v-if="v.difference" class="variant-diff">
           <span class="variant-diff-key">与原题的区别</span>{{ v.difference }}
         </p>
+
+        <!--
+          闭环入口：变式题不是给人看的，是给人做的。只有错题本上下文里
+          有 entry 可回，才给这个门；judge 面板上的展示（没有 entry id）
+          不给，因为判完的结果没有地方可落。
+        -->
+        <button
+          v-if="entryId !== undefined"
+          type="button"
+          class="btn btn-practise"
+          @click="practise(i)"
+        >
+          用编辑器做这道题
+        </button>
       </div>
     </div>
   </div>
@@ -159,6 +193,19 @@ function toggle(): void {
 
 .btn-variant:hover:not(:disabled) {
   background: var(--af-accent-subtle);
+}
+
+/* 进入做题的门比「看看类似的题」更实：点了是要写代码的。 */
+.btn-practise {
+  margin-top: 8px;
+  color: var(--af-accent);
+  background: var(--af-accent-subtle);
+  border-color: var(--af-accent);
+}
+
+.btn-practise:hover:not(:disabled) {
+  background: var(--af-accent);
+  color: #fff;
 }
 
 .variants-body {

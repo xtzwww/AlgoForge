@@ -9,10 +9,15 @@
  *
  * 另外钉住两条与其它反馈组件一致的契约：空列表整个不渲染、新的一组要重新折叠。
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import VariantProblem from './VariantProblem.vue'
 import type { Variant } from '../api/mistake_book'
+
+const routerPush = vi.fn()
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: routerPush })
+}))
 
 /**
  * `attachTo: document.body` 不是可选项。
@@ -22,6 +27,7 @@ import type { Variant } from '../api/mistake_book'
  */
 type VariantProps = {
   variants: Variant[]
+  entryId?: number
 }
 
 const mounted: VueWrapper[] = []
@@ -31,6 +37,10 @@ function mountVariants(props: VariantProps): VueWrapper {
   mounted.push(w)
   return w
 }
+
+beforeEach(() => {
+  routerPush.mockReset()
+})
 
 afterEach(() => {
   while (mounted.length > 0) mounted.pop()?.unmount()
@@ -126,5 +136,30 @@ describe('VariantProblem', () => {
 
     await toggle(w)
     expect(w.find('.variant-points').exists()).toBe(false)
+  })
+
+  it('有 entryId 时每张卡片给「用编辑器做这道题」的门，点击去练习页', async () => {
+    const w = mountVariants({
+      variants: [VARIANT, { ...VARIANT, statement: '第二道：求最小值。' }],
+      entryId: 7
+    })
+
+    await toggle(w)
+
+    const doors = w.findAll('.btn-practise')
+    expect(doors).toHaveLength(2)
+
+    await doors[1].trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({
+      name: 'variant-practice',
+      query: { entry: 7, index: 1 }
+    })
+  })
+
+  it('没有 entryId（如判题面板的展示）不给做题门', async () => {
+    const w = mountVariants({ variants: [VARIANT] })
+
+    await toggle(w)
+    expect(w.find('.btn-practise').exists()).toBe(false)
   })
 })

@@ -599,6 +599,7 @@ onMounted(load)
               v-if="entry.analysis_status === 'done' && entry.variants.length"
               class="entry-variants"
               :variants="entry.variants"
+              :entry-id="entry.id"
             />
           </div>
 
