@@ -133,3 +133,18 @@ desktop/src/renderer/dist-web-check/
 
 # 辅助面板改版时留下的对比草稿（AssistPanel.vue 已取代它）
 desktop/src/renderer/src/components/AssistPanel.vue.new
+
+# ---------- 学位论文与个人材料（不进开源仓库）----------
+# 毕业论文/ 里是论文草稿、答辩 PPT 与大量截图；开题报告含学号姓名。
+# 这些是"交付给学校的材料"，不是项目的组成，公开仓库里没有它们的容身之处。
+毕业论文/
+*开题报告*.docx
+
+# 根目录的示意图（WBS / AND-OR 图），由 draw_wbs.py、draw_andor.py 重新生成
+/*.png
+
+# 临时工作目录（论文截图与中间产物曾堆在这里）
+.tmp/
+
+# 换行符转换实验留下的备份（start-web.bat.bak-lf）
+*.bak-lf
