@@ -4,7 +4,7 @@
 
 面向编程类课程的教学辅助系统 —— 过程可溯、学情可见、反馈分层。
 
-[![CI](https://github.com/kx2b/AlgoForge/actions/workflows/ci.yml/badge.svg)](https://github.com/kx2b/AlgoForge/actions/workflows/ci.yml)
+[![CI](https://github.com/xtzwww/AlgoForge/actions/workflows/ci.yml/badge.svg)](https://github.com/xtzwww/AlgoForge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
 ![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white)
