@@ -1,6 +1,6 @@
 ﻿@echo off
 REM ============================================================
-REM  CodeLab / 编程练习助手 -- Web edition launcher (idempotent)
+REM  CodeLab / Programming Practice Assistant -- Web edition launcher (idempotent)
 REM
 REM  Difference from start.bat (Electron desktop):
 REM    - no native window; the UI opens in a browser;
@@ -28,9 +28,25 @@ REM  tools\web-bundle-stale.mjs so it can be tested; see that file.
 REM
 REM  Created 2026-09-24 (PU-12).
 REM
-REM  ENCODING: save this file as UTF-8 WITH BOM (cmd here runs on
-REM  code page 65001; GBK becomes mojibake, and no-BOM UTF-8
-REM  occasionally shreds multibyte comments).
+REM  ENCODING: UTF-8 WITH BOM, and CRLF line endings. Both matter.
+REM
+REM  The BOM is what lets cmd run on code page 65001 and print Chinese.
+REM  The CRLF is separate and was MISSING until 2026-10-04: the file had
+REM  been rewritten with Unix LF endings, and cmd seeks by byte offset, so
+REM  every CRLF-less line desynchronised the parse. The symptoms were
+REM  nonsense like `'ser' is not recognized` (a word cut out of a REM) and
+REM  the script dying before it started anything -- double-clicking just
+REM  flashed and closed. A batch file with LF endings is not a batch file.
+REM
+REM  NOTE ON PROSE: every comment and every `echo` here is ASCII on
+REM  purpose. With chcp 65001 cmd still mis-seeks past multibyte text in
+REM  the lines it *re-reads* (blocks, `for /f`, `call` targets), and once
+REM  the drift starts it eventually walks into the `:kill_port` body and
+REM  runs a bare `netstat`, dumping its usage text into the window. That
+REM  dump is cosmetic -- the launch still completes -- but it looks like a
+REM  crash. The one Chinese string that must stay is the PYTHON_EXE path:
+REM  it is real data (the account is named 雪团子), not prose, and a
+REM  correctly-parsed file reaches it fine.
 REM
 REM  GOTCHA FIXED HERE: never put a `:label` inside a parenthesised
 REM  block. cmd's block parser breaks and reports
@@ -57,8 +73,8 @@ REM  The web bundle bakes VITE_SIDECAR_URL / VITE_SIDECAR_TOKEN in
 REM  at BUILD time, so Vite needs these as a *file* before it runs.
 REM  This used to be maintained by hand, and when the file was
 REM  missing the bundle shipped with no backend address at all: the
-REM  page reported "没有配置分析引擎地址（VITE_SIDECAR_URL），网页版
-REM  无法连接。" while the sidecar was running fine.
+REM  page reported "no analysis-engine address configured (VITE_SIDECAR_URL);
+REM  the web edition cannot connect" while the sidecar was running fine.
 REM  Written from the variables above so the port and token have one
 REM  source of truth. This OVERWRITES local edits on purpose -- to
 REM  point the web build somewhere else, change SIDECAR_PORT /
@@ -75,17 +91,17 @@ set "PG_UP=0"
 
 echo.
 echo   ============================================
-echo     编程练习助手 网页版
+echo     Programming Practice Assistant -- Web edition
 echo   ============================================
 echo.
 
 if not exist "%DESKTOP_DIR%\node_modules" (
-  echo   [ERROR] desktop 下 node_modules 缺失，请先执行 npm install
+  echo   [ERROR] desktop/node_modules is missing. Run: npm install
   pause
   exit /b 1
 )
 if not exist "%SIDECAR_DIR%\.venv\Scripts\python.exe" (
-  echo   [ERROR] sidecar 下 .venv 缺失，请先建虚拟环境并安装依赖
+  echo   [ERROR] sidecar/.venv is missing. Create it and install dependencies.
   pause
   exit /b 1
 )
@@ -97,11 +113,11 @@ REM  pg_isready only opens a socket, it does not run SQL: more
 REM  reliable than an HTTP probe.
 "D:\pg\pgsql\bin\pg_isready.exe" -h 127.0.0.1 -p 5432 >nul 2>&1
 if not errorlevel 1 (
-  echo   [1/4] PostgreSQL 已在运行
+  echo   [1/4] PostgreSQL already running
   goto pg_checked
 )
 
-echo   [1/4] 启动 PostgreSQL
+echo   [1/4] Starting PostgreSQL
 REM  Must launch postgres.exe directly, NOT pg_ctl: on this box
 REM  pg_ctl fails with an EMPTY log. COMSPEC is pointed at
 REM  nocmd.exe to bypass the cmd.exe call inside postgres.exe,
@@ -120,9 +136,9 @@ for /l %%i in (1,1,40) do (
 )
 :pg_wait_done
 if "!PG_UP!"=="1" (
-  echo         就绪
+  echo         ready
 ) else (
-  echo   [WARN] 数据库 40 秒内未就绪，题库与错题本可能报错
+  echo   [WARN] Database not ready within 40s -- problems and mistake book may fail
 )
 
 :pg_checked
@@ -161,19 +177,19 @@ if "%API_RUNNING%"=="0" goto api_start
 set "SIDECAR_STATE="
 for /f "delims=" %%S in ('node "%PROJECT_ROOT%tools\sidecar-stale.mjs" "%SIDECAR_DIR%" %SIDECAR_PORT%') do set "SIDECAR_STATE=%%S"
 if "%SIDECAR_STATE%"=="0" (
-  echo   [2/4] 后端已在运行 %SIDECAR_PORT%
+  echo   [2/4] Backend already running on %SIDECAR_PORT%
   goto api_checked
 )
 
-echo   [2/4] 后端在跑但代码已更新，重启 %SIDECAR_PORT%
-call :kill_port %SIDECAR_PORT% "后端 sidecar"
+echo   [2/4] Backend running but code changed -- restarting %SIDECAR_PORT%
+call :kill_port %SIDECAR_PORT% "backend sidecar"
 REM  Give the socket a moment to be released. Binding a port that a
 REM  just-killed process still holds fails, and the failure surfaces 40
-REM  seconds later as "后端未启动" -- a wrong diagnosis of a wrong action.
+REM  seconds later as "backend did not start" -- a wrong diagnosis of a wrong action.
 ping -n 3 127.0.0.1 >nul
 
 :api_start
-echo   [2/4] 启动后端 %SIDECAR_PORT%
+echo   [2/4] Starting backend on %SIDECAR_PORT%
 pushd "%SIDECAR_DIR%"
 REM  Clear PYTHONPATH: the outer environment often points it at
 REM  some other package tree which would shadow the venv.
@@ -197,23 +213,23 @@ for /l %%i in (1,1,40) do (
 )
 :api_wait_done
 if "!API_UP!"=="0" (
-  echo   [ERROR] 后端 40 秒内未启动，请查看 sidecar 目录下的报错
+  echo   [ERROR] Backend did not start within 40s -- see the errors above.
   pause
   exit /b 1
 )
-echo         就绪
+echo         ready
 
 REM --- 2.5 schema migrations --------------------------------------
-REM  create_all 只建缺失的"表"，不会给已有表加列（sidecar\app\db.py）。
-REM  模型加了新列之后不跑这一步，教师端学情查询会对 PostgreSQL 报
-REM  "column submissions.style_flagged does not exist" 之类 500 ——
-REM  浏览器侧 CORS 拿不到响应头，显示成 "Network Error"。
-REM  Alembic 是 schema 变更的唯一入口（AGENTS.md 二、工程红线）。
-echo   [2.5/4] 同步数据库结构 (alembic upgrade head)
+REM  create_all only creates MISSING tables; it never adds a column to an
+REM  existing one (sidecar\app\db.py). After a model gains a new column, not
+REM  running this makes teacher-side queries 500 with e.g. "column
+REM  submissions.style_flagged does not exist". The browser then sees no CORS
+REM  headers and shows it as "Network Error". Alembic is the one entry point
+echo   [2.5/4] Syncing database schema (alembic upgrade head)
 pushd "%SIDECAR_DIR%"
 ".venv\Scripts\python.exe" -m alembic upgrade head
 if errorlevel 1 (
-  echo   [WARN] 数据库迁移失败，教师端学情可能报错（见上方 alembic 输出）
+  echo   [WARN] Migration failed -- teacher analytics may error (see alembic output above)
 )
 popd
 
@@ -261,10 +277,10 @@ REM  Deliberately a single-line `if`, NOT a line inside the block below:
 REM  this file has already been bitten once by cmd's block parser (see
 REM  the header note about `:label`), so the subroutine call stays at
 REM  the top level where nothing else is being parsed.
-if "%NEED_BUILD%"=="1" call :kill_port %WEB_PORT% "网页服务"
+if "%NEED_BUILD%"=="1" call :kill_port %WEB_PORT% "web server"
 
 if "%NEED_BUILD%"=="1" (
-  echo   [3/4] 构建网页版产物，约 1 分钟
+  echo   [3/4] Building web assets, about 1 minute
   REM  Clear the output dir with cmd's own rmdir instead of letting
   REM  Vite empty it. Vite deletes through Node, and Node on this box
   REM  carries a safe-delete shim that aborts any single batch over 50
@@ -275,26 +291,60 @@ if "%NEED_BUILD%"=="1" (
   pushd "%DESKTOP_DIR%"
   call node_modules\.bin\vite build --config vite.config.web.ts --mode web
   if errorlevel 1 (
-    echo   [ERROR] 构建失败
+    echo   [ERROR] Build failed
     popd
     pause
     exit /b 1
   )
   popd
 ) else (
-  echo   [3/4] 产物是最新的，跳过构建
+  echo   [3/4] Bundle is up to date, skipping build
 )
 
 REM --- 4. static server and browser ----------------------------
 curl -s --noproxy "*" -m 3 "http://127.0.0.1:%WEB_PORT%/" >nul 2>&1
 if errorlevel 1 (
-  echo   [4/4] 启动网页服务 %WEB_PORT%
+  echo   [4/4] Starting web server on %WEB_PORT%
   pushd "%DESKTOP_DIR%\dist-web"
   start "codelab-web" /min "%PYTHON_EXE%" -m http.server %WEB_PORT% --bind 127.0.0.1
   popd
   ping -n 3 127.0.0.1 >nul
 ) else (
-  echo   [4/4] 网页服务已在运行 %WEB_PORT%
+  echo   [4/4] Web server already running on %WEB_PORT%
+)
+
+REM --- 4.5 wait for the engine to finish its startup sweep ------
+REM  /health going green is NOT the same as the engine being ready.
+REM  The first GET /api/v1/env-check runs a version probe per language
+REM  (cpp, python, java) and, on a cold start, that takes 30+ seconds --
+REM  every compiler is launched for the first time. The endpoint is
+REM  synchronous, so it also blocks the whole event loop while it runs.
+REM
+REM  Opening the browser before that settles gives a page that cannot
+REM  reach the engine yet: the tab shows the BROWSER's own connection
+REM  error, and clicking through to the other entry (the student/teacher
+REM  switch on the sign-in page) fails the same way. Refreshing a minute
+REM  later works, which makes it look random. It is not random, it is
+REM  this window.
+REM
+REM  So: ask env-check once and wait for an answer before opening the
+REM  tab. 60s is generous -- a warm start answers in about 2 seconds.
+REM  Failure here is only a warning: the page can still be opened by
+REM  hand, so do not abort the launch over it.
+echo   [4.5/4] Waiting for the engine to finish probing toolchains
+set "ENGINE_READY=0"
+for /l %%i in (1,1,60) do (
+  if "!ENGINE_READY!"=="0" (
+    curl -s --noproxy "*" -m 90 -H "X-Sidecar-Token: %SIDECAR_TOKEN%" ^
+      "http://127.0.0.1:%SIDECAR_PORT%/api/v1/env-check" >nul 2>&1
+    if not errorlevel 1 set "ENGINE_READY=1"
+    if "!ENGINE_READY!"=="0" ping -n 2 127.0.0.1 >nul
+  )
+)
+if "!ENGINE_READY!"=="1" (
+  echo         ready
+) else (
+  echo   [WARN] Engine did not finish probing in time; the page may need a refresh
 )
 
 REM  The entry is index.web.html, NOT index.html -- so the bare origin
@@ -303,10 +353,10 @@ REM  people to a file list they then have to click through.
 start "" "http://127.0.0.1:%WEB_PORT%/index.web.html"
 
 echo.
-echo   已打开   http://127.0.0.1:%WEB_PORT%/index.web.html   （学生端）
-echo   教师端   http://127.0.0.1:%WEB_PORT%/teacher.web.html   账号 teacher 密码 123456
+echo   Opened    http://127.0.0.1:%WEB_PORT%/index.web.html   (student)
+echo   Teacher   http://127.0.0.1:%WEB_PORT%/teacher.web.html   login: teacher / 123456
 echo.
-echo   停服务请双击 stop-web.bat ，关掉本窗口不会停服务
+echo   To stop, run stop-web.bat. Closing this window does NOT stop the services.
 echo.
 pause
 exit /b 0
@@ -321,7 +371,7 @@ REM  the `exit /b 0` above, otherwise cmd either reports
 REM  ") was unexpected at this time." or falls into it on the way out.
 :kill_port
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /r /c:"127.0.0.1:%1 .*LISTENING"') do (
-  echo         停止 %2（端口 %1，PID %%p）
+  echo         stopping %2 (port %1, PID %%p)
   taskkill /F /PID %%p >nul 2>&1
 )
 exit /b 0
