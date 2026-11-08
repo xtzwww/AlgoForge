@@ -20,7 +20,6 @@ import { ref } from 'vue'
 import { NAlert, NButton, NCheckbox } from 'naive-ui'
 import TeacherGate from '../../components/TeacherGate.vue'
 import PageHeader from '../../components/PageHeader.vue'
-import { isTeacher, logout } from '../../api/session'
 import { getFlaggedSubmissions, reviewFlag, type FlaggedSubmission } from '../../api/teacher'
 import { useTeacherPanel } from './useTeacherPanel'
 import { dateText, messageOf, reviewText, statusText } from './format'
@@ -41,7 +40,6 @@ const reviewingId = ref<number | null>(null)
 const reviewError = ref('')
 
 async function load(): Promise<void> {
-  if (!isTeacher.value) return
   loading.value = true
   errorMsg.value = ''
   try {
@@ -58,12 +56,7 @@ function reset(): void {
   showReviewed.value = false
 }
 
-const panel = useTeacherPanel(load, reset)
-
-async function signOut(): Promise<void> {
-  await logout()
-  panel.reset()
-}
+useTeacherPanel(load, reset)
 
 /**
  * 记下一次判定，然后重新加载。
@@ -95,19 +88,13 @@ async function submitReview(
       <PageHeader
         title="存疑提交"
         :subtitle="flagged.length > 0 ? `${flagged.length} 条待看` : '都看过了'"
-        :loading="panel.teacher.value ? loading : undefined"
+        :loading="loading"
         :error="errorMsg"
         error-prefix="无法加载存疑提交"
         @refresh="load"
       />
 
-      <TeacherGate
-        :ready="panel.ready.value"
-        :is-teacher="panel.teacher.value"
-        login-title="存疑提交需要登录"
-        login-body="复核记录记在教师账号上，登录后才会显示。"
-        @sign-out="signOut"
-      >
+      <TeacherGate>
         <section class="af-t-section">
           <p class="af-t-section-note">
             编辑行为特征提示这些提交的代码可能不是当场写出来的。这只是<strong>需要看一眼</strong>的线索，不是判定——点开可以看到具体依据，由你判断。
@@ -125,7 +112,7 @@ async function submitReview(
             {{ reviewError }}
           </NAlert>
 
-          <div v-if="panel.teacher.value && flagged.length === 0 && !loading" class="af-t-empty">
+          <div v-if="flagged.length === 0 && !loading" class="af-t-empty">
             {{ showReviewed ? '没有存疑提交记录。' : '暂无存疑提交——都看过了。' }}
           </div>
 

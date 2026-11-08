@@ -25,6 +25,12 @@
  * 「题目 #12」, which still identifies it and still links to it. Failing
  * the whole page because a label could not be fetched would be trading
  * the content for its caption.
+ *
+ * 2026-10-04：登录门移到路由表
+ * ----------------------------
+ * 这一页原先自己画一个"还没有登录"的卡片，现在是路由表上的
+ * `requiresAuth: true` + `router/guards/auth.ts`。页面因此不再有任何
+ * 登录分叉，它只在"有人登录着"的前提下渲染。
  */
 
 import { computed, ref, watch } from 'vue'
@@ -34,7 +40,6 @@ import { getMyAssignments, type MyAssignmentOut } from '../api/assignments'
 import { joinClassroom, myClassrooms, type ClassroomOut } from '../api/classroom'
 import { listProblems } from '../api/problems'
 import { isLoggedIn, sessionReady, sessionUser } from '../api/session'
-
 const loading = ref(false)
 const errorMsg = ref('')
 
@@ -51,7 +56,6 @@ const joinError = ref('')
 /** Which assignment's problem list is open, by id. */
 const expandedId = ref<number | null>(null)
 
-const signedIn = computed<boolean>(() => isLoggedIn.value)
 const displayName = computed<string>(
   () => sessionUser.value?.display_name || sessionUser.value?.username || ''
 )
@@ -84,6 +88,18 @@ async function loadTitles(): Promise<void> {
   }
 }
 
+/**
+ * 未登录时**不再**画"还没有登录"的卡片（2026-10-04）。
+ *
+ * 这一页的路由带 `requiresAuth: true`，守卫在导航阶段就把未登录的人送
+ * 去登录页——页面根本不会挂载，所以那段分叉是死代码。留着它的害处是
+ * 它让"这一页要登录"这件事有两个出处（路由表 + 页面），而两者可以
+ * 不一致。
+ *
+ * `load()` 里的 `if (!isLoggedIn.value) return` 保留：它防的不是"未登录
+ * 访问"，而是**会话在页面挂载之后失效**（token 过期、另一处登出），那种
+ * 情况下再发一次必然 401 的请求只是白费。那是数据层的保险，不是门。
+ */
 async function load(): Promise<void> {
   if (!isLoggedIn.value) return
   loading.value = true
@@ -170,21 +186,17 @@ watch(
     <div class="mx-auto w-full max-w-[var(--af-content-max)] p-6">
       <h1 class="text-lg font-semibold text-af-primary">我的作业</h1>
 
-      <!-- Signed out: the page cannot compute "my" anything. -->
-      <div v-if="!signedIn" class="af-glass mt-5 rounded-[var(--af-radius-lg)] p-6 text-center">
-        <p class="text-sm text-af-primary">还没有登录</p>
-        <p class="mt-2 text-xs leading-relaxed text-af-secondary">
-          作业、进度和班级都记在你的账号上，登录后才会显示。
-        </p>
-        <RouterLink
-          class="mt-4 inline-block rounded-[var(--af-radius-sm)] bg-af-accent px-4 py-2 text-sm font-medium af-press text-af-inverse transition-colors hover:bg-af-accent-hover"
-          :to="{ name: 'login' }"
-        >
-          去登录
-        </RouterLink>
-      </div>
+      <!--
+        未登录分叉已删除（2026-10-04）。`requiresAuth: true` 让守卫在导航
+        阶段把未登录的人送去登录页，这一页因此永远以"有人登录着"为前提
+        渲染。见 `load()` 上方的说明。
 
-      <template v-else>
+        ⚠️ 这里**不能**留一个光秃秃的 `<template>`。删掉 `v-else` 之后它
+        就不再是渲染分支，而是一个**原生 `<template>` 元素**——浏览器直接
+        忽略其内容，Vue 也不会去接管，整页只剩标题。要么给指令
+        （`v-if="signedIn"`），要么换成普通元素包裹（就是下面这个 `div`）。
+      -->
+      <div>
         <!-- ---- Classes ---- -->
         <section class="mt-5">
           <h2 class="text-sm font-medium text-af-primary">我的班级</h2>
@@ -349,7 +361,7 @@ watch(
             </li>
           </ul>
         </section>
-      </template>
+      </div>
     </div>
   </div>
 </template>

@@ -1,5 +1,5 @@
 /**
- * 入口即身份：全局导航守卫（2026-09-25 第三轮）。
+ * 入口即身份：全局导航守卫（2026-09-25 第三轮；2026-10-04 迁入 `guards/`）。
  *
  * 一个会话的角色不属于当前入口时（教师账号在学生端网址、学生账号在
  * 教师端网址），把它送回登录页并在 `?entryErr=` 里点名不匹配类型，
@@ -16,11 +16,16 @@
  * `restoreSession()` 应答之前，守卫此时看到 `sessionReady` 为 false 会
  * 放行；watch 在会话恢复完成后补上同一跳转。两者配合，任何路径都到不
  * 了另一端——Electron（`both`）没有入口之分，天然豁免。
+ *
+ * 为什么在 `auth` 之前安装（见 `./index.ts`）：跨端问题比登录问题更
+ * 根本。反过来（先 auth 后 entry）时，一个走错了端的会话会先被 auth
+ * 当作"没登录"送去登录页，再被 entry 送回登录页——用户在登录页反复
+ * 弹回，而真正的原因（走错端了）直到最后才被说出来。
  */
 import type { Router } from 'vue-router'
-import { logout, sessionReady, sessionUser } from '../api/session'
-import { entryMismatch } from './landing'
-import { appMode } from '../runtime/mode'
+import { logout, sessionReady, sessionUser } from '../../api/session'
+import { entryMismatch } from '../landing'
+import { appMode } from '../../runtime/mode'
 
 export function installEntryGuard(router: Router): void {
   router.beforeEach(async (to) => {

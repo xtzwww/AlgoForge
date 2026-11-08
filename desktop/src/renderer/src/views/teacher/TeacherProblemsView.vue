@@ -37,7 +37,6 @@ import {
 import type { SelectOption } from 'naive-ui'
 import TeacherGate from '../../components/TeacherGate.vue'
 import PageHeader from '../../components/PageHeader.vue'
-import { isTeacher, logout } from '../../api/session'
 import {
   createProblem,
   duplicateProblem,
@@ -92,7 +91,6 @@ const DIFFICULTY_LABEL: Record<string, string> = {
 let requestSeq = 0
 
 async function loadProblems(): Promise<void> {
-  if (!isTeacher.value) return
   loading.value = true
   errorMsg.value = ''
   const seq = ++requestSeq
@@ -338,27 +336,16 @@ function reset(): void {
   errorMsg.value = ''
 }
 
-const panel = useTeacherPanel(loadProblems, reset)
-
-async function signOut(): Promise<void> {
-  await logout()
-  panel.reset()
-}
+useTeacherPanel(loadProblems, reset)
 </script>
 
 <template>
-  <TeacherGate
-    :ready="panel.ready.value"
-    :is-teacher="panel.teacher.value"
-    login-title="题库管理需要登录"
-    login-body="增删改题目和判题用例记在教师账号上，登录后才会显示。"
-    @sign-out="signOut"
-  >
+  <TeacherGate>
     <div class="problems-page">
       <PageHeader
         title="题库管理"
         subtitle="增删改查题目与判题用例；隐藏用例只在这里可见，练习与判题永远只见学生该见的部分"
-        :loading="panel.teacher.value ? loading : undefined"
+        :loading="loading"
         :error="errorMsg"
         error-prefix="题库操作失败"
         @refresh="loadProblems"

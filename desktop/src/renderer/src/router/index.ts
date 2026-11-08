@@ -32,6 +32,10 @@
 
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router'
 import { appMode, type AppMode } from '../runtime/mode'
+// 增补 `RouteMeta`（含 requiresAuth / requiresTeacher / guestOnly）。
+// 只 import 类型与两个判定函数——本文件不执行任何鉴权逻辑，见下面
+// 「守卫由 main.ts 安装」那段说明。
+import './meta'
 import Practice from '../views/Practice.vue'
 import ProblemPracticeView from '../views/ProblemPracticeView.vue'
 import ProblemListView from '../views/ProblemListView.vue'
@@ -46,55 +50,8 @@ import TeacherReviewView from '../views/teacher/TeacherReviewView.vue'
 import TeacherRosterView from '../views/teacher/TeacherRosterView.vue'
 import TeacherProblemsView from '../views/teacher/TeacherProblemsView.vue'
 import AssignmentsView from '../views/AssignmentsView.vue'
-import LoginView from '../views/LoginView.vue'
-import RegisterView from '../views/RegisterView.vue'
-
-declare module 'vue-router' {
-  interface RouteMeta {
-    /** Crumb text for this route, and the sidebar's label source. */
-    title: string
-    /**
-     * Name of the route one level up, for the breadcrumb. Absent on the
-     * top-level pages, which are their own root.
-     */
-    parent?: string
-    /**
-     * A page you reach from somewhere else rather than from the sidebar
-     * (PU-13). Sign-in is the case this exists for: it needs a
-     * `meta.title` so the breadcrumb can name it, but a permanent
-     * 「登录」 entry in the nav is an invitation to sign in while already
-     * signed in.
-     */
-    hidden?: boolean
-    /**
-     * Which side this page belongs to (2026-09-25). `student` / `teacher`
-     * routes are filtered out of the other side's bundle view — the web
-     * build has a separate entry per side, so a student's address should
-     * not even resolve a teacher route. Absent means "both sides" (the
-     * sign-in pages and the redirects). Electron runs in `both` mode and
-     * ignores the distinction.
-     */
-    mode?: AppMode
-    /**
-     * Sidebar section (2026-09-26).
-     *
-     * 教师端原先只有两个导航项（学情看板 / 班级管理），而学情看板那个
-     * 页面里平铺着十块功能。拆成五个面板之后，导航从两项变成五项，
-     * 一个平铺的列表就不再能表达"这几项是一类"。
-     *
-     * 分组按**使用场景**分（备课 / 上课前 / 交接），不是按功能类型：
-     * 老师要找的不是"图表类页面"，是"下节课讲什么"。四个组见
-     * `NAV_GROUPS`。
-     *
-     * 承载在 `meta` 上而不是另写一份导航清单，理由和 `title` 一样：
-     * 加一个页面应该只意味着加一条路由，而不是加一条路由**外加**一条
-     * 会和它漂开的导航记录（见 `navRoutesFor`）。
-     *
-     * 学生端的路由不带它——它们的导航仍是一个平铺列表。
-     */
-    group?: string
-  }
-}
+import LoginView from '../views/auth/LoginView.vue'
+import RegisterView from '../views/auth/RegisterView.vue'
 
 /**
  * The top-level pages, in sidebar order.
@@ -113,22 +70,30 @@ export const routes: RouteRecordRaw[] = [
     path: '/practice',
     name: 'practice',
     component: Practice,
+    // 公开：游客可以打开编辑器自由跑代码（判题不等登录）。
     meta: { title: '练习', mode: 'student' }
   },
   {
-    // Where a student lands after signing in (PU-13). Not role-gated:
-    // a teacher opening it sees the same list, which is empty for them
-    // because they have joined no class — an honest answer, and one
-    // that needs no redirect to explain.
+    // Where a student lands after signing in (PU-13).
+    //
+    // **2026-10-04 起 requiresAuth: true。** 它原先不拦，靠页面里的
+    // `v-if="!signedIn"` 画一张"还没有登录"的卡片。那条路是错的：这一页
+    // 的**全部内容**都是"我的"——我的班级、我的作业、我的进度——未登录
+    // 时没有任何可渲染的东西，画一张卡片只是把一个路由问题展示成一个
+    // 页面状态。现在由守卫在导航阶段拦下，页面本身不再有登录分叉。
+    //
+    // 仍然**不**要求教师角色：教师打开它看到的是空列表，那是诚实的
+    // 「你没有加入任何班级」，不需要一次重定向来解释。
     path: '/assignments',
     name: 'assignments',
     component: AssignmentsView,
-    meta: { title: '我的作业', mode: 'student' }
+    meta: { title: '我的作业', mode: 'student', requiresAuth: true }
   },
   {
     path: '/problems',
     name: 'problems',
     component: ProblemListView,
+    // 公开：题库是刷题入口，游客可以先看题再决定要不要注册。
     meta: { title: '题库', mode: 'student' }
   },
   {
@@ -143,6 +108,9 @@ export const routes: RouteRecordRaw[] = [
     // it: the same problem can be opened from a lesson, a homework, or
     // the catalogue, and those should share one URL up to the query.
     // Absent = free practice, which legitimately has no level to read.
+    //
+    // 公开：与 `/problems` 一致。带 `?assignment=` 时交作业的人必须已
+    // 登录，但那由接口自己回答（401），不该在路由层把它变成"整页不可见"。
     path: '/problems/:id(\\d+)',
     name: 'problem',
     component: ProblemPracticeView,
@@ -160,7 +128,8 @@ export const routes: RouteRecordRaw[] = [
     path: '/mistakes',
     name: 'mistakes',
     component: MistakesView,
-    meta: { title: '错题本', mode: 'student' }
+    // 错题本全是"我的"，未登录时没有可渲染的内容。
+    meta: { title: '错题本', mode: 'student', requiresAuth: true }
   },
   {
     // #5 变式题闭环：错题本里 S7 的变式题没有题目行、没有隐藏用例，
@@ -169,32 +138,31 @@ export const routes: RouteRecordRaw[] = [
     path: '/practice/variant',
     name: 'variant-practice',
     component: VariantPracticeView,
-    meta: { title: '变式题练习', parent: 'mistakes', mode: 'student' }
+    // 入口只从错题本来，跟着 mistakes 一起要登录。
+    meta: { title: '变式题练习', parent: 'mistakes', mode: 'student', requiresAuth: true }
   },
   {
     path: '/profile',
     name: 'profile',
     component: ProfileView,
-    meta: { title: '画像', mode: 'student' }
+    meta: { title: '画像', mode: 'student', requiresAuth: true }
   },
   {
     path: '/plan',
     name: 'plan',
     component: PlanView,
-    meta: { title: '复习', mode: 'student' }
+    meta: { title: '复习', mode: 'student', requiresAuth: true }
   },
   {
-    // Deliberately *not* role-gated in the route table. The console ships
-    // in the same bundle the students use, so "the student's build has no
-    // link to it" was never the boundary — the server's 403 is, and every
-    // teacher route raises it (see `app/api/teacher.py`). The page itself
-    // renders a signpost for everybody else, which is a convenience
-    // rather than a gate.
+    // **2026-10-04 起 requiresTeacher: true。** 这一页原先刻意不做角色门
+    // ——理由是"服务端的 403 才是边界"。那个理由本身没错，但结论下错了：
+    // 前端不做门**不等于**前端要开着，它意味着"每个页面各自处理被拒的
+    // 情况"。结果是六个面板各写一遍 `if (!isTeacher.value) return`，加上
+    // `TeacherGate` 和 `AppTopbar`，同一个判断有八个副本。
     //
-    // The web build's *side split* is a different thing from a role gate:
-    // `mode: 'teacher'` removes this route from the student entry, so the
-    // student address cannot even resolve it. Electron (`both`) and a
-    // teacher account on the student entry still behave as above.
+    // 现在门收在路由表上：能渲染这一页 = 你是教师。服务端的 403 仍然
+    // 兜底（它才是安全边界），而 `TeacherGate` 保留为**展示层**——它渲染
+    // "角色不符"那屏，是服务端拒绝的用户可读版本。
     //
     // **教学概览是教师入口的落点。** 它曾是那个 1600 行的 `/teacher`
     // 学情看板；2026-09-26 拆成五个面板后，名字留给这个只管"我现在要
@@ -202,7 +170,12 @@ export const routes: RouteRecordRaw[] = [
     path: '/teacher',
     name: 'teacher',
     component: TeacherOverviewView,
-    meta: { title: '教学概览', mode: 'teacher', group: 'teacher-overview' }
+    meta: {
+      title: '教学概览',
+      mode: 'teacher',
+      group: 'teacher-overview',
+      requiresTeacher: true
+    }
   },
   {
     // 下节课讲什么 + 谁需要我。曾经的 `/teacher` 主体。
@@ -211,14 +184,24 @@ export const routes: RouteRecordRaw[] = [
     path: '/teacher/analysis',
     name: 'teacher-analysis',
     component: TeacherAnalysisView,
-    meta: { title: '学情分析', mode: 'teacher', group: 'teacher-analysis' }
+    meta: {
+      title: '学情分析',
+      mode: 'teacher',
+      group: 'teacher-analysis',
+      requiresTeacher: true
+    }
   },
   {
     // 作业 + AI 使用记录 + 成绩单。
     path: '/teacher/work',
     name: 'teacher-work',
     component: TeacherWorkView,
-    meta: { title: '作业', mode: 'teacher', group: 'teacher-teaching' }
+    meta: {
+      title: '作业',
+      mode: 'teacher',
+      group: 'teacher-teaching',
+      requiresTeacher: true
+    }
   },
   {
     // 存疑提交独立成屏（2026-09-26）：它是批阅型事务，要一条条处理完，
@@ -227,7 +210,12 @@ export const routes: RouteRecordRaw[] = [
     path: '/teacher/review',
     name: 'teacher-review',
     component: TeacherReviewView,
-    meta: { title: '存疑提交', mode: 'teacher', group: 'teacher-teaching' }
+    meta: {
+      title: '存疑提交',
+      mode: 'teacher',
+      group: 'teacher-teaching',
+      requiresTeacher: true
+    }
   },
   {
     // 名册 + 班级（2026-09-26 合并）。原先这是两条侧边栏项，但它们读写
@@ -236,7 +224,12 @@ export const routes: RouteRecordRaw[] = [
     path: '/teacher/roster',
     name: 'teacher-roster',
     component: TeacherRosterView,
-    meta: { title: '名册与班级', mode: 'teacher', group: 'teacher-people' }
+    meta: {
+      title: '名册与班级',
+      mode: 'teacher',
+      group: 'teacher-people',
+      requiresTeacher: true
+    }
   },
   {
     // 题库管理（2026-09-27）。与作业同一分组：备课建题 → 布置作业是
@@ -244,15 +237,31 @@ export const routes: RouteRecordRaw[] = [
     path: '/teacher/problems',
     name: 'teacher-problems',
     component: TeacherProblemsView,
-    meta: { title: '题库', mode: 'teacher', group: 'teacher-teaching' }
+    meta: {
+      title: '题库',
+      mode: 'teacher',
+      group: 'teacher-teaching',
+      requiresTeacher: true
+    }
   },
   {
     // `hidden` keeps this out of the sidebar while leaving the crumb
     // working — see the note on `RouteMeta.hidden`.
+    //
+    // `guestOnly`（2026-10-04）是防御而不是装饰：认证守卫"统一要求登录"
+    // 的写法会把这一页自己也拦下，于是它重定向到自己，浏览器报"重定向
+    // 次数过多"。见 `RouteMeta.guestOnly`。
+    //
+    // 注意它**没有** `mode`：登录页两端共享，学生在学生网址、老师在教师
+    // 网址，各自打开同一份组件。
+    //
+    // `layout: 'auth'`（2026-10-04）：全屏独立页，不渲染侧边栏/顶栏。
+    // 见 `RouteMeta.layout` —— 这是"视觉上独立"的那一半，`guestOnly`
+    // 管的是"能不能进"，两者都要。
     path: '/login',
     name: 'login',
     component: LoginView,
-    meta: { title: '登录', hidden: true }
+    meta: { title: '登录', hidden: true, guestOnly: true, layout: 'auth' }
   },
   {
     // A page of its own, not a tab or a modal on `/login` (2026-09-25).
@@ -263,10 +272,12 @@ export const routes: RouteRecordRaw[] = [
     // `hidden` for the same reason as `/login`: a permanent 「注册」 entry
     // in the nav is an invitation to create a second account while
     // already signed in as the first.
+    //
+    // `layout: 'auth'` 同 `/login`：全屏独立页。
     path: '/register',
     name: 'register',
     component: RegisterView,
-    meta: { title: '注册', hidden: true }
+    meta: { title: '注册', hidden: true, guestOnly: true, layout: 'auth' }
   },
 
   // A hand-typed or stale URL should land on the editor, not on a blank
@@ -408,8 +419,10 @@ export const router = createRouter({
 })
 
 /**
- * 入口即身份的全局守卫由 `main.ts` 通过 {@link installEntryGuard} 安装，
- * 不放在本文件：`AppSidebar.spec` 这类测试 mock 了 `vue-router`，
- * `createRouter` 返回的对象没有 `beforeEach`，守卫若在此注册会让
- * 组件测试整文件挂掉。逻辑见 `./entryGuard.ts`。
+ * 全局守卫由 `main.ts` 通过 {@link installGuards} 安装，不放在本文件：
+ * `AppSidebar.spec` 这类测试 mock 了 `vue-router`，`createRouter` 返回的
+ * 对象没有 `beforeEach`，守卫若在此注册会让组件测试整文件挂掉。
+ *
+ * 两个守卫的代码与安装顺序在 `./guards/`：`guards/entry.ts`（入口即身份）
+ * 先跑，`guards/auth.ts`（这一页你能不能进）后跑。顺序写在那里。
  */

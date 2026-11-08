@@ -42,7 +42,8 @@
 import { onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { NButton, NInput } from 'naive-ui'
-import { login, logout, sessionReady, sessionUser } from '../api/session'
+import AuthLayout from './AuthLayout.vue'
+import { login, logout, sessionReady, sessionUser } from '../../api/session'
 import {
   defaultIntent,
   entryMismatch,
@@ -52,9 +53,9 @@ import {
   mismatchMessage,
   type EntryMismatch,
   type LoginIntent
-} from '../router/landing'
-import { appMode } from '../runtime/mode'
-import { goTo } from '../runtime/navigation'
+} from '../../router/landing'
+import { appMode } from '../../runtime/mode'
+import { goTo } from '../../runtime/navigation'
 
 const router = useRouter()
 const route = useRoute()
@@ -181,100 +182,98 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-1 items-center justify-center overflow-y-auto p-6">
-    <div class="w-full max-w-sm">
-      <div class="af-glass rounded-[var(--af-radius-lg)] p-6">
-        <!--
-          Who are you signing in as. Picks the landing, not the account:
-          the server still answers with the real role (see the docstring).
-        -->
-        <div
-          class="mb-4 flex rounded-[var(--af-radius-sm)] border border-af-border bg-af-elevated p-0.5"
-          role="group"
-          aria-label="以什么身份登录"
+  <AuthLayout>
+    <template #switcher>
+      <!--
+        Who are you signing in as. Picks the landing, not the account:
+        the server still answers with the real role (see the docstring).
+      -->
+      <div
+        class="mb-4 flex rounded-[var(--af-radius-sm)] border border-af-border bg-af-elevated p-0.5"
+        role="group"
+        aria-label="以什么身份登录"
+      >
+        <NButton
+          class="flex-1"
+          size="small"
+          quaternary
+          :type="intent === 'student' ? 'primary' : 'default'"
+          :aria-pressed="intent === 'student' ? 'true' : 'false'"
+          @click="setIntent('student')"
         >
-          <NButton
-            class="flex-1"
-            size="small"
-            quaternary
-            :type="intent === 'student' ? 'primary' : 'default'"
-            :aria-pressed="intent === 'student' ? 'true' : 'false'"
-            @click="setIntent('student')"
-          >
-            学生
-          </NButton>
-          <NButton
-            class="flex-1"
-            size="small"
-            quaternary
-            :type="intent === 'teacher' ? 'primary' : 'default'"
-            :aria-pressed="intent === 'teacher' ? 'true' : 'false'"
-            @click="setIntent('teacher')"
-          >
-            老师
-          </NButton>
-        </div>
-
-        <h1 class="text-lg font-semibold text-af-primary">登录</h1>
-        <p class="mt-1.5 text-xs leading-relaxed text-af-secondary">
-          使用老师分配的账号，或者
-          <RouterLink class="text-af-accent hover:text-af-accent-hover" :to="{ name: 'register' }">
-            自己注册一个
-          </RouterLink>
-          。
-        </p>
-
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="submit">
-          <label class="flex flex-col gap-1.5">
-            <span class="text-xs text-af-secondary">用户名</span>
-            <NInput
-              v-model:value="username"
-              type="text"
-              name="username"
-              autocomplete="username"
-              :disabled="busy"
-              placeholder=""
-            />
-          </label>
-
-          <label class="flex flex-col gap-1.5">
-            <span class="text-xs text-af-secondary">密码</span>
-            <NInput
-              v-model:value="password"
-              type="password"
-              name="password"
-              autocomplete="current-password"
-              :disabled="busy"
-              placeholder=""
-            />
-          </label>
-
-          <p
-            v-if="errorMsg"
-            class="rounded-[var(--af-radius-sm)] border border-af-danger/40 bg-af-elevated px-3 py-2 text-xs text-af-danger"
-            role="alert"
-          >
-            {{ errorMsg }}
-          </p>
-
-          <NButton
-            attr-type="submit"
-            type="primary"
-            block
-            :loading="busy"
-          >
-            {{ busy ? '登录中…' : '登录' }}
-          </NButton>
-        </form>
+          学生
+        </NButton>
+        <NButton
+          class="flex-1"
+          size="small"
+          quaternary
+          :type="intent === 'teacher' ? 'primary' : 'default'"
+          :aria-pressed="intent === 'teacher' ? 'true' : 'false'"
+          @click="setIntent('teacher')"
+        >
+          老师
+        </NButton>
       </div>
+    </template>
 
-      <p class="mt-4 text-center text-[11px] leading-relaxed text-af-muted">
-        {{
-          appMode === 'teacher'
-            ? '教师账号在这里登录。学生账号请点「学生」前往学生网址（index.web.html）。'
-            : '学生账号在这里登录。教师账号请点「老师」前往教师网址（teacher.web.html）。'
-        }}
+    <h1 class="text-lg font-semibold text-af-primary">登录</h1>
+    <p class="mt-1.5 text-xs leading-relaxed text-af-secondary">
+      使用老师分配的账号，或者
+      <RouterLink class="text-af-accent hover:text-af-accent-hover" :to="{ name: 'register' }">
+        自己注册一个
+      </RouterLink>
+      。
+    </p>
+
+    <form class="mt-5 flex flex-col gap-4" @submit.prevent="submit">
+      <label class="flex flex-col gap-1.5">
+        <span class="text-xs text-af-secondary">用户名</span>
+        <NInput
+          v-model:value="username"
+          type="text"
+          name="username"
+          autocomplete="username"
+          :disabled="busy"
+          placeholder=""
+        />
+      </label>
+
+      <label class="flex flex-col gap-1.5">
+        <span class="text-xs text-af-secondary">密码</span>
+        <NInput
+          v-model:value="password"
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          :disabled="busy"
+          placeholder=""
+        />
+      </label>
+
+      <p
+        v-if="errorMsg"
+        class="rounded-[var(--af-radius-sm)] border border-af-danger/40 bg-af-elevated px-3 py-2 text-xs text-af-danger"
+        role="alert"
+      >
+        {{ errorMsg }}
       </p>
-    </div>
-  </div>
+
+      <NButton
+        attr-type="submit"
+        type="primary"
+        block
+        :loading="busy"
+      >
+        {{ busy ? '登录中…' : '登录' }}
+      </NButton>
+    </form>
+
+    <template #footer>
+      {{
+        appMode === 'teacher'
+          ? '教师账号在这里登录。学生账号请点「学生」前往学生网址（index.web.html）。'
+          : '学生账号在这里登录。教师账号请点「老师」前往教师网址（teacher.web.html）。'
+      }}
+    </template>
+  </AuthLayout>
 </template>

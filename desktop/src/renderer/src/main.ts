@@ -6,7 +6,7 @@ import './assets/teacher.css'
 import { createApp, watch } from 'vue'
 import App from './App.vue'
 import { router } from './router'
-import { installEntryGuard } from './router/entryGuard'
+import { installGuards } from './router/guards'
 import { bootstrapSidecarStatus, checkSidecar } from './composables/useSidecarStatus'
 import { logout, restoreSession, sessionReady, sessionUser } from './api/session'
 import { entryMismatch } from './router/landing'
@@ -48,14 +48,18 @@ void (async () => {
   await restoreSession()
 })()
 
-// B2: entry is identity (2026-09-25, third round). Two layers do the
-// same redirect: the router guard (`router/entryGuard.ts`) catches every
-// *later* navigation, and this watcher catches the restored session
-// itself — the page's first navigation happens before
-// `restoreSession()` answers, so the guard would see `sessionReady`
-// false and let it through. Together no path lands a teacher account on
-// the student entry or vice versa; Electron (`both`) is exempt.
-installEntryGuard(router)
+// B2: entry is identity (2026-09-25, third round) + auth (2026-10-04).
+// Two layers do the entry redirect: the router guard
+// (`router/guards/entry.ts`) catches every *later* navigation, and the
+// watcher below catches the restored session itself — the page's first
+// navigation happens before `restoreSession()` answers, so the guard
+// would see `sessionReady` false and let it through. Together no path
+// lands a teacher account on the student entry or vice versa; Electron
+// (`both`) is exempt.
+//
+// `installGuards` installs entry **then** auth; the order matters, see
+// its docstring in `router/guards/index.ts`.
+installGuards(router)
 
 watch(
   () => [sessionReady.value, sessionUser.value] as const,

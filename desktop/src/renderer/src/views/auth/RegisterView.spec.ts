@@ -59,7 +59,7 @@ const harness = vi.hoisted(() => ({
   goToCalls: [] as string[]
 }))
 
-vi.mock('../api/session', async () => {
+vi.mock('../../api/session', async () => {
   const { computed, ref } = await import('vue')
   const ready = ref(true)
   const user = ref<null | { id: number; username: string; display_name: string; role: string }>(
@@ -93,7 +93,7 @@ vi.mock('../api/session', async () => {
   }
 })
 
-vi.mock('../runtime/navigation', () => ({
+vi.mock('../../runtime/navigation', () => ({
   goTo: (url: string) => {
     harness.goToCalls.push(url)
   }

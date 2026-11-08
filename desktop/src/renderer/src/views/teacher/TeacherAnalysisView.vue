@@ -49,7 +49,6 @@ import PageHeader from '../../components/PageHeader.vue'
 import BarChart from '../../components/BarChart.vue'
 import PieChart from '../../components/PieChart.vue'
 import { masteryColorFor } from '../../assets/tokens'
-import { isTeacher, logout } from '../../api/session'
 import {
   getErrorDistribution,
   getKnowledgeStats,
@@ -81,7 +80,6 @@ const timelineLoading = ref(false)
 const rosterSection = ref<HTMLElement | null>(null)
 
 async function load(): Promise<void> {
-  if (!isTeacher.value) return
   loading.value = true
   errorMsg.value = ''
   try {
@@ -123,12 +121,7 @@ function reset(): void {
   timeline.value = []
 }
 
-const panel = useTeacherPanel(load, reset)
-
-async function signOut(): Promise<void> {
-  await logout()
-  panel.reset()
-}
+useTeacherPanel(load, reset)
 
 async function openStudent(student: StudentOut): Promise<void> {
   if (selected.value?.user_id === student.user_id) {
@@ -176,19 +169,13 @@ const distributionTotal = computed<number>(() =>
       <PageHeader
         title="学情分析"
         subtitle="先看班级错因，再逐生往下看"
-        :loading="panel.teacher.value ? loading : undefined"
+        :loading="loading"
         :error="errorMsg"
         error-prefix="无法加载学情"
         @refresh="load"
       />
 
-      <TeacherGate
-        :ready="panel.ready.value"
-        :is-teacher="panel.teacher.value"
-        login-title="学情分析需要登录"
-        login-body="错因分布与学生清单由教师账号查看。学生侧的练习、错题本和画像不需要登录。"
-        @sign-out="signOut"
-      >
+      <TeacherGate>
         <div
           v-if="loading && students.length === 0 && distribution.length === 0"
           class="af-t-placeholder"

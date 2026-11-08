@@ -1,84 +1,70 @@
 <script setup lang="ts">
 /**
- * TeacherGate — 教师端每个页面的身份闸门（2026-09-26）。
+ * TeacherGate — 教师端页面的**展示层**兜底（2026-09-26；2026-10-04 降级）。
  *
- * 三个状态，且前两个都不是错误状态：
+ * 它过去是"路由之外的第二个门禁"：自己读 `isLoggedIn` / `isTeacher`，
+ * 三个状态各画一个卡片，还把 `signOut` 事件发回给调用方。八个副本里的
+ * 一个就是它。
  *
- *   1. 会话恢复中   —— 启动时那次往返还没回来。
- *   2. 未登录       —— 一张路牌，指向共享的 `/login`。
- *   3. 已登录但不是教师 —— 一句陈述，外加一条出路。
+ * **现在它是纯展示组件。** 门已经收在路由表上（`meta.requiresTeacher`
+ * + `router/guards/auth.ts`）：能渲染到这里的页面，浏览器里一定是教师
+ * 账号，所以"未登录"和"不是教师"这两屏**正常情况下不会再出现**。
  *
- * 为什么抽成组件
- * --------------
- * 教师端拆成五个面板之后，这四行判断要出现在五个文件里。它是产品边界
- * （谁能看见学情），不是某个页面的排版细节；五份副本意味着有一天会有一
- * 份忘了改，而那种错误的表现是"某个页面让学生看到了数据"——服务端的
- * 403 会挡住，但页面上什么都不说的话，学生看到的就是一片空白。
+ * 那为什么还留着它？
+ * ------------------
+ * 因为有一个它挡得住、守卫挡不住的情况：**会话在页面已经挂载之后才
+ * 失效**。最常见的是一条教师接口返回 401（token 十二小时后过期），
+ * `api/session.ts` 的清理由调用方触发，而守卫只在**导航时**跑——不回
+ * 首页就不会重新判一次。此时页面还立在那里，而它手里的数据已经全部
+ * 过期。这一屏说的是"这个账号现在不是教师了"，给一条出路。
  *
- * **这不是安全边界。** 这里的判断是便利，不是闸门：每一条教师接口都在
- * 服务端拒绝非教师（见 `app/api/teacher.py`）。这个组件能少一份的原因，
- * 恰恰是它拦不住任何一个真想进来的人。
+ * 换句话说：**守卫管"进不来"，它管"进来了但身份没了"**。
  *
- * 关于 `signOut` 事件
- * -------------------
- * "已登录但不是教师"那一路的出路是**登出**，而登出要清空调用方的数据。
- * 所以这个组件不自己调 `logout()`，它 emit 一个事件，由调用方处理——
- * 只有调用方知道该清哪些 ref。
+ * `roleLost` 是 prop 而不是自己从 session 读——保持它无状态、可单独渲染，
+ * 也让"页面自己决定要不要用它"这件事保留在页面手里。**默认 `false`**，
+ * 因为守卫已经保证"进得来就是教师"；页面只在真的检测到身份失效时传
+ * `true`（目前是备用状态：六个面板都还没接这根线，接法见 `roleLost` 的
+ * 文档）。
+ *
+ * `signOut` 事件保留：那一屏的出路是**登出**（换一个教师账号），而登出
+ * 要清空调用方持有的数据（各面板的 ref），只有调用方知道该清什么。所以
+ * 这里不自己调 `logout()`。
+ *
+ * 不再需要 `useRouter().resolve()` 算登录页地址：出路是"退出登录"而不是
+ * "去登录"——人已经登录着了，只是角色不对，再去一次登录页说不通，与
+ * `router/guards/auth.ts` 里"角色不符回首页而不是登录页"是同一条判断。
  */
-
-import { computed } from 'vue'
-import { useRouter } from 'vue-router'
 import { NButton } from 'naive-ui'
-import { isLoggedIn, sessionUser } from '../api/session'
+import { sessionUser } from '../api/session'
 
-/** 登录页的地址。共享的那一个，不分师生。 */
-const router = useRouter()
-const loginHref = computed(() => router.resolve({ name: 'login' }).href)
+/**
+ * `roleLost`：内容本身没问题，但身份已经不是教师了。
+ *
+ * **默认 `false`** —— 守卫已保证"进得来就是教师"，所以正常情况下所有
+ * 页面都不传它，直接铺内容。页面只在**自己发现会话失效**时传 `true`：
+ * 判据是它发的教师接口回了 401（`api/session.ts` 那一路会把 user 清掉）。
+ * 那种情况下这一屏是最后一道用户可读的提示，而不是一道门。
+ */
+defineProps<{ roleLost?: boolean }>()
 
-defineProps<{
-  /** 会话是否已经问过服务端了。未确定时不渲染任何结论。 */
-  ready: boolean
-  /** 是否教师。只有它为真时调用方才渲染真正的内容。 */
-  isTeacher: boolean
-  /** 未登录那张卡片的小标题。各面板按语境自己写。 */
-  loginTitle: string
-  /** 未登录那张卡片的一句话解释。 */
-  loginBody: string
-}>()
-
-// 声明在 `<script setup>` 里，所以下面那个 `$emit` 在模板里是有类型的。
-// 早先版本用第二个 `<script>` 块声明 emits，eslint 的
-// `vue/require-explicit-emits` 看不见它——两个 script 块的合并顺序不是
-// 它检查时能依赖的东西。
 defineEmits<{ (e: 'signOut'): void }>()
 </script>
 
 <template>
-  <div v-if="!ready" class="af-t-placeholder">正在恢复登录状态…</div>
+  <slot v-if="!roleLost" />
 
-  <div v-else-if="!isLoggedIn" class="gate">
-    <h2 class="gate-title">{{ loginTitle }}</h2>
-    <p class="gate-body">{{ loginBody }}</p>
-    <!-- 这里唯一的控件是导航而不是提交，所以用 NButton 的 tag 换成 <a>
-         语义：屏幕阅读器和右键"在新标签打开"都还认它是链接。 -->
-    <NButton type="primary" tag="a" :href="loginHref" class="gate-link">去登录</NButton>
-  </div>
-
-  <div v-else-if="!isTeacher" class="gate">
+  <div v-else class="gate">
     <h2 class="gate-title">此账号不是教师账号</h2>
     <p class="gate-body">
-      当前登录的是「{{ sessionUser?.display_name || sessionUser?.username }}」（学生）。
+      当前登录的是「{{ sessionUser?.display_name || sessionUser?.username }}」。
       学情看板只有教师账号可以打开——这不是前端的限制，服务端每一条教师接口都会拒绝学生账号。
     </p>
     <NButton type="primary" class="gate-link" @click="$emit('signOut')">退出登录</NButton>
   </div>
-
-  <slot v-else />
 </template>
 
 <style scoped>
-/* 三个非控制台状态共用的卡片。放这里而不是共享样式表：只有这个组件
- * 会画它。 */
+/* 只有这一个状态会画卡片。放这里而不是共享样式表：只有这个组件用。 */
 .gate {
   max-width: 420px;
   padding: 24px;

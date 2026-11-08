@@ -34,6 +34,10 @@ vi.mock('vue-router', async () => {
   }
 })
 
+// `useTeacherPanel` 仍在模块作用域读 `sessionReady` / `isTeacher`：
+// 守卫（`router/guards/auth.ts`）保证"能渲染这一页 = 是教师"，但**加载
+// 时机**仍由这个 hook 负责——它要等会话往返回来才拉数据。所以这两个值
+// 必须给真值，`logout` 已不再被任何教师面板引用（2026-10-04）。
 vi.mock('../../api/session', () => ({
   sessionReady: { value: true },
   isTeacher: { value: true },

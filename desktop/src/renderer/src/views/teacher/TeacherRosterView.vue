@@ -46,7 +46,6 @@ import {
 import type { DropdownOption } from 'naive-ui'
 import TeacherGate from '../../components/TeacherGate.vue'
 import PageHeader from '../../components/PageHeader.vue'
-import { isTeacher, logout } from '../../api/session'
 import {
   createClassroom,
   deleteClassroom,
@@ -97,7 +96,6 @@ const filterClassId = ref<number | null>(null)
 const classrooms = ref<ClassroomOut[]>([])
 
 async function load(): Promise<void> {
-  if (!isTeacher.value) return
   loading.value = true
   errorMsg.value = ''
   try {
@@ -128,12 +126,7 @@ function reset(): void {
   filterClassId.value = null
 }
 
-const panel = useTeacherPanel(load, reset)
-
-async function signOut(): Promise<void> {
-  await logout()
-  panel.reset()
-}
+useTeacherPanel(load, reset)
 
 // --- 名册过滤 ---
 
@@ -402,19 +395,13 @@ function classNamesOf(userId: number): string[] {
         :subtitle="
           students.length > 0 ? `${students.length} 名学生 · ${classrooms.length} 个班级` : ''
         "
-        :loading="panel.teacher.value ? loading : undefined"
+        :loading="loading"
         :error="errorMsg"
         error-prefix="无法加载名册"
         @refresh="load"
       />
 
-      <TeacherGate
-        :ready="panel.ready.value"
-        :is-teacher="panel.teacher.value"
-        login-title="名册与班级需要登录"
-        login-body="学生账号由任课老师建立，登录后才能查看和管理。"
-        @sign-out="signOut"
-      >
+      <TeacherGate>
         <!-- --- 名册 --- -->
         <section class="af-t-section">
           <h2 class="af-t-section-title">学生名册</h2>

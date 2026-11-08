@@ -41,7 +41,6 @@ import {
 import type { DropdownOption, SelectOption } from 'naive-ui'
 import TeacherGate from '../../components/TeacherGate.vue'
 import PageHeader from '../../components/PageHeader.vue'
-import { isTeacher, logout } from '../../api/session'
 import { listClassrooms, type ClassroomOut } from '../../api/classroom'
 import {
   createAssignment,
@@ -252,7 +251,6 @@ let problemsRequestSeq = 0
  * 并且**清空列表**——不清的话旧筛选的结果会和新的混在一起，看着像筛选没生效）。
  */
 async function loadProblems(append = false): Promise<void> {
-  if (!isTeacher.value) return
   problemsLoading.value = true
   problemsError.value = ''
   const seq = ++problemsRequestSeq
@@ -528,7 +526,6 @@ function closeReport(): void {
 // --- 加载 ---
 
 async function load(): Promise<void> {
-  if (!isTeacher.value) return
   loading.value = true
   errorMsg.value = ''
   try {
@@ -552,12 +549,7 @@ function reset(): void {
   report.value = null
 }
 
-const panel = useTeacherPanel(load, reset)
-
-async function signOut(): Promise<void> {
-  await logout()
-  panel.reset()
-}
+useTeacherPanel(load, reset)
 
 // --- 作业操作 ---
 
@@ -666,19 +658,13 @@ async function copyAssignment(assignment: AssignmentOut): Promise<void> {
       <PageHeader
         title="作业"
         subtitle="发布作业、看谁还没交、核对 AI 辅助强度有没有被用上"
-        :loading="panel.teacher.value ? loading : undefined"
+        :loading="loading"
         :error="errorMsg"
         error-prefix="无法加载作业"
         @refresh="load"
       />
 
-      <TeacherGate
-        :ready="panel.ready.value"
-        :is-teacher="panel.teacher.value"
-        login-title="作业面板需要登录"
-        login-body="布置作业、查看完成情况都记在教师账号上，登录后才会显示。"
-        @sign-out="signOut"
-      >
+      <TeacherGate>
         <!-- --- 作业 --- -->
         <section class="af-t-section">
           <h2 class="af-t-section-title">作业</h2>

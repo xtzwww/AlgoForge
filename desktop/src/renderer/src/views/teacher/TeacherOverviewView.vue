@@ -30,7 +30,6 @@ import AttentionAlerts from '../../components/AttentionAlerts.vue'
 import TeacherGate from '../../components/TeacherGate.vue'
 import PageHeader from '../../components/PageHeader.vue'
 import { masteryColorFor } from '../../assets/tokens'
-import { isTeacher, logout } from '../../api/session'
 import { getAlerts, getOverview, type AlertOut, type ClassOverview } from '../../api/teacher'
 import { useTeacherPanel } from './useTeacherPanel'
 import { messageOf, num, percent } from './format'
@@ -41,8 +40,15 @@ const overview = ref<ClassOverview | null>(null)
 /** 谁需要关注，以及为什么。空是合法答案。 */
 const alerts = ref<AlertOut[]>([])
 
+/**
+ * 拉数据。
+ *
+ * **不再有 `if (!isTeacher.value) return`（2026-10-04）。** 那道保险是
+ * 八个副本中的一个，现在由 `router/guards/auth.ts` 在导航阶段保证：
+ * 能渲染这一页 = 是教师。`useTeacherPanel` 仍然只在会话就绪且是教师时
+ * 触发它，所以"未就绪时不拉数据"这条不变量的**执行点**也只有一个。
+ */
 async function load(): Promise<void> {
-  if (!isTeacher.value) return
   loading.value = true
   errorMsg.value = ''
   try {
@@ -61,13 +67,15 @@ function reset(): void {
   alerts.value = []
 }
 
-/** 登出后停在本页会显示"未登录"，那是对的：这是教师入口的落点。 */
-const panel = useTeacherPanel(load, reset)
-
-async function signOut(): Promise<void> {
-  await logout()
-  panel.reset()
-}
+/**
+ * 加载时机由共用的 hook 负责（会话就绪 + 是教师才跑 `load`）。
+ *
+ * 返回值不再需要：模板原先用 `panel.teacher.value` 给 `PageHeader` 的
+ * `loading` 加一道"不是教师就不转圈"的保险，现在守卫已经保证是教师，
+ * 直接传 `loading` 即可。`useTeacherPanel` 仍做它那份工作，只是调用方
+ * 不接它的返回值。
+ */
+useTeacherPanel(load, reset)
 </script>
 
 <template>
@@ -76,19 +84,13 @@ async function signOut(): Promise<void> {
       <PageHeader
         title="教学概览"
         :subtitle="overview ? `${overview.students} 名学生 · ${overview.submissions} 次提交` : ''"
-        :loading="panel.teacher.value ? loading : undefined"
+        :loading="loading"
         :error="errorMsg"
         error-prefix="无法加载学情"
         @refresh="load"
       />
 
-      <TeacherGate
-        :ready="panel.ready.value"
-        :is-teacher="panel.teacher.value"
-        login-title="学情看板需要登录"
-        login-body="学情看板使用教师账号。学生侧的练习、错题本和画像不需要登录，照常可用。"
-        @sign-out="signOut"
-      >
+      <TeacherGate>
         <div v-if="loading && !overview" class="af-t-placeholder">加载学情数据中…</div>
 
         <template v-else-if="overview">

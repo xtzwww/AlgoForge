@@ -8,9 +8,10 @@
  *   2. **「需要关注」不是每次都出现**。空警报列表是合法答案，此时渲染
  *      一个空的区块标题是噪音（文件头文档原话）。
  *   3. **非教师不拉数据**。`useTeacherPanel` 只在 ready && teacher 时触发
- *      load；load 自己也有一道 `isTeacher` 保险。
+ *      load。（2026-10-04 起面板自己的 `isTeacher` 保险已删，门移到了路由
+ *      表——所以这一条现在是唯一钉住"加载时机"的用例。）
  *
- * TeacherGate / useTeacherPanel 读的是 session 的四个导出（与
+ * TeacherGate / useTeacherPanel 读的是 session 的导出（与
  * TeacherProblemsView.spec 同模式）。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -31,6 +32,10 @@ vi.mock('vue-router', async () => {
   }
 })
 
+// `useTeacherPanel` 仍在模块作用域读 `sessionReady` / `isTeacher`：
+// 守卫（`router/guards/auth.ts`）保证"能渲染这一页 = 是教师"，但**加载
+// 时机**仍由这个 hook 负责——它要等会话往返回来才拉数据。所以这两个值
+// 必须给真值，`logout` 已不再被任何教师面板引用（2026-10-04）。
 vi.mock('../../api/session', () => ({
   sessionReady: { value: true },
   isTeacher: { value: true },
@@ -122,7 +127,14 @@ describe('TeacherOverviewView', () => {
     expect(wrapper.text()).not.toContain('名学生')
   })
 
-  it('非教师时不拉数据（登出后停在本页的落点）', async () => {
+  it('非教师时不拉数据（会话就绪但角色不对）', async () => {
+    // 2026-10-04 起面板里不再有 `if (!isTeacher.value) return`——门在路由
+    // 表上（`meta.requiresTeacher`）。但"何时拉数据"这条不变量仍然成立，
+    // 而且执行点现在**只剩一个**：`useTeacherPanel` 只在
+    // `sessionReady && isTeacher` 时调 load。这条用例钉的就是它。
+    //
+    // 为什么还要留着：`useTeacherPanel` 是六个面板共用的唯一加载时机
+    // 判断，它坏了 = 六个面板一起坏，而且症状是"空白页"，不报错。
     ;(vi.mocked(await import('../../api/session')).isTeacher as { value: boolean }).value = false
     const wrapper = mount(TeacherOverviewView)
     await flushPromises()

@@ -50,7 +50,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { NButton, NInput } from 'naive-ui'
-import { register, logout, sessionReady, sessionUser } from '../api/session'
+import AuthLayout from './AuthLayout.vue'
+import { register, logout, sessionReady, sessionUser } from '../../api/session'
 import {
   defaultIntent,
   entryMismatch,
@@ -59,9 +60,9 @@ import {
   landingName,
   mismatchMessage,
   type LoginIntent
-} from '../router/landing'
-import { appMode } from '../runtime/mode'
-import { goTo } from '../runtime/navigation'
+} from '../../router/landing'
+import { appMode } from '../../runtime/mode'
+import { goTo } from '../../runtime/navigation'
 
 const router = useRouter()
 
@@ -248,143 +249,141 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-1 items-center justify-center overflow-y-auto p-6">
-    <div class="w-full max-w-sm">
-      <div class="af-glass rounded-[var(--af-radius-lg)] p-6">
-        <!--
-          Who are you signing up as. Asks the server for the picked role;
-          the server's whitelist + switch is the final word (docstring).
-        -->
-        <div
-          class="mb-4 flex rounded-[var(--af-radius-sm)] border border-af-border bg-af-elevated p-0.5"
-          role="group"
-          aria-label="注册成什么账号"
+  <AuthLayout>
+    <template #switcher>
+      <!--
+        Who are you signing up as. Asks the server for the picked role;
+        the server's whitelist + switch is the final word (docstring).
+      -->
+      <div
+        class="mb-4 flex rounded-[var(--af-radius-sm)] border border-af-border bg-af-elevated p-0.5"
+        role="group"
+        aria-label="注册成什么账号"
+      >
+        <NButton
+          class="flex-1"
+          size="small"
+          quaternary
+          :type="intent === 'student' ? 'primary' : 'default'"
+          :aria-pressed="intent === 'student' ? 'true' : 'false'"
+          @click="setIntent('student')"
         >
-          <NButton
-            class="flex-1"
-            size="small"
-            quaternary
-            :type="intent === 'student' ? 'primary' : 'default'"
-            :aria-pressed="intent === 'student' ? 'true' : 'false'"
-            @click="setIntent('student')"
-          >
-            学生
-          </NButton>
-          <NButton
-            class="flex-1"
-            size="small"
-            quaternary
-            :type="intent === 'teacher' ? 'primary' : 'default'"
-            :aria-pressed="intent === 'teacher' ? 'true' : 'false'"
-            @click="setIntent('teacher')"
-          >
-            老师
-          </NButton>
-        </div>
-
-        <h1 class="text-lg font-semibold text-af-primary">注册</h1>
-        <p v-if="isTeacherIntent" class="mt-1.5 text-xs leading-relaxed text-af-secondary">
-          自己创建一个教师账号。注册成功后就能建班、布置作业、查看全班学情。已有账号？直接
-          <RouterLink class="text-af-accent hover:text-af-accent-hover" :to="{ name: 'login' }">
-            去登录
-          </RouterLink>
-          。
-        </p>
-        <p v-else class="mt-1.5 text-xs leading-relaxed text-af-secondary">
-          自己创建一个学生账号。如果老师已经给你发过账号，直接
-          <RouterLink class="text-af-accent hover:text-af-accent-hover" :to="{ name: 'login' }">
-            去登录
-          </RouterLink>
-          。
-        </p>
-
-        <form class="mt-5 flex flex-col gap-4" @submit.prevent="submit">
-          <label class="flex flex-col gap-1.5">
-            <span class="text-xs text-af-secondary">用户名</span>
-            <NInput
-              v-model:value="username"
-              type="text"
-              name="username"
-              autocomplete="username"
-              placeholder="登录时使用，建议用学号"
-              :disabled="busy"
-            />
-          </label>
-
-          <label class="flex flex-col gap-1.5">
-            <span class="text-xs text-af-secondary">
-              姓名
-              <span class="text-af-muted">（选填）</span>
-            </span>
-            <NInput
-              v-model:value="displayName"
-              type="text"
-              name="display-name"
-              autocomplete="name"
-              placeholder="老师看到的名字，留空就用用户名"
-              :disabled="busy"
-            />
-          </label>
-
-          <label class="flex flex-col gap-1.5">
-            <span class="text-xs text-af-secondary">密码</span>
-            <NInput
-              v-model:value="password"
-              type="password"
-              name="password"
-              autocomplete="new-password"
-              :placeholder="`至少 ${PASSWORD_MIN} 位`"
-              :disabled="busy"
-            />
-          </label>
-
-          <label class="flex flex-col gap-1.5">
-            <span class="text-xs text-af-secondary">确认密码</span>
-            <NInput
-              v-model:value="confirm"
-              type="password"
-              name="confirm-password"
-              autocomplete="new-password"
-              :disabled="busy"
-            />
-          </label>
-
-          <!--
-            One message slot, not two. `errorMsg` is what the server
-            said; `localProblem` is what this page can tell before
-            asking. Showing both at once would put two red sentences
-            under one form and leave the reader to work out which one is
-            the real answer.
-          -->
-          <p
-            v-if="errorMsg"
-            class="rounded-[var(--af-radius-sm)] border border-af-danger/40 bg-af-elevated px-3 py-2 text-xs text-af-danger"
-            role="alert"
-          >
-            {{ errorMsg }}
-          </p>
-          <p v-else-if="localProblem" class="text-xs text-af-warning">{{ localProblem }}</p>
-
-          <NButton
-            attr-type="submit"
-            type="primary"
-            block
-            :loading="busy"
-            :disabled="busy"
-          >
-            {{ busy ? '注册中…' : '注册并进入' }}
-          </NButton>
-        </form>
+          学生
+        </NButton>
+        <NButton
+          class="flex-1"
+          size="small"
+          quaternary
+          :type="intent === 'teacher' ? 'primary' : 'default'"
+          :aria-pressed="intent === 'teacher' ? 'true' : 'false'"
+          @click="setIntent('teacher')"
+        >
+          老师
+        </NButton>
       </div>
+    </template>
 
-      <p class="mt-4 text-center text-[11px] leading-relaxed text-af-muted">
-        <template v-if="isTeacherIntent">
-          这里注册得到的是教师账号，可以建班、布置作业、查看全班学情。学生账号请到学生网址（index.web.html）注册，或由老师在「班级管理」里添加。
-        </template>
-        <template v-else>
-          这里注册得到的是学生账号。教师账号请到教师网址（teacher.web.html）注册。
-        </template>
+    <h1 class="text-lg font-semibold text-af-primary">注册</h1>
+    <p v-if="isTeacherIntent" class="mt-1.5 text-xs leading-relaxed text-af-secondary">
+      自己创建一个教师账号。注册成功后就能建班、布置作业、查看全班学情。已有账号？直接
+      <RouterLink class="text-af-accent hover:text-af-accent-hover" :to="{ name: 'login' }">
+        去登录
+      </RouterLink>
+      。
+    </p>
+    <p v-else class="mt-1.5 text-xs leading-relaxed text-af-secondary">
+      自己创建一个学生账号。如果老师已经给你发过账号，直接
+      <RouterLink class="text-af-accent hover:text-af-accent-hover" :to="{ name: 'login' }">
+        去登录
+      </RouterLink>
+      。
+    </p>
+
+    <form class="mt-5 flex flex-col gap-4" @submit.prevent="submit">
+      <label class="flex flex-col gap-1.5">
+        <span class="text-xs text-af-secondary">用户名</span>
+        <NInput
+          v-model:value="username"
+          type="text"
+          name="username"
+          autocomplete="username"
+          placeholder="登录时使用，建议用学号"
+          :disabled="busy"
+        />
+      </label>
+
+      <label class="flex flex-col gap-1.5">
+        <span class="text-xs text-af-secondary">
+          姓名
+          <span class="text-af-muted">（选填）</span>
+        </span>
+        <NInput
+          v-model:value="displayName"
+          type="text"
+          name="display-name"
+          autocomplete="name"
+          placeholder="老师看到的名字，留空就用用户名"
+          :disabled="busy"
+        />
+      </label>
+
+      <label class="flex flex-col gap-1.5">
+        <span class="text-xs text-af-secondary">密码</span>
+        <NInput
+          v-model:value="password"
+          type="password"
+          name="password"
+          autocomplete="new-password"
+          :placeholder="`至少 ${PASSWORD_MIN} 位`"
+          :disabled="busy"
+        />
+      </label>
+
+      <label class="flex flex-col gap-1.5">
+        <span class="text-xs text-af-secondary">确认密码</span>
+        <NInput
+          v-model:value="confirm"
+          type="password"
+          name="confirm-password"
+          autocomplete="new-password"
+          :disabled="busy"
+        />
+      </label>
+
+      <!--
+        One message slot, not two. `errorMsg` is what the server
+        said; `localProblem` is what this page can tell before
+        asking. Showing both at once would put two red sentences
+        under one form and leave the reader to work out which one is
+        the real answer.
+      -->
+      <p
+        v-if="errorMsg"
+        class="rounded-[var(--af-radius-sm)] border border-af-danger/40 bg-af-elevated px-3 py-2 text-xs text-af-danger"
+        role="alert"
+      >
+        {{ errorMsg }}
       </p>
-    </div>
-  </div>
+      <p v-else-if="localProblem" class="text-xs text-af-warning">{{ localProblem }}</p>
+
+      <NButton
+        attr-type="submit"
+        type="primary"
+        block
+        :loading="busy"
+        :disabled="busy"
+      >
+        {{ busy ? '注册中…' : '注册并进入' }}
+      </NButton>
+    </form>
+
+    <template #footer>
+      <template v-if="isTeacherIntent">
+        这里注册得到的是教师账号，可以建班、布置作业、查看全班学情。学生账号请到学生网址（index.web.html）注册，或由老师在「班级管理」里添加。
+      </template>
+      <template v-else>
+        这里注册得到的是学生账号。教师账号请到教师网址（teacher.web.html）注册。
+      </template>
+    </template>
+  </AuthLayout>
 </template>

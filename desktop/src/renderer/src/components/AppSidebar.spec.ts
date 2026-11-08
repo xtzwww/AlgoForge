@@ -81,11 +81,12 @@ vi.mock('../views/AssignmentsView.vue', () => ({
   default: { name: 'AssignmentsViewStub' }
 }))
 // 登录页不在导航里（`meta.hidden`），但路由表仍然急加载它，所以也要挡。
-vi.mock('../views/LoginView.vue', () => ({ default: { name: 'LoginViewStub' } }))
+// 2026-10-04 起认证页搬到 `views/auth/`（独立路由模块），路径随之更新。
+vi.mock('../views/auth/LoginView.vue', () => ({ default: { name: 'LoginViewStub' } }))
 // 注册页同理（2026-09-25 新增，`meta.hidden`）。它必须被挡掉，否则这个
 // 文件测的就不只是路由表了：真组件会去碰 `api/session`，而那个模块在
 // import 时就往 `http` 上挂拦截器。
-vi.mock('../views/RegisterView.vue', () => ({ default: { name: 'RegisterViewStub' } }))
+vi.mock('../views/auth/RegisterView.vue', () => ({ default: { name: 'RegisterViewStub' } }))
 
 vi.mock('vue-router', async () => {
   const { defineComponent, h } = await import('vue')
