@@ -195,12 +195,14 @@ class Settings(BaseSettings):
     llm_timeout: float = Field(default=60.0)
 
     # ------------------------------------------------------ LLM 护栏（S10）
-    # 这三个设置由 ``app.agent.guardrails.guardrail_policy()`` 读取，护栏
-    # 本身默认**没有**接进判题主路径（``analyzer`` / ``team`` 仍直调网关），
-    # 所以改这里不会立刻改变系统行为——要生效还得把调用点换成
-    # ``guarded_chat_completion``。这一点在 S10 的收尾里是刻意的：
-    # 打开护栏会改变「每次提交发出去什么」和「每次失败花多少钱」，
-    # 值得作为一次单独的、有人看过 diff 的改动。
+    # 这三个设置由 ``app.agent.guardrails.guardrail_policy()`` 读取。
+    #
+    # **护栏已接进分析路径**：``analyzer`` 与 ``team`` 在 ``llm_guardrails``
+    # 为真时走 ``guarded_chat_completion`` / ``complete_through_guardrails``，
+    # 为假时退回直连网关。所以改这里的开关**会立刻改变系统行为**。
+    # 留这个开关是为了能一键回退——护栏站在学生等 ``judge_done`` 的路上，
+    # 出问题时需要有比「改代码」更快的办法，关掉后行为与接线前逐字一致。
+    # 注意：打开护栏会改变「每次提交发出去什么」和「每次失败花多少钱」。
     #
     # 发送前是否脱敏邮箱与卡号。默认开——学生代码的注释里可能带着个人
     # 信息，而提示词是要发给第三方端点的。**不包含** IP / MAC / URL：

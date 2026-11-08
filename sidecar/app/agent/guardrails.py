@@ -43,14 +43,15 @@ and only the composition is ours:
   private path would turn a routine dependency bump into an import-time
   crash of the whole sidecar.
 
-Not wired into the judging path
--------------------------------
-Like S4's graph and S7's team, this module is additive: ``analyzer`` and
-``team`` still call the gateway directly. Enabling the guardrails is a
-one-line change of entry point (:func:`guarded_chat_completion` instead of
-``chat_completion``), and it is deliberately left as a separate step
-because it changes what every submission sends and what every failure
-costs — see "What turning this on changes" below.
+Wired into the analysis path, behind one switch
+----------------------------------------------
+``analyzer`` and ``team`` route through :func:`guarded_chat_completion` /
+:func:`complete_through_guardrails` when ``settings.llm_guardrails`` is set
+(the default), and fall back to the plain gateway when it is off. So the
+guardrails are live on the analysis path by default; the switch exists so a
+bad interaction can be turned off without a code change — it is deliberately
+kept as a runtime toggle because it changes what every submission sends and
+what every failure costs, see "What turning this on changes" below.
 
 What turning this on changes
 ----------------------------
